@@ -1,0 +1,348 @@
+"""Closed protected profile for the selective catalog reduction recovery.
+
+This module only describes already-published gen7 evidence that a gen8 canary
+may reuse.  It does not read or write current authority, manifests, tokens,
+lineage, worker output, or any new scientific result.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from pathlib import Path
+from typing import Literal, Mapping, cast
+
+from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from .catalog_request_contract import CatalogRunRequestV1, FrozenModel, Sha256
+
+
+RECOVERY_CONFIG_RELATIVE_PATH = "config/catalog_reduction_recovery_profiles_v1.json"
+RECOVERY_CAMPAIGN_KEY = "catalog-fast-canary-v1"
+RECOVERY_TARGET_GENERATION = 8
+RECOVERY_PREDECESSOR_REQUEST_SHA256 = (
+    "a0749c8833b52612096d8a820f3a46f5af48ce52848f8bfc02377f3236996896"
+)
+RECOVERY_GROUP_RECEIPT_SHA256 = "e7e2b1b22a70cbfcdba840f25d4b6e87656a3d1a9eb6e155e08f2d4a3e03fbd7"
+
+_CONFIG_MAX_BYTES = 64 * 1024
+_ARTIFACT_NAME = r"^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$"
+_ARTIFACT_DIGEST = r"^sha256:[0-9a-f]{64}$"
+_COMMIT = r"^[0-9a-f]{40}$"
+_AUTHORITY_ID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+_STRATEGY_ID = r"^SCV1-[0-9a-f]{64}$"
+
+_SOURCE_PLAN_BINDING_KEYS = frozenset(
+    {
+        "request",
+        "decision",
+        "protectedcommit",
+        "authority",
+        "campaign",
+        "science",
+        "executionplan",
+        "executionprotocol",
+    }
+)
+_EXPECTED_SOURCE_PLAN_BINDINGS = {
+    "request": RECOVERY_PREDECESSOR_REQUEST_SHA256,
+    "decision": "c9471a1431226acc4ef70bfd815ac2a6e0cc2bc011865b61d5d045244b0ebc7c",
+    "protectedcommit": "fc77968dceeb93b332c143cc367b99128f488093",
+    "authority": "b7102536-d7fa-5dc8-a438-d456bd2313c5",
+    "campaign": "cf367334c63ed4e8a087ca3730b718e94e5e914877327a23c069f4989725173e",
+    "science": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+    "executionplan": "64ea4c3c11181f4aa47a545c81da55d5d3e67ee406d78b0ddf3d0867ebe03f25",
+    "executionprotocol": "e4f267c15125890abf6d1cc4e8889fa8975bf407b89d80306f59ac0691245631",
+}
+_EXPECTED_STRATEGY_IDS = (
+    "SCV1-0008de8188a0dfedb69e2087fa0786d8876821d9dfaeaf970a6b3f830fc031b0",
+    "SCV1-0009261998f567e326cbcff4b17ed79c26420ecd05771957455abfdb0cfdda0a",
+    "SCV1-000aec232b3b9f37549bab3388af27d55b6e1c57ac2192525a985f8d437b3b7b",
+    "SCV1-000c5a76a3c0dac7d7dd53a1cffe80b86b511dc5cc447830033209746bd771fa",
+    "SCV1-000ca745fd2a8fe5ac48e736fdcf7ae52b8dec69e68363e1b18b903cdb414dd4",
+    "SCV1-00122340e81efb755e5586b43a952a5e1801bc131060752e2ac2487d6463661c",
+    "SCV1-001937e4fad670d10fd93267f0c65a5a643a59dfc1d22e2b4d92c1c08d6ddf40",
+    "SCV1-002e6ef7635802db02a3ed6deca385d1f368d0d080f5389d5feb0edc54b1a7f4",
+)
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+class ReductionRecoveryArtifactV1(FrozenModel):
+    """One immutable source artifact required by the reduction reader."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    role: Literal["plan", "group"]
+    artifact_id: int = Field(strict=True, gt=0)
+    artifact_name: str = Field(pattern=_ARTIFACT_NAME)
+    digest: str = Field(pattern=_ARTIFACT_DIGEST)
+    receipt_sha256: Sha256 | None
+    size_bytes: int = Field(strict=True, gt=0, le=64 * 1024 * 1024)
+    publisher_job_name: str = Field(min_length=1, max_length=512)
+    publish_step_name: str = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def _validate_role_contract(self) -> "ReductionRecoveryArtifactV1":
+        expected: tuple[int, str, str, str | None, int, str, str]
+        if self.role == "plan":
+            expected = (
+                10582715279,
+                "catalog-sealed-execution-plan-b7102536-d7fa-5dc8-a438-d456bd2313c5",
+                "sha256:ed2d84bf6cc297eeeed6692003670d68d9916a5f71c2485c421ed670219d7472",
+                None,
+                175878,
+                "gate",
+                "Publish the already-materialized sealed plan",
+            )
+        else:
+            expected = (
+                10582565863,
+                "catalog-reduction-group-64ea4c3c11181f4a-g00",
+                "sha256:1f32af1a9468e01a21fbb2e2869b945e273ed68a74eaf1b3153bc74588706e47",
+                RECOVERY_GROUP_RECEIPT_SHA256,
+                28148,
+                "engine / reduce_groups (catalog-checkpoint-64ea4c3c11181f4a-g00-*, 0, "
+                "catalog-reduction-group-64ea4c3c11181f4a-g00)",
+                "Upload one bounded reduction group",
+            )
+        actual = (
+            self.artifact_id,
+            self.artifact_name,
+            self.digest,
+            self.receipt_sha256,
+            self.size_bytes,
+            self.publisher_job_name,
+            self.publish_step_name,
+        )
+        if actual != expected:
+            raise ValueError("protected recovery artifact mismatch")
+        return self
+
+
+class ReductionRecoveryProfileV1(FrozenModel):
+    """The one protected gen7-to-gen8 selective recovery profile."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    schema_version: Literal["1"]
+    campaign_key: Literal["catalog-fast-canary-v1"]
+    target_generation: Literal[8]
+    source_request_sha256: Sha256
+    source_issue_number: int = Field(strict=True, gt=0)
+    source_run_id: int = Field(strict=True, gt=0)
+    source_run_attempt: int = Field(strict=True, gt=0)
+    source_terminal_receipt_sha256: Sha256
+    source_plan_bindings: dict[str, str]
+    source_plan_receipt_sha256: Sha256
+    science_sha256: Sha256
+    catalog_manifest_sha256: Sha256
+    strategy_ids: tuple[str, ...]
+    artifacts: tuple[ReductionRecoveryArtifactV1, ...]
+
+    @field_validator("source_plan_bindings", mode="before")
+    @classmethod
+    def _validate_binding_input(cls, value: object) -> object:
+        if type(value) is not dict or any(
+            type(key) is not str or type(item) is not str for key, item in value.items()
+        ):
+            raise ValueError("source_plan_bindings must be a strict string dictionary")
+        if set(value) != _SOURCE_PLAN_BINDING_KEYS:
+            raise ValueError("source_plan_bindings keys are closed")
+        return value
+
+    @field_validator("source_plan_bindings")
+    @classmethod
+    def _validate_binding_values(cls, value: dict[str, str]) -> dict[str, str]:
+        for key in ("request", "decision", "campaign", "science", "executionplan", "executionprotocol"):
+            if not re.fullmatch(r"[0-9a-f]{64}", value[key]):
+                raise ValueError(f"invalid {key} source binding")
+        if not re.fullmatch(_COMMIT, value["protectedcommit"]):
+            raise ValueError("invalid protected commit source binding")
+        if not re.fullmatch(_AUTHORITY_ID, value["authority"]):
+            raise ValueError("invalid authority source binding")
+        return value
+
+    @field_validator("strategy_ids", mode="before")
+    @classmethod
+    def _validate_strategy_input(cls, value: object) -> object:
+        if type(value) not in (list, tuple):
+            raise ValueError("strategy_ids must be a sequence")
+        items = cast(list[object] | tuple[object, ...], value)
+        if len(items) != len(_EXPECTED_STRATEGY_IDS) or any(
+            type(item) is not str or not re.fullmatch(_STRATEGY_ID, item) for item in items
+        ):
+            raise ValueError("strategy_ids are invalid")
+        return tuple(items)
+
+    @field_validator("artifacts", mode="before")
+    @classmethod
+    def _validate_artifact_input(cls, value: object) -> object:
+        if type(value) not in (list, tuple):
+            raise ValueError("artifacts must contain the plan and group")
+        items = cast(list[object] | tuple[object, ...], value)
+        if len(items) != 2:
+            raise ValueError("artifacts must contain the plan and group")
+        return tuple(items)
+
+    @model_validator(mode="after")
+    def _validate_protected_values(self) -> "ReductionRecoveryProfileV1":
+        expected_scalars = (
+            self.schema_version,
+            self.campaign_key,
+            self.target_generation,
+            self.source_request_sha256,
+            self.source_issue_number,
+            self.source_run_id,
+            self.source_run_attempt,
+            self.source_terminal_receipt_sha256,
+            self.source_plan_receipt_sha256,
+            self.science_sha256,
+            self.catalog_manifest_sha256,
+        )
+        required_scalars = (
+            "1",
+            RECOVERY_CAMPAIGN_KEY,
+            RECOVERY_TARGET_GENERATION,
+            RECOVERY_PREDECESSOR_REQUEST_SHA256,
+            323,
+            35436320227,
+            1,
+            "67224b935b44f2d7598e2b28d9cb686d4eee89a046d0ec3b0482db4aba9d8cc4",
+            "d4d0734b231aa346930b8654e26a9ae52cc4cf24098b2ab97815d4a13a11af04",
+            "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+            "2de5b6a09fb10b71adff0f45af450f30c7f3dbfb196bfea8f01f92d4cf3cb981",
+        )
+        if expected_scalars != required_scalars:
+            raise ValueError("protected recovery profile mismatch")
+        if self.source_plan_bindings != _EXPECTED_SOURCE_PLAN_BINDINGS:
+            raise ValueError("protected recovery bindings mismatch")
+        if self.strategy_ids != _EXPECTED_STRATEGY_IDS:
+            raise ValueError("protected recovery strategies mismatch")
+        if len(self.artifacts) != 2 or tuple(artifact.role for artifact in self.artifacts) != (
+            "plan",
+            "group",
+        ):
+            raise ValueError("protected recovery artifacts mismatch")
+        if self.source_request_sha256 != self.source_plan_bindings["request"]:
+            raise ValueError("profile source request binding mismatch")
+        if self.science_sha256 != self.source_plan_bindings["science"]:
+            raise ValueError("profile science binding mismatch")
+        return self
+
+    @property
+    def profile_sha256(self) -> str:
+        """SHA-256 of the canonical closed ``model_dump(mode='json')``."""
+
+        return hashlib.sha256(_canonical_json_bytes(self.model_dump(mode="json"))).hexdigest()
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite(value: str) -> object:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _read_config(repo_root: Path) -> object:
+    root = repo_root.resolve(strict=True)
+    path = root / RECOVERY_CONFIG_RELATIVE_PATH
+    if (
+        repo_root.is_symlink()
+        or path.is_symlink()
+        or not path.resolve(strict=True).is_relative_to(root)
+    ):
+        raise ValueError("unsafe protected configuration path")
+    raw = path.read_bytes()
+    if len(raw) > _CONFIG_MAX_BYTES:
+        raise ValueError("oversized protected configuration")
+    return json.loads(
+        raw.decode("utf-8"),
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_constant=_reject_nonfinite,
+    )
+
+
+def load_reduction_recovery_profiles(repo_root: Path) -> tuple[ReductionRecoveryProfileV1, ...]:
+    """Load exactly the one closed protected recovery profile."""
+
+    try:
+        payload = _read_config(repo_root)
+        if (
+            type(payload) is not dict
+            or set(payload) != {"schema_version", "profiles"}
+            or payload["schema_version"] != "1"
+            or type(payload["profiles"]) is not list
+            or len(payload["profiles"]) != 1
+        ):
+            raise ValueError("invalid protected profile root")
+        profiles = (ReductionRecoveryProfileV1.model_validate(payload["profiles"][0]),)
+        return profiles
+    except (OSError, TypeError, ValueError, UnicodeError, RecursionError, ValidationError) as exc:
+        if str(exc) == "CATALOG_REDUCTION_RECOVERY_CONFIG_INVALID":
+            raise
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_CONFIG_INVALID") from exc
+
+
+def load_reduction_recovery_profile(
+    repo_root: Path, request: CatalogRunRequestV1
+) -> ReductionRecoveryProfileV1 | None:
+    """Return the protected profile only for its exact gen8 canary request."""
+
+    if not isinstance(request, CatalogRunRequestV1):
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_REQUEST_INVALID")
+    if (request.campaign_key, request.launch_generation) != (
+        RECOVERY_CAMPAIGN_KEY,
+        RECOVERY_TARGET_GENERATION,
+    ):
+        return None
+    if request.previous_terminal_request_sha256 != RECOVERY_PREDECESSOR_REQUEST_SHA256:
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_PREDECESSOR_MISMATCH")
+    profiles = load_reduction_recovery_profiles(repo_root)
+    matches = tuple(
+        profile
+        for profile in profiles
+        if (
+            profile.campaign_key == request.campaign_key
+            and profile.target_generation == request.launch_generation
+            and profile.source_request_sha256 == request.previous_terminal_request_sha256
+        )
+    )
+    if len(matches) != 1:
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_NOT_FOUND")
+    return matches[0]
+
+
+def validate_exact_profile(
+    repo_root: Path, payload: Mapping[str, object] | ReductionRecoveryProfileV1
+) -> ReductionRecoveryProfileV1:
+    """Require a payload to equal the one protected config profile."""
+
+    protected = load_reduction_recovery_profiles(repo_root)
+    expected = protected[0]
+    try:
+        candidate = (
+            payload
+            if isinstance(payload, ReductionRecoveryProfileV1)
+            else ReductionRecoveryProfileV1.model_validate(payload)
+        )
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH") from exc
+    if candidate != expected:
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
+    return candidate
