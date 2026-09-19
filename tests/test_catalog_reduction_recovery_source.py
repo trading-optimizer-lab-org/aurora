@@ -40,7 +40,7 @@ _PARQUET_SCHEMA = pa.schema(
 )
 
 
-def build_historical_reduction_source_fixture(tmp_path: Path) -> dict[str, Any]:
+def build_historical_reduction_source_fixture(tmp_path: Path, *, cached_count: int = 2) -> dict[str, Any]:
     contract = RunOptimizationContractV1.model_validate(_task10_contract_payload())
     plan = _task10_plan_fixture(
         warm_component_ordinals=set(range(12)),
@@ -48,7 +48,7 @@ def build_historical_reduction_source_fixture(tmp_path: Path) -> dict[str, Any]:
         qualify_layout=False,
     )
     strategy_ids = tuple(item.strategy_id for item in plan.recipe_requirements)
-    cached_strategy_ids = strategy_ids[:2]
+    cached_strategy_ids = strategy_ids[:cached_count]
     work_manifest = build_resume_work_manifest(
         strategy_ids,
         cached_strategy_ids=cached_strategy_ids,
