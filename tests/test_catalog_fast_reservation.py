@@ -93,6 +93,8 @@ def _unlaunched_receipt(request: CatalogRunRequestV1, **updates: object) -> Cata
 
 def _terminal_owner_fixture(
     created_at: str, *, wrong_owner: bool = False,
+    create_completed_at: str = "2026-09-19T10:11:09Z",
+    publish_started_at: str = "2026-09-19T10:11:09Z",
 ) -> tuple[object, FastGateOwnerEvidence, object]:
     request = _request()
     run_id = 35436320227
@@ -179,14 +181,14 @@ def _terminal_owner_fixture(
                 "status": "completed",
                 "conclusion": "success",
                 "started_at": "2026-09-19T10:11:09Z",
-                "completed_at": "2026-09-19T10:11:09Z",
+                "completed_at": create_completed_at,
             },
             {
                 "name": "Publish the terminal receipt before changing the issue",
                 "number": 10,
                 "status": "completed",
                 "conclusion": "success",
-                "started_at": "2026-09-19T10:11:09Z",
+                "started_at": publish_started_at,
                 "completed_at": "2026-09-19T10:11:10Z",
             },
         ],
@@ -227,6 +229,35 @@ def test_owner_terminal_receipt_uses_exclusive_second_boundary(
     created_at: str, accepted: bool,
 ) -> None:
     client, owner, download = _terminal_owner_fixture(created_at)
+
+    if accepted:
+        receipt = load_owner_terminal_receipt(
+            client=client, owner=owner, issue_number=323, download_archive=download,
+        )
+        assert receipt is not None
+        assert receipt.created_at == datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    else:
+        with pytest.raises(ValueError, match="CATALOG_FAST_OWNER_TERMINAL_TIME_INVALID"):
+            load_owner_terminal_receipt(
+                client=client, owner=owner, issue_number=323, download_archive=download,
+            )
+
+
+@pytest.mark.parametrize(
+    ("created_at", "accepted"),
+    (
+        pytest.param("2026-09-19T10:11:09.500000Z", True, id="fractional_end_inclusive"),
+        pytest.param("2026-09-19T10:11:09.500001Z", False, id="fractional_end_not_widened"),
+    ),
+)
+def test_owner_terminal_receipt_does_not_widen_fractional_step_end(
+    created_at: str, accepted: bool,
+) -> None:
+    client, owner, download = _terminal_owner_fixture(
+        created_at,
+        create_completed_at="2026-09-19T10:11:09.500000Z",
+        publish_started_at="2026-09-19T10:11:09.500000Z",
+    )
 
     if accepted:
         receipt = load_owner_terminal_receipt(

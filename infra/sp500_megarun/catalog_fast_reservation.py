@@ -250,7 +250,11 @@ def load_owner_terminal_receipt(
             ))
     except (zipfile.BadZipFile, ValueError, OSError, RuntimeError) as exc:
         raise ValueError("CATALOG_FAST_OWNER_TERMINAL_ARCHIVE_INVALID") from exc
-    if not times[0] <= receipt.created_at < _terminal_step_end_exclusive(times[1]):
+    if times[1].microsecond:
+        within_step_window = times[0] <= receipt.created_at <= times[1]
+    else:
+        within_step_window = times[0] <= receipt.created_at < _terminal_step_end_exclusive(times[1])
+    if not within_step_window:
         raise ValueError("CATALOG_FAST_OWNER_TERMINAL_TIME_INVALID")
     bind_owner_terminal_receipt(owner=owner, receipt=receipt)
     return receipt
