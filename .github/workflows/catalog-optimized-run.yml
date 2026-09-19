@@ -3284,12 +3284,22 @@ jobs:
                           execution_plan_sha256=payload["execution_plan_sha256"],
                           worker_id=worker, attempt_id=f"{authority}:worker:{worker:03d}:attempt:1",
                       )
-                      if any(artifact["name"] == name for artifact in artifacts):
-                          # Protected matrix field order and GitHub's 100-character display limit.
-                          display = f"{stage} ({row['descriptor_bundle_artifact']}, {row['descriptor_member']}, {row['descriptor_sha256']}, {worker})"
-                          if len(display) > 100:
-                              display = display[:97] + "..."
-                          names.append((name, f"engine / {display} / evaluate"))
+                      # Jobs, not available artifacts, define the complete failed-worker set.
+                      # Protected matrix field order and GitHub's 100-character display limit.
+                      display = f"{stage} ({row['descriptor_bundle_artifact']}, {row['descriptor_member']}, {row['descriptor_sha256']}, {worker})"
+                      if len(display) > 100:
+                          display = display[:97] + "..."
+                      publisher_name = f"engine / {display} / evaluate"
+                      matches = [job for job in jobs if job["name"] == publisher_name]
+                      if len(matches) != 1:
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_WORKER_JOB_INVALID")
+                      job = matches[0]
+                      if (str(job["run_id"]) != run_id or str(job["run_attempt"]) != attempt
+                              or job["head_sha"] != head or job["status"] != "completed"
+                              or job["conclusion"] not in ("success", "failure")):
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_WORKER_JOB_INVALID")
+                      if job["conclusion"] == "failure":
+                          names.append((name, publisher_name))
                   if not names or len(names) != len({name for name, _ in names}):
                       raise ValueError("CATALOG_RECOVERED_OUTCOME_INITIAL_FAILURE_MISSING_OR_DUPLICATE")
                   for name, publisher in names:

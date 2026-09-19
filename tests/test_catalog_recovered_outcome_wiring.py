@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _exercise(tmp_path, monkeypatch, *, change=None, artifact_change=None,
               run_change=None, member="recipe_matrix_a.json", cli_failure=False,
-              job_change=None, raw_change=None, extra_member_bytes=0, archive_change=None):
+              job_change=None, raw_change=None, extra_member_bytes=0, archive_change=None,
+              second_worker=None):
     step = next(s for s in load_github_yaml(
         ROOT / ".github/workflows/catalog-optimized-run.yml"
     )["jobs"]["campaign_outcome"]["steps"] if s.get("id") == "outcome")
@@ -57,9 +58,12 @@ def _exercise(tmp_path, monkeypatch, *, change=None, artifact_change=None,
         entry = zipfile.ZipInfo()
         # Preserve hostile ZIP spelling; Windows ZipInfo normalizes backslashes.
         entry.filename = member
-        archive.writestr(entry, json.dumps({"include": [{
+        rows = [{
             "descriptor_bundle_artifact": "bundle", "descriptor_member": "recipe/worker-003.json",
-            "descriptor_sha256": "c" * 64, "worker_id": 3}]}))
+            "descriptor_sha256": "c" * 64, "worker_id": 3}]
+        if second_worker is not None:
+            rows.append({**rows[0], "descriptor_member": "recipe/worker-004.json", "worker_id": 4})
+        archive.writestr(entry, json.dumps({"include": rows}))
         if extra_member_bytes:
             archive.writestr("logical_recipe_manifest.json", b" " * extra_member_bytes)
     archive_bytes = raw.getvalue()
@@ -85,6 +89,10 @@ def _exercise(tmp_path, monkeypatch, *, change=None, artifact_change=None,
             for index, (name, publish) in enumerate(zip(publisher_names, [
                 "Publish the already-materialized sealed plan", "Publish terminal science evidence",
                 "Publish the sealed failed worker attempt"], strict=True), 1)]
+    if second_worker is not None:
+        jobs.append({**jobs[2], "id": 4,
+                     "name": jobs[2]["name"].replace("worker-003", "worker-004"),
+                     "conclusion": second_worker})
     if job_change:
         job_change(jobs)
 
@@ -291,3 +299,44 @@ def test_expansion_limits_are_checked_before_extraction(tmp_path, monkeypatch, f
     with pytest.raises(ValueError, match=f"CATALOG_RECOVERED_OUTCOME_{reason}"):
         _exercise(tmp_path, monkeypatch, archive_change=oversized_headers)
     assert not list((tmp_path / "recovered-outcome-proof").rglob("member-*.json"))
+
+
+def test_second_failed_worker_cannot_disappear_when_its_artifact_is_missing(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="CATALOG_RECOVERED_OUTCOME"):
+        _exercise(tmp_path, monkeypatch, second_worker="failure")
+
+
+def test_successful_worker_does_not_require_a_failure_artifact(tmp_path, monkeypatch):
+    calls, _ = _exercise(tmp_path, monkeypatch, second_worker="success")
+    assert len([c for c in calls if c[0] == "gh" and c[2].endswith("/zip")]) == 3
+    assert "--recovered-failure-root" in calls[-1]
+
+
+def test_every_failed_worker_artifact_reaches_the_proof_consumer(tmp_path, monkeypatch):
+    def add_second(artifacts):
+        artifacts.append({**artifacts[-1], "id": 4, "name": worker_failure_artifact_name(
+            execution_plan_sha256="a" * 64, worker_id=4,
+            attempt_id="authority:worker:004:attempt:1")})
+
+    calls, _ = _exercise(tmp_path, monkeypatch, second_worker="failure", artifact_change=add_second)
+    assert len(list((tmp_path / "recovered-outcome-proof/failures").iterdir())) == 2
+    assert len([c for c in calls if c[0] == "gh" and c[2].endswith("/zip")]) == 4
+
+
+@pytest.mark.parametrize("conclusion", ["cancelled", "skipped", "neutral", "timed_out"])
+def test_non_success_non_failure_worker_cannot_receive_an_exception(tmp_path, monkeypatch, conclusion):
+    with pytest.raises(ValueError, match="CATALOG_RECOVERED_OUTCOME"):
+        _exercise(tmp_path, monkeypatch, second_worker=conclusion)
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda jobs: jobs.pop(),
+    lambda jobs: jobs.append({**jobs[-1], "id": 5}),
+    lambda jobs: jobs[-1].update(run_id=456),
+    lambda jobs: jobs[-1].update(run_attempt=1),
+    lambda jobs: jobs[-1].update(head_sha="0" * 40),
+    lambda jobs: jobs[-1].update(status="in_progress"),
+])
+def test_even_successful_workers_require_unique_current_completed_jobs(tmp_path, monkeypatch, mutate):
+    with pytest.raises(ValueError, match="CATALOG_RECOVERED_OUTCOME"):
+        _exercise(tmp_path, monkeypatch, second_worker="success", job_change=mutate)
