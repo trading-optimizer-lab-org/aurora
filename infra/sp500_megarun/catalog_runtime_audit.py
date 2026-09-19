@@ -83,22 +83,59 @@ def allowed_skips_from_verified_outputs(
     arbitrary caller-supplied document.
     """
     error = "CATALOG_RUNTIME_AUDIT_SKIP_POLICY_INVALID"
+    legacy_keys = {"binding", "matrix_counts", "reconcile_status", "recovery"}
     if (
         not isinstance(evidence, Mapping)
-        or set(evidence) != {"binding", "matrix_counts", "reconcile_status", "recovery"}
+        or set(evidence) not in (legacy_keys, legacy_keys | {"recovery_verified"})
         or evidence.get("binding") != dict(binding)
     ):
+        raise ValueError(error)
+    recovery_verified = evidence.get("recovery_verified", False)
+    if type(recovery_verified) is not bool:
         raise ValueError(error)
     counts = evidence.get("matrix_counts")
     if not isinstance(counts, Mapping) or set(counts) != set(_MATRIX_SKIP_JOBS):
         raise ValueError(error)
     if any(type(count) is not int or count < 0 for count in counts.values()):
         raise ValueError(error)
+    waves = evidence.get("recovery")
+    if recovery_verified:
+        if evidence.get("reconcile_status") != "":
+            raise ValueError(error)
+        if (
+            not isinstance(waves, list)
+            or len(waves) != 3
+            or any(
+                not isinstance(wave, Mapping)
+                or set(wave) != {"status", "has_matrix_a", "has_matrix_b"}
+                or any(value != "" for value in wave.values())
+                for wave in waves
+            )
+        ):
+            raise ValueError(error)
+        return frozenset(
+            {
+                "engine / publish_sealed_payload_artifacts",
+                "engine / build_components_a",
+                "engine / build_components_b",
+                "engine / materialize_cached_components_a",
+                "engine / materialize_cached_components_b",
+                "engine / verify_component_store",
+                "engine / evaluate_a",
+                "engine / evaluate_b",
+                "engine / evaluate_c",
+                "engine / reconcile_wave_0",
+                "engine / recovery_wave_1",
+                "engine / recovery_wave_2",
+                "engine / recovery_wave_3",
+                "engine / ready_to_merge",
+                "engine / reduce_groups",
+            }
+        )
     allowed = {
         f"engine / {job}" for count_name, job in _MATRIX_SKIP_JOBS.items()
         if counts[count_name] == 0
     }
-    waves = evidence.get("recovery")
     if not isinstance(waves, list) or len(waves) != 3:
         raise ValueError(error)
     previous = evidence.get("reconcile_status")
