@@ -1685,7 +1685,7 @@ def test_catalog_recovery_inline_python_is_syntactically_valid() -> None:
 
 @pytest.mark.parametrize("job_id", (
     "verify_component_store", "evaluate_a", "evaluate_b", "evaluate_c",
-    "reconcile_wave_0", "recovery_wave_1", "recovery_wave_2",
+    "reconcile_wave_0", "recovery_wave_1", "recovery_wave_2", "recovery_wave_3",
     "ready_to_merge", "reduce_groups", "reduce",
 ))
 def test_engine_dispatch_contract_blocks_new_work_after_cancellation(job_id: str) -> None:
@@ -1710,20 +1710,20 @@ def test_cancellation_keeps_terminal_diagnostics_available() -> None:
     assert "always()" in str(recovery["finalize_wave"]["if"])
 
 
-def test_engine_unrolls_exactly_two_selective_recovery_slots() -> None:
+def test_engine_unrolls_two_retry_waves_and_one_final_observation() -> None:
     workflow = _workflow(WORKFLOWS / "catalog-optimized-run.yml")
     jobs = workflow["jobs"]
     assert "reconcile_wave_0" in jobs
-    for wave in range(1, 3):
+    for wave in range(1, 4):
         job = jobs[f"recovery_wave_{wave}"]
         assert job["uses"] == "./.github/workflows/catalog-recovery-wave.yml"
         serialized = json.dumps(job, sort_keys=True)
         assert f"current_wave\": {wave}" in serialized
         assert "retry" in serialized and "replan" in serialized
         assert "always()" in str(job["if"])
-    assert "recovery_wave_3" not in jobs
+    assert "recovery_wave_4" not in jobs
     final_gate = jobs["ready_to_merge"]
-    assert "recovery_wave_2" in final_gate["needs"]
+    assert "recovery_wave_3" in final_gate["needs"]
     text = (WORKFLOWS / "catalog-optimized-run.yml").read_text("utf-8")
     assert "rerun all jobs" not in text.casefold()
     assert "catalog-recovery-wave.yml" in text

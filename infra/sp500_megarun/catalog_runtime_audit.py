@@ -99,7 +99,7 @@ def allowed_skips_from_verified_outputs(
         if counts[count_name] == 0
     }
     waves = evidence.get("recovery")
-    if not isinstance(waves, list) or len(waves) != 2:
+    if not isinstance(waves, list) or len(waves) != 3:
         raise ValueError(error)
     previous = evidence.get("reconcile_status")
     if previous not in {"retry", "replan"}:
@@ -113,6 +113,13 @@ def allowed_skips_from_verified_outputs(
             allowed.add(f"engine / recovery_wave_{wave_number}")
             continue
         if wave["status"] not in {"complete", "retry", "replan"}:
+            raise ValueError(error)
+        # The last wave observes attempt three; it cannot launch attempt four.
+        if wave_number == 3 and (
+            wave["status"] != "complete"
+            or wave["has_matrix_a"] != "false"
+            or wave["has_matrix_b"] != "false"
+        ):
             raise ValueError(error)
         for suffix in ("a", "b"):
             needed = wave[f"has_matrix_{suffix}"]

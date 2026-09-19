@@ -26,6 +26,7 @@ def _evidence():
         "recovery": [
             {"status": "complete", "has_matrix_a": "false", "has_matrix_b": "false"},
             {"status": "", "has_matrix_a": "", "has_matrix_b": ""},
+            {"status": "", "has_matrix_a": "", "has_matrix_b": ""},
         ],
     }
 
@@ -38,7 +39,7 @@ def test_skip_policy_uses_empty_plan_matrices_and_verified_recovery_outputs() ->
         "engine / materialize_cached_components_b",
         "engine / evaluate_b", "engine / evaluate_c",
         "engine / recovery_wave_1 / retry_a", "engine / recovery_wave_1 / retry_b",
-        "engine / recovery_wave_2",
+        "engine / recovery_wave_2", "engine / recovery_wave_3",
     })
 
 
@@ -69,11 +70,46 @@ def test_skip_policy_keeps_required_recovery_wave_when_first_wave_needs_retry() 
     evidence["recovery"] = [
         {"status": "retry", "has_matrix_a": "true", "has_matrix_b": "false"},
         {"status": "complete", "has_matrix_a": "true", "has_matrix_b": "false"},
+        {"status": "", "has_matrix_a": "", "has_matrix_b": ""},
     ]
     result = audit.allowed_skips_from_verified_outputs(evidence, binding=evidence["binding"])
     assert "engine / recovery_wave_2" not in result
     assert "engine / recovery_wave_1 / retry_a" not in result
     assert "engine / recovery_wave_2 / retry_b" in result
+
+
+def test_skip_policy_accepts_final_observation_after_third_attempt() -> None:
+    evidence = _evidence()
+    evidence["recovery"] = [
+        {"status": "retry", "has_matrix_a": "true", "has_matrix_b": "false"},
+        {"status": "retry", "has_matrix_a": "true", "has_matrix_b": "false"},
+        {"status": "complete", "has_matrix_a": "false", "has_matrix_b": "false"},
+    ]
+    result = audit.allowed_skips_from_verified_outputs(evidence, binding=evidence["binding"])
+    assert "engine / recovery_wave_3" not in result
+    assert "engine / recovery_wave_2 / retry_a" not in result
+    assert "engine / recovery_wave_3 / retry_a" in result
+    assert "engine / recovery_wave_3 / retry_b" in result
+
+
+@pytest.mark.parametrize("mutation", ("missing_observation", "fourth_wave", "fourth_attempt", "not_complete"))
+def test_skip_policy_rejects_unobserved_or_excess_recovery(mutation: str) -> None:
+    evidence = _evidence()
+    evidence["recovery"] = [
+        {"status": "retry", "has_matrix_a": "true", "has_matrix_b": "false"},
+        {"status": "retry", "has_matrix_a": "true", "has_matrix_b": "false"},
+        {"status": "complete", "has_matrix_a": "false", "has_matrix_b": "false"},
+    ]
+    if mutation == "missing_observation":
+        evidence["recovery"].pop()
+    elif mutation == "fourth_wave":
+        evidence["recovery"].append({"status": "", "has_matrix_a": "", "has_matrix_b": ""})
+    elif mutation == "fourth_attempt":
+        evidence["recovery"][2]["has_matrix_a"] = "true"
+    else:
+        evidence["recovery"][2]["status"] = "retry"
+    with pytest.raises(ValueError, match="CATALOG_RUNTIME_AUDIT_SKIP_POLICY_INVALID"):
+        audit.allowed_skips_from_verified_outputs(evidence, binding=evidence["binding"])
 
 
 @pytest.mark.parametrize("wrong_binding", (False, True))
@@ -115,11 +151,11 @@ def test_workflow_supplies_skip_evidence_only_from_protected_outputs() -> None:
     workflows = Path(__file__).resolve().parents[1] / ".github/workflows"
     engine = load_github_yaml(workflows / "catalog-optimized-run.yml")
     runtime = engine["jobs"]["audit_runtime"]
-    assert {"engine_verify_sealed_plan", "reconcile_wave_0", "recovery_wave_1", "recovery_wave_2"} <= set(runtime["needs"])
+    assert {"engine_verify_sealed_plan", "reconcile_wave_0", "recovery_wave_1", "recovery_wave_2", "recovery_wave_3"} <= set(runtime["needs"])
     step = next(row for row in runtime["steps"] if row.get("name") == "Collect complete current-run metadata")
     assert step["env"]["VERIFIED_MATRIX_COUNTS"] == "${{ needs.engine_verify_sealed_plan.outputs.runtime_skip_matrix_counts }}"
     assert step["env"]["VERIFIED_RECONCILE_STATUS"] == "${{ needs.reconcile_wave_0.outputs.status }}"
-    for wave in (1, 2):
+    for wave in (1, 2, 3):
         for suffix, field in (("STATUS", "status"), ("MATRIX_A", "has_matrix_a"), ("MATRIX_B", "has_matrix_b")):
             assert step["env"][f"VERIFIED_WAVE_{wave}_{suffix}"] == "${{ needs.recovery_wave_" + str(wave) + ".outputs." + field + " }}"
     assert "--verified-skip-evidence runtime-skip-evidence.json" in step["run"]

@@ -1018,105 +1018,6 @@ jobs:
           test -n "${!id_name}"
           test -n "${!digest_name}"
 
-      - name: Seal the exact failed worker attempt
-        id: failure
-        if: ${{ always() && steps.durable_chain.outcome != 'success' }}
-        shell: bash
-        env:
-          AUTHORITY_ID: ${{ inputs.authority_id }}
-          CAMPAIGN_ID: ${{ inputs.campaign_id }}
-          EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
-          PROTECTED_COMMIT_SHA: ${{ github.sha }}
-          WORKER_ID: ${{ inputs.worker_id }}
-          VERIFIED_ATTEMPT_ID: ${{ steps.descriptor.outputs.attempt_id }}
-          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
-          COMPUTE_1: ${{ steps.compute_1.outcome }}
-          COMPUTE_2: ${{ steps.compute_2.outcome }}
-          COMPUTE_3: ${{ steps.compute_3.outcome }}
-          COMPUTE_4: ${{ steps.compute_4.outcome }}
-          COMPUTE_5: ${{ steps.compute_5.outcome }}
-          COMPUTE_6: ${{ steps.compute_6.outcome }}
-          COMPUTE_7: ${{ steps.compute_7.outcome }}
-          COMPUTE_8: ${{ steps.compute_8.outcome }}
-          UPLOAD_1: ${{ steps.upload_1.outcome }}
-          UPLOAD_2: ${{ steps.upload_2.outcome }}
-          UPLOAD_3: ${{ steps.upload_3.outcome }}
-          UPLOAD_4: ${{ steps.upload_4.outcome }}
-          UPLOAD_5: ${{ steps.upload_5.outcome }}
-          UPLOAD_6: ${{ steps.upload_6.outcome }}
-          UPLOAD_7: ${{ steps.upload_7.outcome }}
-          UPLOAD_8: ${{ steps.upload_8.outcome }}
-        run: |
-          set -euo pipefail
-          attempt_id="$VERIFIED_ATTEMPT_ID"
-          if [ -z "$attempt_id" ]; then
-            printf -v worker_id_padded '%03d' "$WORKER_ID"
-            attempt_id="$AUTHORITY_ID:worker:$worker_id_padded:unverified:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"
-          fi
-          common=(
-            --authority-id "$AUTHORITY_ID"
-            --campaign-id "$CAMPAIGN_ID"
-            --execution-plan-sha256 "$EXECUTION_PLAN_SHA256"
-            --protected-commit-sha "$PROTECTED_COMMIT_SHA"
-            --worker-id "$WORKER_ID"
-            --attempt-id "$attempt_id"
-            --output "$RUNNER_TEMP/catalog-worker-failure-final.json"
-            --github-output "$GITHUB_OUTPUT"
-          )
-          if [ -f "$RUNNER_TEMP/catalog-worker-failure.json" ]; then
-            python -m scripts.prepare_catalog_worker_failure \
-              "${common[@]}" \
-              --existing "$RUNNER_TEMP/catalog-worker-failure.json"
-            exit 0
-          fi
-          if [ "$RUNTIME_OUTCOME" != "success" ]; then
-            python -S -m scripts.prepare_catalog_worker_bootstrap_failure "${common[@]}"
-            exit 0
-          fi
-          reason="UNKNOWN_WORKER_FAILURE"
-          stage="setup"
-          source="WORKER_STEP_FAILED_WITHOUT_CLASSIFIED_RECEIPT"
-          for outcome in \
-            "$UPLOAD_1" "$UPLOAD_2" "$UPLOAD_3" "$UPLOAD_4" \
-            "$UPLOAD_5" "$UPLOAD_6" "$UPLOAD_7" "$UPLOAD_8"; do
-            if [ "$outcome" = "failure" ]; then
-              reason="ARTIFACT_UPLOAD_FAILED"
-              stage="checkpoint_upload"
-              source="CHECKPOINT_ARTIFACT_UPLOAD_FAILED"
-            fi
-          done
-          any_compute="false"
-          for outcome in \
-            "$COMPUTE_1" "$COMPUTE_2" "$COMPUTE_3" "$COMPUTE_4" \
-            "$COMPUTE_5" "$COMPUTE_6" "$COMPUTE_7" "$COMPUTE_8"; do
-            if [ "$outcome" = "success" ] || [ "$outcome" = "failure" ]; then
-              any_compute="true"
-            fi
-          done
-          if [ "$reason" = "UNKNOWN_WORKER_FAILURE" ] && \
-             [ "$any_compute" = "true" ]; then
-            reason="INTEGRITY_ERROR"
-            stage="terminal_manifest"
-            source="DURABLE_CHECKPOINT_RECEIPT_INVALID"
-          fi
-          python -m scripts.prepare_catalog_worker_failure \
-            "${common[@]}" \
-            --stage "$stage" \
-            --reason-code "$reason" \
-            --exit-code 1 \
-            --exception-type WorkflowStepFailure \
-            --source-error-code "$source"
-
-      - name: Publish the sealed failed worker attempt
-        if: ${{ always() && steps.failure.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ steps.failure.outputs.failure_artifact }}
-          path: ${{ runner.temp }}/catalog-worker-failure-final.json
-          if-no-files-found: error
-          retention-days: 30
-          compression-level: 0
-
       - name: Write tiny terminal attempt manifest without result rows
         id: terminal
         if: ${{ always() && steps.durable_chain.outcome == 'success' }}
@@ -1176,11 +1077,126 @@ jobs:
           PY
 
       - name: Upload tiny terminal attempt manifest
-        if: ${{ steps.terminal.outcome == 'success' }}
+        id: terminal_upload
+        if: ${{ always() && steps.terminal.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.descriptor.outputs.terminal_attempt_artifact }}
           path: terminal-attempt-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Seal the exact failed worker attempt
+        id: failure
+        if: >-
+          ${{ always() &&
+          (steps.durable_chain.outcome != 'success' ||
+          steps.terminal.outcome != 'success' ||
+          steps.terminal_upload.outcome != 'success') }}
+        shell: bash
+        env:
+          AUTHORITY_ID: ${{ inputs.authority_id }}
+          CAMPAIGN_ID: ${{ inputs.campaign_id }}
+          EXECUTION_PLAN_SHA256: ${{ inputs.execution_plan_sha256 }}
+          PROTECTED_COMMIT_SHA: ${{ github.sha }}
+          WORKER_ID: ${{ inputs.worker_id }}
+          VERIFIED_ATTEMPT_ID: ${{ steps.descriptor.outputs.attempt_id }}
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+          TERMINAL_OUTCOME: ${{ steps.terminal.outcome }}
+          TERMINAL_UPLOAD_OUTCOME: ${{ steps.terminal_upload.outcome }}
+          COMPUTE_1: ${{ steps.compute_1.outcome }}
+          COMPUTE_2: ${{ steps.compute_2.outcome }}
+          COMPUTE_3: ${{ steps.compute_3.outcome }}
+          COMPUTE_4: ${{ steps.compute_4.outcome }}
+          COMPUTE_5: ${{ steps.compute_5.outcome }}
+          COMPUTE_6: ${{ steps.compute_6.outcome }}
+          COMPUTE_7: ${{ steps.compute_7.outcome }}
+          COMPUTE_8: ${{ steps.compute_8.outcome }}
+          UPLOAD_1: ${{ steps.upload_1.outcome }}
+          UPLOAD_2: ${{ steps.upload_2.outcome }}
+          UPLOAD_3: ${{ steps.upload_3.outcome }}
+          UPLOAD_4: ${{ steps.upload_4.outcome }}
+          UPLOAD_5: ${{ steps.upload_5.outcome }}
+          UPLOAD_6: ${{ steps.upload_6.outcome }}
+          UPLOAD_7: ${{ steps.upload_7.outcome }}
+          UPLOAD_8: ${{ steps.upload_8.outcome }}
+        run: |
+          set -euo pipefail
+          attempt_id="$VERIFIED_ATTEMPT_ID"
+          if [ -z "$attempt_id" ]; then
+            printf -v worker_id_padded '%03d' "$WORKER_ID"
+            attempt_id="$AUTHORITY_ID:worker:$worker_id_padded:unverified:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"
+          fi
+          common=(
+            --authority-id "$AUTHORITY_ID"
+            --campaign-id "$CAMPAIGN_ID"
+            --execution-plan-sha256 "$EXECUTION_PLAN_SHA256"
+            --protected-commit-sha "$PROTECTED_COMMIT_SHA"
+            --worker-id "$WORKER_ID"
+            --attempt-id "$attempt_id"
+            --output "$RUNNER_TEMP/catalog-worker-failure-final.json"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [ -f "$RUNNER_TEMP/catalog-worker-failure.json" ]; then
+            python -m scripts.prepare_catalog_worker_failure \
+              "${common[@]}" \
+              --existing "$RUNNER_TEMP/catalog-worker-failure.json"
+            exit 0
+          fi
+          if [ "$RUNTIME_OUTCOME" != "success" ]; then
+            python -S -m scripts.prepare_catalog_worker_bootstrap_failure "${common[@]}"
+            exit 0
+          fi
+          reason="UNKNOWN_WORKER_FAILURE"
+          stage="setup"
+          source="WORKER_STEP_FAILED_WITHOUT_CLASSIFIED_RECEIPT"
+          for outcome in \
+            "$UPLOAD_1" "$UPLOAD_2" "$UPLOAD_3" "$UPLOAD_4" \
+            "$UPLOAD_5" "$UPLOAD_6" "$UPLOAD_7" "$UPLOAD_8"; do
+            if [ "$outcome" = "failure" ]; then
+              reason="ARTIFACT_UPLOAD_FAILED"
+              stage="checkpoint_upload"
+              source="CHECKPOINT_ARTIFACT_UPLOAD_FAILED"
+            fi
+          done
+          if [ "${TERMINAL_UPLOAD_OUTCOME:-skipped}" = "failure" ]; then
+            reason="ARTIFACT_UPLOAD_FAILED"
+            stage="terminal_manifest"
+            source="TERMINAL_MANIFEST_ARTIFACT_UPLOAD_FAILED"
+          elif [ "${TERMINAL_OUTCOME:-skipped}" = "failure" ]; then
+            reason="INTEGRITY_ERROR"
+            stage="terminal_manifest"
+            source="TERMINAL_MANIFEST_CONSTRUCTION_FAILED"
+          fi
+          any_compute="false"
+          for outcome in \
+            "$COMPUTE_1" "$COMPUTE_2" "$COMPUTE_3" "$COMPUTE_4" \
+            "$COMPUTE_5" "$COMPUTE_6" "$COMPUTE_7" "$COMPUTE_8"; do
+            if [ "$outcome" = "success" ] || [ "$outcome" = "failure" ]; then
+              any_compute="true"
+            fi
+          done
+          if [ "$reason" = "UNKNOWN_WORKER_FAILURE" ] && \
+             [ "$any_compute" = "true" ]; then
+            reason="INTEGRITY_ERROR"
+            stage="terminal_manifest"
+            source="DURABLE_CHECKPOINT_RECEIPT_INVALID"
+          fi
+          python -m scripts.prepare_catalog_worker_failure \
+            "${common[@]}" \
+            --stage "$stage" \
+            --reason-code "$reason" \
+            --exit-code 1 \
+            --exception-type WorkflowStepFailure \
+            --source-error-code "$source"
+
+      - name: Publish the sealed failed worker attempt
+        if: ${{ always() && steps.failure.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.failure.outputs.failure_artifact }}
+          path: ${{ runner.temp }}/catalog-worker-failure-final.json
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
