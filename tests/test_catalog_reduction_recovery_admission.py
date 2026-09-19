@@ -87,3 +87,14 @@ def test_recovery_rejects_active_owner(monkeypatch):
         state.campaigns[0].model_copy(update={"terminal_receipt_sha256": None}),)})
     with pytest.raises(ValueError, match="CATALOG_RECOVERY_PREDECESSOR"):
         _verify(monkeypatch, owner=owner, terminal=terminal, state=active, request=request, profile=profile)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("reason_code", "CATALOG_SCIENCE_FAILED"), ("state", "SUCCESS"),
+    ("engine_run_id", 18),
+])
+def test_recovery_never_reuses_a_different_terminal_kind(monkeypatch, field, value):
+    request, owner, terminal, state, profile = _case()
+    altered = terminal.model_copy(update={field: value})
+    with pytest.raises(ValueError, match="CATALOG_RECOVERY_PREDECESSOR"):
+        _verify(monkeypatch, owner=owner, terminal=altered, state=state, request=request, profile=profile)
