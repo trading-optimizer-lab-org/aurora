@@ -12,7 +12,7 @@
       "campaign_key": "sp500-optimized-catalog-v1",
       "previous_request_sha256": "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
       "next_generation": 7,
-      "target_definition_sha256": "dd602e699a22ce35bcd097b8959659885e6b48cd048f79c9eedceeb867d0daab",
+      "target_definition_sha256": "144d74216772da2e0dcb96263f1e61dfe3401564dac59f196b4ef2b54b5cef7b",
       "target_prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3",
       "source_ticket_contexts": [
         {
