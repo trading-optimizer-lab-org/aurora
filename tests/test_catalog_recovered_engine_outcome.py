@@ -233,3 +233,41 @@ def test_multiblock_worker_keeps_initial_checkpoints_and_recovers_only_pending(
         selected = outcome.select_catalog_engine_outcome(**payload, recovered_evaluation_evidence=proof)
         assert selected.state.value == "TERMINAL_CANDIDATE"
         assert selected.stage_results["evaluate_a"] == "failure"
+
+
+@pytest.mark.parametrize("size,tamper", [(9_881_185, False), (9_881_185, True), (16 * 1024 * 1024 + 1, False)])
+def test_large_logical_manifest_keeps_seal_and_contextual_size_bound(tmp_path, size, tamper):
+    fixture = _proof_fixture(tmp_path)
+    sealed = fixture[0]
+    path = sealed / "logical_recipe_manifest.json"
+    # Preserve the real planner's logical content; JSON whitespace isolates byte
+    # size from recipe count and avoids fabricating a scientific evaluation.
+    raw = path.read_bytes()
+    path.write_bytes(raw + b" " * (size - len(raw)))
+    receipt_path = sealed / "execution_plan_receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    row = next(row for row in receipt["content_manifest"] if row["path"] == path.name)
+    row.update(size_bytes=size, sha256=sha256(path.read_bytes()).hexdigest())
+    receipt["content_manifest_sha256"] = canonical_sha256(tuple(receipt["content_manifest"]))
+    receipt.pop("receipt_sha256")
+    receipt["receipt_sha256"] = canonical_sha256(receipt)
+    receipt_path.write_text(json.dumps(receipt))
+    if tamper:
+        path.write_bytes(path.read_bytes()[:-1] + b"\n")
+    if tamper or size > 16 * 1024 * 1024:
+        code = "CATALOG_SEALED_PLAN_CONTENT_INVALID" if tamper else "CATALOG_RECOVERED_EVIDENCE_FILE_INVALID"
+        with pytest.raises(ValueError, match=code):
+            _verify(fixture)
+    else:
+        proof = _verify(fixture)
+        assert outcome.select_catalog_engine_outcome(
+            **fixture[-1], recovered_evaluation_evidence=proof,
+        ).state.value == "TERMINAL_CANDIDATE"
+
+
+@pytest.mark.parametrize("name", ["catalog_terminal_science_index_v1.json", "failure.json", "logical_recipe_manifest.json"])
+def test_default_document_limit_is_not_inferred_from_filename(tmp_path, name):
+    path = tmp_path / name
+    path.write_bytes(b"{}" + b" " * (2 * 1024 * 1024 - 1))
+    with pytest.raises(ValueError, match="CATALOG_RECOVERED_EVIDENCE_FILE_INVALID"):
+        outcome._recovery_document(path)

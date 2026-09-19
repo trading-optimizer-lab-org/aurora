@@ -37,7 +37,7 @@ class RecoveredEvaluationEvidence:
     science_index_sha256: str
 
 
-def _recovery_document(path: Path) -> dict[str, Any]:
+def _recovery_document(path: Path, *, maximum_bytes: int = 2 * 1024 * 1024) -> dict[str, Any]:
     def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in pairs:
@@ -46,7 +46,7 @@ def _recovery_document(path: Path) -> dict[str, Any]:
             result[key] = value
         return result
 
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum_bytes:
         raise ValueError("CATALOG_RECOVERED_EVIDENCE_FILE_INVALID")
     value = json.loads(path.read_text("utf-8"), object_pairs_hook=unique,
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
@@ -98,7 +98,10 @@ def verify_recovered_evaluation_evidence(
     audit = documents["catalog_scientific_audit_receipt_v1.json"]
     equivalence = documents["catalog_equivalence_receipt_v1.json"]
     regression = documents["catalog_regression_receipt_v1.json"]
-    logical = _recovery_document(sealed_plan / "logical_recipe_manifest.json")
+    # Full SP500 logical manifests exceed the compact evidence-document limit.
+    logical = _recovery_document(
+        sealed_plan / "logical_recipe_manifest.json", maximum_bytes=16 * 1024 * 1024,
+    )
     logical_payload = logical.get("payload", logical)
     ids = [row["strategy_id"] for row in logical_payload["recipes"]]
     count = len(ids)
