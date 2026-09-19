@@ -1,6 +1,6 @@
 """Closed protected profile for the selective catalog reduction recovery.
 
-This module only describes already-published gen7 evidence that a gen8 canary
+This module only describes already-published gen7 evidence that a gen8 or gen9 canary
 may reuse.  It does not read or write current authority, manifests, tokens,
 lineage, worker output, or any new scientific result.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Mapping, cast
 
@@ -22,6 +23,7 @@ from .catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
 RECOVERY_CONFIG_RELATIVE_PATH = "config/catalog_reduction_recovery_profiles_v1.json"
 RECOVERY_CAMPAIGN_KEY = "catalog-fast-canary-v1"
 RECOVERY_TARGET_GENERATION = 8
+RECOVERY_TARGET_GENERATIONS = frozenset({8, 9})
 RECOVERY_PREDECESSOR_REQUEST_SHA256 = (
     "a0749c8833b52612096d8a820f3a46f5af48ce52848f8bfc02377f3236996896"
 )
@@ -66,6 +68,20 @@ _EXPECTED_STRATEGY_IDS = (
     "SCV1-001937e4fad670d10fd93267f0c65a5a643a59dfc1d22e2b4d92c1c08d6ddf40",
     "SCV1-002e6ef7635802db02a3ed6deca385d1f368d0d080f5389d5feb0edc54b1a7f4",
 )
+
+
+@dataclass(frozen=True)
+class RecoveryPredecessorBindings:
+    """Protected authorization identity, never serialized into source evidence."""
+
+    generation: int
+    request_sha256: str
+    issue_number: int
+    run_id: int
+    run_attempt: int
+    protected_commit_sha: str
+    terminal_receipt_sha256: str
+    decision_sha256: str | None = None
 
 
 def _canonical_json_bytes(value: object) -> bytes:
@@ -131,13 +147,13 @@ class ReductionRecoveryArtifactV1(FrozenModel):
 
 
 class ReductionRecoveryProfileV1(FrozenModel):
-    """The one protected gen7-to-gen8 selective recovery profile."""
+    """One of two closed recovery targets sharing immutable gen7 evidence."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     schema_version: Literal["1"]
     campaign_key: Literal["catalog-fast-canary-v1"]
-    target_generation: Literal[8]
+    target_generation: Literal[8, 9]
     source_request_sha256: Sha256
     source_issue_number: int = Field(strict=True, gt=0)
     source_run_id: int = Field(strict=True, gt=0)
@@ -207,7 +223,6 @@ class ReductionRecoveryProfileV1(FrozenModel):
         expected_scalars = (
             self.schema_version,
             self.campaign_key,
-            self.target_generation,
             self.source_request_sha256,
             self.source_issue_number,
             self.source_run_id,
@@ -220,7 +235,6 @@ class ReductionRecoveryProfileV1(FrozenModel):
         required_scalars = (
             "1",
             RECOVERY_CAMPAIGN_KEY,
-            RECOVERY_TARGET_GENERATION,
             RECOVERY_PREDECESSOR_REQUEST_SHA256,
             323,
             35436320227,
@@ -246,6 +260,40 @@ class ReductionRecoveryProfileV1(FrozenModel):
         if self.science_sha256 != self.source_plan_bindings["science_sha256"]:
             raise ValueError("profile science binding mismatch")
         return self
+
+    @property
+    def source_generation(self) -> int:
+        """Both protected targets reuse gen7; this is not target minus one."""
+
+        return 7
+
+    @property
+    def predecessor_bindings(self) -> RecoveryPredecessorBindings:
+        """Separate immediate authorization from immutable source provenance."""
+
+        if self.target_generation == 8:
+            return RecoveryPredecessorBindings(
+                generation=7,
+                request_sha256=RECOVERY_PREDECESSOR_REQUEST_SHA256,
+                issue_number=323,
+                run_id=35436320227,
+                run_attempt=1,
+                protected_commit_sha="fc77968dceeb93b332c143cc367b99128f488093",
+                terminal_receipt_sha256="67224b935b44f2d7598e2b28d9cb686d4eee89a046d0ec3b0482db4aba9d8cc4",
+                decision_sha256="c9471a1431226acc4ef70bfd815ac2a6e0cc2bc011865b61d5d045244b0ebc7c",
+            )
+        if self.target_generation == 9:
+            return RecoveryPredecessorBindings(
+                generation=8,
+                request_sha256="70d15409754069379635e7ff1d9a6990d8b30dff68fce16531cee875d16e719f",
+                issue_number=328,
+                run_id=35454099484,
+                run_attempt=1,
+                protected_commit_sha="41d904b66c33bb8d0150aa14c7ca2564afd3f154",
+                terminal_receipt_sha256="a10a880af0c3a3bd4ebd69958f5e4761cf3c620da32abddaff080a346b8a0193",
+                decision_sha256="91e1e0bb41a76b5014d8d705cb67ccb5b163c24c2551bd1d84cc91ab37ccf023",
+            )
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
 
     @property
     def profile_sha256(self) -> str:
@@ -287,7 +335,7 @@ def _read_config(repo_root: Path) -> object:
 
 
 def load_reduction_recovery_profiles(repo_root: Path) -> tuple[ReductionRecoveryProfileV1, ...]:
-    """Load exactly the one closed protected recovery profile."""
+    """Load exactly the two distinct protected recovery targets."""
 
     try:
         payload = _read_config(repo_root)
@@ -296,10 +344,14 @@ def load_reduction_recovery_profiles(repo_root: Path) -> tuple[ReductionRecovery
             or set(payload) != {"schema_version", "profiles"}
             or payload["schema_version"] != "1"
             or type(payload["profiles"]) is not list
-            or len(payload["profiles"]) != 1
+            or len(payload["profiles"]) != 2
         ):
             raise ValueError("invalid protected profile root")
-        profiles = (ReductionRecoveryProfileV1.model_validate(payload["profiles"][0]),)
+        profiles = tuple(ReductionRecoveryProfileV1.model_validate(row) for row in payload["profiles"])
+        if {(row.campaign_key, row.target_generation) for row in profiles} != {
+            (RECOVERY_CAMPAIGN_KEY, generation) for generation in RECOVERY_TARGET_GENERATIONS
+        }:
+            raise ValueError("invalid protected profile targets")
         return profiles
     except (OSError, TypeError, ValueError, UnicodeError, RecursionError, ValidationError) as exc:
         if str(exc) == "CATALOG_REDUCTION_RECOVERY_CONFIG_INVALID":
@@ -310,17 +362,15 @@ def load_reduction_recovery_profiles(repo_root: Path) -> tuple[ReductionRecovery
 def load_reduction_recovery_profile(
     repo_root: Path, request: CatalogRunRequestV1
 ) -> ReductionRecoveryProfileV1 | None:
-    """Return the protected profile only for its exact gen8 canary request."""
+    """Select a protected target and require its exact immediate predecessor."""
 
     if not isinstance(request, CatalogRunRequestV1):
         raise ValueError("CATALOG_REDUCTION_RECOVERY_REQUEST_INVALID")
-    if (request.campaign_key, request.launch_generation) != (
-        RECOVERY_CAMPAIGN_KEY,
-        RECOVERY_TARGET_GENERATION,
+    if (
+        request.campaign_key != RECOVERY_CAMPAIGN_KEY
+        or request.launch_generation not in RECOVERY_TARGET_GENERATIONS
     ):
         return None
-    if request.previous_terminal_request_sha256 != RECOVERY_PREDECESSOR_REQUEST_SHA256:
-        raise ValueError("CATALOG_REDUCTION_RECOVERY_PREDECESSOR_MISMATCH")
     profiles = load_reduction_recovery_profiles(repo_root)
     matches = tuple(
         profile
@@ -328,21 +378,21 @@ def load_reduction_recovery_profile(
         if (
             profile.campaign_key == request.campaign_key
             and profile.target_generation == request.launch_generation
-            and profile.source_request_sha256 == request.previous_terminal_request_sha256
         )
     )
     if len(matches) != 1:
         raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_NOT_FOUND")
+    if request.previous_terminal_request_sha256 != matches[0].predecessor_bindings.request_sha256:
+        raise ValueError("CATALOG_REDUCTION_RECOVERY_PREDECESSOR_MISMATCH")
     return matches[0]
 
 
 def validate_exact_profile(
     repo_root: Path, payload: Mapping[str, object] | ReductionRecoveryProfileV1
 ) -> ReductionRecoveryProfileV1:
-    """Require a payload to equal the one protected config profile."""
+    """Require exact equality with the protected profile for this target."""
 
     protected = load_reduction_recovery_profiles(repo_root)
-    expected = protected[0]
     try:
         candidate = (
             payload
@@ -351,7 +401,12 @@ def validate_exact_profile(
         )
     except (TypeError, ValueError, ValidationError) as exc:
         raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH") from exc
-    if candidate != expected:
+    matches = tuple(
+        profile for profile in protected
+        if (profile.campaign_key, profile.target_generation)
+        == (candidate.campaign_key, candidate.target_generation)
+    )
+    if len(matches) != 1 or candidate != matches[0]:
         raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
     return candidate
 

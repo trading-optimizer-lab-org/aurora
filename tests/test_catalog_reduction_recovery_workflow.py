@@ -9,6 +9,8 @@ import sys
 import textwrap
 from typing import Any
 
+import pytest
+
 from aurora.infra.github_performance.preflight import load_github_yaml
 
 
@@ -43,7 +45,7 @@ def _sha(value: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _sealed_profile_fixture(tmp_path: Path, *, include_profile: bool) -> Path:
+def _sealed_profile_fixture(tmp_path: Path, *, include_profile: bool, generation: int = 8, duplicate: bool = False) -> Path:
     root = tmp_path / "runner-temp" / "sealed-plan"
     root.mkdir(parents=True)
     workspace = tmp_path / "workspace"
@@ -53,7 +55,12 @@ def _sealed_profile_fixture(tmp_path: Path, *, include_profile: bool) -> Path:
         "schema_version": "1",
         "binding": {"request_sha256": "a" * 64},
     }
-    profile = {"schema_version": "1", "source_request_sha256": "b" * 64}
+    profiles = [
+        {"schema_version": "1", "campaign_key": "catalog-fast-canary-v1",
+         "target_generation": target, "source_request_sha256": "b" * 64}
+        for target in (8, 9)
+    ]
+    profile = profiles[generation - 8]
     if include_profile:
         profile_path = root / "reduction_recovery.json"
         profile_path.write_text(
@@ -63,7 +70,7 @@ def _sealed_profile_fixture(tmp_path: Path, *, include_profile: bool) -> Path:
         controller["binding"]["reduction_recovery_sha256"] = _sha(profile)  # type: ignore[index]
     (workspace / "config/catalog_reduction_recovery_profiles_v1.json").write_text(
         json.dumps(
-            {"schema_version": "1", "profiles": [profile]},
+            {"schema_version": "1", "profiles": [profile, profile] if duplicate else profiles},
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -105,10 +112,10 @@ def _sealed_profile_fixture(tmp_path: Path, *, include_profile: bool) -> Path:
     return root.parent
 
 
-def _run_recovery_verifier(tmp_path: Path, *, include_profile: bool) -> subprocess.CompletedProcess[str]:
+def _run_recovery_verifier(tmp_path: Path, *, include_profile: bool, generation: int = 8, duplicate: bool = False) -> subprocess.CompletedProcess[str]:
     step = _step("engine_verify_sealed_plan", "recovery")
     script = _inline_python(step["run"])
-    runner_temp = _sealed_profile_fixture(tmp_path, include_profile=include_profile)
+    runner_temp = _sealed_profile_fixture(tmp_path, include_profile=include_profile, generation=generation, duplicate=duplicate)
     output = tmp_path / "github-output.txt"
     output.write_text("", encoding="utf-8")
     environment = os.environ.copy()
@@ -137,12 +144,19 @@ def _outputs(tmp_path: Path) -> dict[str, str]:
     )
 
 
-def test_engine_verify_derives_reduction_only_from_sealed_profile_and_manifest(tmp_path: Path) -> None:
-    result = _run_recovery_verifier(tmp_path, include_profile=True)
+@pytest.mark.parametrize("generation", [8, 9])
+def test_engine_verify_derives_reduction_only_from_sealed_profile_and_manifest(tmp_path: Path, generation: int) -> None:
+    result = _run_recovery_verifier(tmp_path, include_profile=True, generation=generation)
     assert result.returncode == 0, result.stderr
     values = _outputs(tmp_path)
     assert values["reduction_only"] == "true"
     assert values["recovery_verified"] == "true"
+
+
+def test_engine_verify_rejects_duplicate_protected_profile_targets(tmp_path: Path) -> None:
+    result = _run_recovery_verifier(tmp_path, include_profile=True, duplicate=True)
+    assert result.returncode != 0
+    assert "CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH" in result.stderr
 
 
 def test_engine_verify_without_profile_is_normal_and_does_not_accept_free_input(tmp_path: Path) -> None:

@@ -46,7 +46,9 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
     CatalogRebuildableStoreIndexV1,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
-from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import load_reduction_recovery_profile
+from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import (
+    ReductionRecoveryProfileV1, load_reduction_recovery_profile,
+)
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateAliasEvidence, FastGateOwnerEvidence, load_fast_gate_owner, load_owner_terminal_receipt,
@@ -208,30 +210,55 @@ def _require_reduction_recovery_predecessor(
     lookup_owner: Callable[[int, CatalogRunRequestV1, int], object],
     download_archive: Callable[[int], bytes],
 ) -> None:
-    """Authorize reuse only from the exact terminal owner in current authority."""
+    """Bind the immediate terminal owner separately from immutable source provenance."""
     rows = [row for row in authority.campaigns if row.request.campaign_key == request.campaign_key]
     if len(rows) != 1:
         raise ValueError("CATALOG_RECOVERY_PREDECESSOR_MISSING")
     previous = rows[0]
+    predecessor_request = profile["source_request_sha256"]
+    predecessor_issue = profile["source_issue_number"]
+    predecessor_run = profile["source_run_id"]
+    predecessor_attempt = profile["source_run_attempt"]
+    predecessor_terminal = profile["source_terminal_receipt_sha256"]
+    predecessor_commit = profile["source_plan_bindings"]["protected_commit_sha"]
+    predecessor_decision = profile["source_plan_bindings"]["decision_sha256"]
+    successor_recovery = profile["target_generation"] == 9
+    if successor_recovery:
+        # The closed gen9 profile reuses gen7 bytes, but gen8 is the immediate
+        # authority predecessor. Neither its terminal nor the source is rewritten.
+        protected_profile = ReductionRecoveryProfileV1.model_validate(profile)
+        predecessor = protected_profile.predecessor_bindings
+        if (
+            previous.generation != predecessor.generation
+            or previous.request.previous_terminal_request_sha256 != protected_profile.source_request_sha256
+        ):
+            raise ValueError("CATALOG_RECOVERY_PREDECESSOR_BINDING_INVALID")
+        predecessor_request = predecessor.request_sha256
+        predecessor_issue = predecessor.issue_number
+        predecessor_run = predecessor.run_id
+        predecessor_attempt = predecessor.run_attempt
+        predecessor_terminal = predecessor.terminal_receipt_sha256
+        predecessor_commit = predecessor.protected_commit_sha
+        predecessor_decision = predecessor.decision_sha256
     if (
         profile["campaign_key"] != request.campaign_key
         or profile["target_generation"] != request.launch_generation
         or request.launch_generation != previous.generation + 1
         or request.previous_terminal_request_sha256 != previous.request.request_sha256
-        or profile["source_request_sha256"] != previous.request.request_sha256
-        or profile["source_issue_number"] != previous.owner_issue_number
-        or profile["source_run_id"] != previous.owner_run_id
+        or predecessor_request != previous.request.request_sha256
+        or predecessor_issue != previous.owner_issue_number
+        or predecessor_run != previous.owner_run_id
         or not previous.is_terminal
-        or previous.terminal_receipt_sha256 != profile["source_terminal_receipt_sha256"]
+        or previous.terminal_receipt_sha256 != predecessor_terminal
     ):
         raise ValueError("CATALOG_RECOVERY_PREDECESSOR_BINDING_INVALID")
     owner = lookup_owner(previous.owner_issue_number, previous.request, previous.owner_run_id)
     if (
         not isinstance(owner, FastGateOwnerEvidence)
         or owner.run_id != previous.owner_run_id or owner.unlaunched_terminal
-        or owner.run.get("run_attempt") != profile["source_run_attempt"]
-        or owner.run.get("head_sha") != profile["source_plan_bindings"]["protected_commit_sha"]
-        or owner.decision.decision_sha256 != profile["source_plan_bindings"]["decision_sha256"]
+        or owner.run.get("run_attempt") != predecessor_attempt
+        or owner.run.get("head_sha") != predecessor_commit
+        or owner.decision.decision_sha256 != predecessor_decision
     ):
         raise ValueError("CATALOG_RECOVERY_PREDECESSOR_OWNER_INVALID")
     terminal = load_owner_terminal_receipt(
@@ -244,6 +271,9 @@ def _require_reduction_recovery_predecessor(
         or terminal.state != "BLOCKED" or terminal.reason_code != "CATALOG_REDUCTION_FAILED"
         or terminal.expected_recipe_count != len(profile["strategy_ids"])
         or terminal.engine_run_id != previous.owner_run_id
+        or (successor_recovery and (
+            terminal.observed_recipe_count != 0 or terminal.result_science_sha256 is not None
+        ))
     ):
         raise ValueError("CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID")
 

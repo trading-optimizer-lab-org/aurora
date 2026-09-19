@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from aurora.infra.sp500_megarun.catalog_recovery_blocks import aggregate_recovery_metrics
-
 import argparse
 import csv
 import json
 import math
 from pathlib import Path
+import sys
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from aurora.infra.sp500_megarun.catalog_recovery_blocks import aggregate_recovery_metrics
 from aurora.infra.github_performance.contracts import canonical_sha256, deep_thaw_json
 from aurora.infra.github_performance.shard_planner import sha256_file
 from aurora.infra.sp500_megarun.catalog_admission import verify_catalog_plan_token
