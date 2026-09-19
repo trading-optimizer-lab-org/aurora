@@ -185,7 +185,7 @@ def test_profile_has_no_target_definition_or_current_token_binding() -> None:
 
 def test_engine_loader_and_exact_validation_select_each_protected_profile() -> None:
     profiles = load_reduction_recovery_profiles(ROOT)
-    assert tuple(profile.target_generation for profile in profiles) == (8, 9)
+    assert tuple(profile.target_generation for profile in profiles) == (8, 9, 11)
     assert profiles[0] == load_reduction_recovery_profile(ROOT, _request())
     assert validate_exact_profile(ROOT, profiles[1].model_dump(mode="json")) == profiles[1]
     payload = json.loads(CONFIG.read_text(encoding="utf-8"))["profiles"][0]
@@ -261,12 +261,82 @@ def test_config_requires_exactly_two_distinct_protected_generations(tmp_path: Pa
 
 def test_exact_selection_is_independent_of_profile_order(tmp_path: Path) -> None:
     original = json.loads(CONFIG.read_text("utf-8"))["profiles"][0]
-    payload = {"schema_version": "1", "profiles": [dict(original, target_generation=9), original]}
+    gen11 = json.loads((ROOT / "tests/fixtures/catalog_recovery_gen10_source_profile.json").read_text("utf-8"))
+    payload = {"schema_version": "1", "profiles": [gen11, dict(original, target_generation=9), original]}
     config = tmp_path / "config/catalog_reduction_recovery_profiles_v1.json"
     config.parent.mkdir()
     config.write_text(json.dumps(payload), encoding="utf-8")
     assert validate_exact_profile(tmp_path, original).target_generation == 8
-    assert validate_exact_profile(tmp_path, payload["profiles"][0]).target_generation == 9
+    assert validate_exact_profile(tmp_path, payload["profiles"][1]).target_generation == 9
+    assert validate_exact_profile(tmp_path, gen11).target_generation == 11
+
+
+def test_gen11_uses_exact_gen10_source_and_predecessor_without_changing_old_hashes() -> None:
+    payload = json.loads((ROOT / "tests/fixtures/catalog_recovery_gen10_source_profile.json").read_text("utf-8"))
+    profile = load_reduction_recovery_profile(
+        ROOT, _request(launch_generation=11, previous_terminal_request_sha256=payload["source_request_sha256"])
+    )
+    assert profile is not None
+    assert profile.model_dump(mode="json") == payload
+    assert validate_exact_profile(ROOT, payload) == profile
+    assert profile.source_generation == 10
+    assert profile.terminal_reason_code == "CATALOG_ENGINE_STAGE_FAILED"
+    assert asdict(profile.predecessor_bindings) == {
+        "generation": 10, "request_sha256": payload["source_request_sha256"],
+        "issue_number": 333, "run_id": 35460847765, "run_attempt": 1,
+        "protected_commit_sha": "26a6832e3d0b9f0c319b99afc328ea9fb4831acf",
+        "decision_sha256": "4bedf1b0e05eb1d15b14aad37d08d2d42fa76f1299ccbddd501900c8869dbdc5",
+        "terminal_receipt_sha256": "3a414441d7498154f1c3128f9fc4dc286075286e86fb2a3d001574b0236e9bf5",
+    }
+    for generation, expected_hash in (
+        (8, "482a84722888ab7410a796c4542dbc0bedad1abb8a8834e89287b3b52cdc40e5"),
+        (9, "ba865a461790c8e5d78a4dc9ec06d259b6a8d8cd68ec4fb730334319f070fc6b"),
+    ):
+        old = next(p for p in load_reduction_recovery_profiles(ROOT) if p.target_generation == generation)
+        assert old.profile_sha256 == expected_hash
+        assert old.source_generation == 7
+        assert old.terminal_reason_code == "CATALOG_REDUCTION_FAILED"
+        assert "terminal_reason_code" not in old.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("predecessor", [PREDECESSOR_REQUEST_SHA256, GEN8_REQUEST_SHA256, "0" * 64])
+def test_gen11_rejects_wrong_predecessor(predecessor: str) -> None:
+    with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_PREDECESSOR_MISMATCH"):
+        load_reduction_recovery_profile(ROOT, _request(launch_generation=11, previous_terminal_request_sha256=predecessor))
+
+
+@pytest.mark.parametrize("mutation", ["source", "bindings", "artifacts", "generation", "reason", "receipt", "publisher"])
+def test_gen11_rejects_mixed_or_altered_historical_provenance(mutation: str) -> None:
+    payload = json.loads((ROOT / "tests/fixtures/catalog_recovery_gen10_source_profile.json").read_text("utf-8"))
+    old = json.loads(CONFIG.read_text("utf-8"))["profiles"][0]
+    if mutation == "source":
+        payload["source_request_sha256"] = old["source_request_sha256"]
+    elif mutation == "bindings":
+        payload["source_plan_bindings"] = old["source_plan_bindings"]
+    elif mutation == "artifacts":
+        payload["artifacts"] = old["artifacts"]
+    elif mutation == "generation":
+        payload["target_generation"] = 9
+    elif mutation == "reason":
+        payload["terminal_reason_code"] = "CATALOG_REDUCTION_FAILED"
+    elif mutation == "receipt":
+        payload["source_terminal_receipt_sha256"] = "0" * 64
+    else:
+        payload["artifacts"][1]["publisher_job_name"] = "engine / evaluate_a"
+    with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH"):
+        validate_exact_profile(ROOT, payload)
+
+
+@pytest.mark.parametrize("targets", [(8, 9), (8, 9, 9), (8, 11, 11), (8, 9, 11, 11), (8, 9, 12)])
+def test_config_requires_exact_closed_targets_8_9_11(tmp_path: Path, targets: tuple[int, ...]) -> None:
+    old = json.loads(CONFIG.read_text("utf-8"))["profiles"][0]
+    new = json.loads((ROOT / "tests/fixtures/catalog_recovery_gen10_source_profile.json").read_text("utf-8"))
+    payload = {"schema_version": "1", "profiles": [dict(new if g == 11 else old, target_generation=g) for g in targets]}
+    config = tmp_path / "config/catalog_reduction_recovery_profiles_v1.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="CATALOG_REDUCTION_RECOVERY_CONFIG_INVALID"):
+        load_reduction_recovery_profiles(tmp_path)
 
 
 @pytest.mark.parametrize("generation", [8, 9])

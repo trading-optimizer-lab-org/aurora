@@ -3,16 +3,165 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 import hashlib
 import json
+from pathlib import Path
+from typing import Any
 from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from .catalog_request_contract import FrozenModel, Sha256
+from .catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
+from .catalog_worker_failure import CatalogWorkerFailureReceiptV1, TRANSIENT_CLASSES
+from aurora.infra.github_performance.contracts import canonical_sha256
+
+
+_RECOVERED_BINDINGS = (
+    "request_sha256", "authority_id", "campaign_id", "science_sha256",
+    "execution_plan_sha256", "execution_protocol_sha256", "protected_commit_sha",
+    "engine_run_id", "engine_run_attempt",
+)
+
+
+@dataclass(frozen=True)
+class RecoveredEvaluationEvidence:
+    """Local verification result; transport provenance remains the caller's duty."""
+
+    bindings: tuple[str, ...]
+    stages: frozenset[str]
+    science_index_sha256: str
+
+
+def _recovery_document(path: Path, *, maximum_bytes: int = 2 * 1024 * 1024) -> dict[str, Any]:
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate recovery evidence key")
+            result[key] = value
+        return result
+
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum_bytes:
+        raise ValueError("CATALOG_RECOVERED_EVIDENCE_FILE_INVALID")
+    value = json.loads(path.read_text("utf-8"), object_pairs_hook=unique,
+                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+    if not isinstance(value, dict):
+        raise ValueError("CATALOG_RECOVERED_EVIDENCE_DOCUMENT_INVALID")
+    return value
+
+
+def verify_recovered_evaluation_evidence(
+    *, science_index: Path, sealed_plan: Path, failure_root: Path,
+    expected: Mapping[str, Any],
+) -> RecoveredEvaluationEvidence:
+    """Verify same-run publications supplied by the protected workflow.
+
+    Self hashes are integrity checks, not remote authentication. The CLI requires
+    the current run/attempt; its caller must download these artifacts from that
+    run's protected publishers, never from arbitrary user-selected runs.
+    """
+    invalid = "CATALOG_RECOVERED_EVALUATION_EVIDENCE_INVALID"
+    bindings = {key: str(expected[key]) for key in _RECOVERED_BINDINGS[:7]}
+    verify_sealed_global_reuse_execution_plan(sealed_plan, expected_bindings=bindings)
+    index = _recovery_document(science_index)
+
+    def check(document: Mapping[str, Any], hash_key: str) -> None:
+        if (document.get(hash_key) != canonical_sha256({k: v for k, v in document.items() if k != hash_key})
+                or any(str(document.get(k)) != v for k, v in bindings.items())
+                or document.get("validation_opened") is not False
+                or document.get("locked_opened") is not False):
+            raise ValueError(invalid)
+
+    check(index, "index_sha256")
+    names = {"catalog_scientific_audit_receipt_v1.json", "catalog_equivalence_receipt_v1.json",
+             "catalog_regression_receipt_v1.json"}
+    files = index.get("files")
+    if not isinstance(files, list) or len(files) != 3:
+        raise ValueError(invalid)
+    documents: dict[str, dict[str, Any]] = {}
+    for row in files:
+        if (not isinstance(row, dict) or set(row) != {"path", "size_bytes", "sha256"}
+                or row["path"] not in names or row["path"] in documents):
+            raise ValueError(invalid)
+        path = science_index.parent / row["path"]
+        document = _recovery_document(path)
+        raw = path.read_bytes()
+        if len(raw) != row["size_bytes"] or hashlib.sha256(raw).hexdigest() != row["sha256"]:
+            raise ValueError(invalid)
+        check(document, "receipt_sha256")
+        documents[row["path"]] = document
+    audit = documents["catalog_scientific_audit_receipt_v1.json"]
+    equivalence = documents["catalog_equivalence_receipt_v1.json"]
+    regression = documents["catalog_regression_receipt_v1.json"]
+    # Full SP500 logical manifests exceed the compact evidence-document limit.
+    logical = _recovery_document(
+        sealed_plan / "logical_recipe_manifest.json", maximum_bytes=16 * 1024 * 1024,
+    )
+    logical_payload = logical.get("payload", logical)
+    ids = [row["strategy_id"] for row in logical_payload["recipes"]]
+    count = len(ids)
+    if (not count or len(set(ids)) != count or logical_payload["strategy_count"] != count
+            or type(audit.get("strategy_count")) is not int or audit["strategy_count"] != count
+            or audit.get("schemas_valid") is not True
+            or equivalence.get("equivalent") is not True
+            or equivalence.get("expected_count") != count or equivalence.get("observed_count") != count
+            or equivalence.get("difference_count") != 0 or regression.get("no_regression") is not True
+            or regression.get("equivalence_receipt_sha256") != equivalence["receipt_sha256"]):
+        raise ValueError(invalid)
+    policy = _recovery_document(sealed_plan / "checkpoint_policy.json")
+    blocks = policy["recovery_blocks_v1"]["blocks"]
+    expected_blocks = {row["block_id"] for row in blocks}
+    metrics = audit.get("recovery_metrics")
+    if not isinstance(metrics, dict) or metrics.get("schema_version") != "1":
+        raise ValueError(invalid)
+    verified, recovered = metrics.get("verified_block_ids"), metrics.get("recovered_block_ids")
+    if (not isinstance(verified, list) or not isinstance(recovered, list)
+            or any(not isinstance(item, str) for item in verified + recovered)
+            or len(verified) != len(set(verified)) or len(recovered) != len(set(recovered))
+            or set(verified) != expected_blocks or not recovered or not set(recovered) <= expected_blocks):
+        raise ValueError(invalid)
+    stages: set[str] = set()
+    failed_workers: set[int] = set()
+    if failure_root.is_symlink() or not failure_root.is_dir():
+        raise ValueError(invalid)
+    paths = sorted(failure_root.rglob("*.json"))
+    if not paths or len(paths) > 360:
+        raise ValueError(invalid)
+    for path in paths:
+        if any(parent.is_symlink() for parent in path.parents if parent != failure_root.parent):
+            raise ValueError(invalid)
+        failure = CatalogWorkerFailureReceiptV1.model_validate(_recovery_document(path))
+        if (failure.failure_class not in TRANSIENT_CLASSES or failure.stage != "recipe_worker"
+                or any(str(getattr(failure, key)) != bindings[key] for key in
+                       ("authority_id", "campaign_id", "execution_plan_sha256", "protected_commit_sha"))
+                or failure.attempt_id != f'{bindings["authority_id"]}:worker:{failure.worker_id:03d}:attempt:1'
+                or failure.worker_id in failed_workers):
+            raise ValueError(invalid)
+        failed_workers.add(failure.worker_id)
+        worker_blocks = {row["block_id"] for row in blocks if row["worker_id"] == failure.worker_id}
+        # Failures are worker-scoped; retained initial checkpoints are verified,
+        # not recovered. Exact global coverage was checked above.
+        if not worker_blocks.intersection(recovered):
+            raise ValueError(invalid)
+        matched = []
+        for suffix in "abc":
+            matrix = _recovery_document(sealed_plan / f"recipe_matrix_{suffix}.json")
+            if any(row["worker_id"] == failure.worker_id for row in matrix["include"]):
+                matched.append(f"evaluate_{suffix}")
+        if len(matched) != 1:
+            raise ValueError(invalid)
+        stages.add(matched[0])
+    failed_stages = {key for key, value in expected["stage_results"].items()
+                     if key in {"evaluate_a", "evaluate_b", "evaluate_c"} and value == "failure"}
+    if stages != failed_stages:
+        raise ValueError(invalid)
+    return RecoveredEvaluationEvidence(tuple(str(expected[k]) for k in _RECOVERED_BINDINGS),
+                                       frozenset(stages), index["index_sha256"])
 
 
 SafeArtifactName = Annotated[
@@ -228,6 +377,7 @@ def select_catalog_engine_outcome(
     retry_not_before: datetime | str | None,
     terminal_failure_code: str | None,
     created_at: datetime | str,
+    recovered_evaluation_evidence: RecoveredEvaluationEvidence | None = None,
 ) -> CatalogEngineOutcomeV1:
     """Select one explicit outcome; no failed workflow may yield blank outputs."""
 
@@ -256,6 +406,19 @@ def select_catalog_engine_outcome(
         "validation_opened": False,
         "locked_opened": False,
     }
+    recovered_stages: frozenset[str] = frozenset()
+    if recovered_evaluation_evidence is not None:
+        if (not isinstance(recovered_evaluation_evidence, RecoveredEvaluationEvidence)
+                or recovered_evaluation_evidence.bindings != tuple(str(common[k]) for k in _RECOVERED_BINDINGS)):
+            raise ValueError("CATALOG_RECOVERED_EVALUATION_BINDING_INVALID")
+        if (statuses and statuses[-1] == "complete" and "retry" in statuses
+                and recovery_evidence_artifact and final_evidence_artifact
+                and runtime_audit_artifact and science_evidence_artifact
+                and all(normalized_stages.get(stage) == "success" for stage in (
+                    "engine_verify_sealed_plan", "prepare_runtime_and_inputs", "publish_sealed_payload_artifacts",
+                    "verify_component_store", "reconcile_wave_0", "ready_to_merge", "reduce_groups",
+                    "reduce", "verify_terminal_science", "audit_runtime"))):
+            recovered_stages = recovered_evaluation_evidence.stages
     if statuses and statuses[-1] == "waiting_retry":
         if failure_reason_code is None:
             raise ValueError("CATALOG_ENGINE_WAITING_RETRY_REASON_REQUIRED")
@@ -326,6 +489,7 @@ def select_catalog_engine_outcome(
         value in {"failure", "cancelled"}
         for key, value in normalized_stages.items()
         if key not in {"reduce", "verify_terminal_science", "audit_runtime"}
+        and not (key in recovered_stages and value == "failure")
     ):
         return _build_outcome(
             **common,

@@ -58,9 +58,9 @@ def _sealed_profile_fixture(tmp_path: Path, *, include_profile: bool, generation
     profiles = [
         {"schema_version": "1", "campaign_key": "catalog-fast-canary-v1",
          "target_generation": target, "source_request_sha256": "b" * 64}
-        for target in (8, 9)
+        for target in (8, 9, 11)
     ]
-    profile = profiles[generation - 8]
+    profile = next(row for row in profiles if row["target_generation"] == generation)
     if include_profile:
         profile_path = root / "reduction_recovery.json"
         profile_path.write_text(
@@ -70,7 +70,7 @@ def _sealed_profile_fixture(tmp_path: Path, *, include_profile: bool, generation
         controller["binding"]["reduction_recovery_sha256"] = _sha(profile)  # type: ignore[index]
     (workspace / "config/catalog_reduction_recovery_profiles_v1.json").write_text(
         json.dumps(
-            {"schema_version": "1", "profiles": [profile, profile] if duplicate else profiles},
+            {"schema_version": "1", "profiles": [profiles[0], profiles[1], profiles[1]] if duplicate else profiles},
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -144,7 +144,7 @@ def _outputs(tmp_path: Path) -> dict[str, str]:
     )
 
 
-@pytest.mark.parametrize("generation", [8, 9])
+@pytest.mark.parametrize("generation", [8, 9, 11])
 def test_engine_verify_derives_reduction_only_from_sealed_profile_and_manifest(tmp_path: Path, generation: int) -> None:
     result = _run_recovery_verifier(tmp_path, include_profile=True, generation=generation)
     assert result.returncode == 0, result.stderr

@@ -1,6 +1,6 @@
 """Closed protected profile for the selective catalog reduction recovery.
 
-This module only describes already-published gen7 evidence that a gen8 or gen9 canary
+This module only describes already-published gen7 or gen10 evidence a canary
 may reuse.  It does not read or write current authority, manifests, tokens,
 lineage, worker output, or any new scientific result.
 """
@@ -23,7 +23,7 @@ from .catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
 RECOVERY_CONFIG_RELATIVE_PATH = "config/catalog_reduction_recovery_profiles_v1.json"
 RECOVERY_CAMPAIGN_KEY = "catalog-fast-canary-v1"
 RECOVERY_TARGET_GENERATION = 8
-RECOVERY_TARGET_GENERATIONS = frozenset({8, 9})
+RECOVERY_TARGET_GENERATIONS = frozenset({8, 9, 11})
 RECOVERY_PREDECESSOR_REQUEST_SHA256 = (
     "a0749c8833b52612096d8a820f3a46f5af48ce52848f8bfc02377f3236996896"
 )
@@ -69,6 +69,38 @@ _EXPECTED_STRATEGY_IDS = (
     "SCV1-002e6ef7635802db02a3ed6deca385d1f368d0d080f5389d5feb0edc54b1a7f4",
 )
 
+
+_SOURCE10_PLAN_BINDINGS = {
+    "request_sha256": "655d64878185f1066590c4acafcd76e6b48c6626e03e5c331371caa735a5193b",
+    "decision_sha256": "4bedf1b0e05eb1d15b14aad37d08d2d42fa76f1299ccbddd501900c8869dbdc5",
+    "protected_commit_sha": "26a6832e3d0b9f0c319b99afc328ea9fb4831acf",
+    "authority_id": "abe7c473-f1dd-56ce-a1f0-6477b3f6c211",
+    "campaign_id": "235cb870254559227dbac2e56f7d492af786851d044aa61c4c30e6cb083fd8db",
+    "science_sha256": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+    "execution_plan_sha256": "c0e73224fd7eb5af9abf51587f44fbaee791dabb1862164ac2829ed6eee2032c",
+    "execution_protocol_sha256": "a856bc16bb3c5b39746a47eefa8f3c079641d0b13b2a686b43ce4c359ef119cc",
+}
+
+_SOURCE10_ARTIFACT_PINS = {
+    "plan": (
+        10589334329,
+        "catalog-sealed-execution-plan-abe7c473-f1dd-56ce-a1f0-6477b3f6c211",
+        "sha256:add2ee8fee2f85e974a3ba03283486bba22aa9e247cd2ab24cba09a901504f45",
+        None,
+        175881,
+        "gate",
+        "Publish the already-materialized sealed plan",
+    ),
+    "group": (
+        10588699408,
+        "catalog-reduction-group-c0e73224fd7eb5af-g00",
+        "sha256:690a055084703b6a7e2e7c1cd5969237d8f53c6cf05de1080dde20edd84d017b",
+        "b506bbd0a353fc0c5bb9b512ec4b419edfd59418e8724893f73c326af30f7448",
+        28228,
+        "engine / reduce_groups (catalog-checkpoint-c0e73224fd7eb5af-g00-*, 0, catalog-reduction-group-c0e73224fd7e...",
+        "Upload one bounded reduction group",
+    ),
+}
 
 @dataclass(frozen=True)
 class RecoveryPredecessorBindings:
@@ -141,19 +173,19 @@ class ReductionRecoveryArtifactV1(FrozenModel):
             self.publisher_job_name,
             self.publish_step_name,
         )
-        if actual != expected:
+        if actual not in (expected, _SOURCE10_ARTIFACT_PINS[self.role]):
             raise ValueError("protected recovery artifact mismatch")
         return self
 
 
 class ReductionRecoveryProfileV1(FrozenModel):
-    """One of two closed recovery targets sharing immutable gen7 evidence."""
+    """One of three closed targets with exact gen7 or gen10 provenance."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     schema_version: Literal["1"]
     campaign_key: Literal["catalog-fast-canary-v1"]
-    target_generation: Literal[8, 9]
+    target_generation: Literal[8, 9, 11]
     source_request_sha256: Sha256
     source_issue_number: int = Field(strict=True, gt=0)
     source_run_id: int = Field(strict=True, gt=0)
@@ -244,9 +276,23 @@ class ReductionRecoveryProfileV1(FrozenModel):
             "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
             "2de5b6a09fb10b71adff0f45af450f30c7f3dbfb196bfea8f01f92d4cf3cb981",
         )
+        expected_bindings = _EXPECTED_SOURCE_PLAN_BINDINGS
+        expected_artifact_ids = (10582715279, 10582565863)
+        if self.target_generation == 11:
+            required_scalars = (
+                "1", RECOVERY_CAMPAIGN_KEY,
+                "655d64878185f1066590c4acafcd76e6b48c6626e03e5c331371caa735a5193b",
+                333, 35460847765, 1,
+                "3a414441d7498154f1c3128f9fc4dc286075286e86fb2a3d001574b0236e9bf5",
+                "27027da90e69ac0aeefc83c8d0818095c062f576e69a9f3521cf3c4f2418dea2",
+                "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+                "2de5b6a09fb10b71adff0f45af450f30c7f3dbfb196bfea8f01f92d4cf3cb981",
+            )
+            expected_bindings = _SOURCE10_PLAN_BINDINGS
+            expected_artifact_ids = (10589334329, 10588699408)
         if expected_scalars != required_scalars:
             raise ValueError("protected recovery profile mismatch")
-        if self.source_plan_bindings != _EXPECTED_SOURCE_PLAN_BINDINGS:
+        if self.source_plan_bindings != expected_bindings:
             raise ValueError("protected recovery bindings mismatch")
         if self.strategy_ids != _EXPECTED_STRATEGY_IDS:
             raise ValueError("protected recovery strategies mismatch")
@@ -255,6 +301,8 @@ class ReductionRecoveryProfileV1(FrozenModel):
             "group",
         ):
             raise ValueError("protected recovery artifacts mismatch")
+        if tuple(artifact.artifact_id for artifact in self.artifacts) != expected_artifact_ids:
+            raise ValueError("protected recovery artifact source mismatch")
         if self.source_request_sha256 != self.source_plan_bindings["request_sha256"]:
             raise ValueError("profile source request binding mismatch")
         if self.science_sha256 != self.source_plan_bindings["science_sha256"]:
@@ -263,9 +311,15 @@ class ReductionRecoveryProfileV1(FrozenModel):
 
     @property
     def source_generation(self) -> int:
-        """Both protected targets reuse gen7; this is not target minus one."""
+        """Select the pinned source, never infer it from target minus one."""
 
-        return 7
+        return 10 if self.target_generation == 11 else 7
+
+    @property
+    def terminal_reason_code(self) -> str:
+        """Exact source failure authorized by each closed recovery profile."""
+
+        return "CATALOG_ENGINE_STAGE_FAILED" if self.target_generation == 11 else "CATALOG_REDUCTION_FAILED"
 
     @property
     def predecessor_bindings(self) -> RecoveryPredecessorBindings:
@@ -292,6 +346,17 @@ class ReductionRecoveryProfileV1(FrozenModel):
                 protected_commit_sha="41d904b66c33bb8d0150aa14c7ca2564afd3f154",
                 terminal_receipt_sha256="a10a880af0c3a3bd4ebd69958f5e4761cf3c620da32abddaff080a346b8a0193",
                 decision_sha256="91e1e0bb41a76b5014d8d705cb67ccb5b163c24c2551bd1d84cc91ab37ccf023",
+            )
+        if self.target_generation == 11:
+            return RecoveryPredecessorBindings(
+                generation=10,
+                request_sha256="655d64878185f1066590c4acafcd76e6b48c6626e03e5c331371caa735a5193b",
+                issue_number=333,
+                run_id=35460847765,
+                run_attempt=1,
+                protected_commit_sha="26a6832e3d0b9f0c319b99afc328ea9fb4831acf",
+                terminal_receipt_sha256="3a414441d7498154f1c3128f9fc4dc286075286e86fb2a3d001574b0236e9bf5",
+                decision_sha256="4bedf1b0e05eb1d15b14aad37d08d2d42fa76f1299ccbddd501900c8869dbdc5",
             )
         raise ValueError("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
 
@@ -335,7 +400,7 @@ def _read_config(repo_root: Path) -> object:
 
 
 def load_reduction_recovery_profiles(repo_root: Path) -> tuple[ReductionRecoveryProfileV1, ...]:
-    """Load exactly the two distinct protected recovery targets."""
+    """Load exactly the three distinct protected recovery targets."""
 
     try:
         payload = _read_config(repo_root)
@@ -344,7 +409,7 @@ def load_reduction_recovery_profiles(repo_root: Path) -> tuple[ReductionRecovery
             or set(payload) != {"schema_version", "profiles"}
             or payload["schema_version"] != "1"
             or type(payload["profiles"]) is not list
-            or len(payload["profiles"]) != 2
+            or len(payload["profiles"]) != 3
         ):
             raise ValueError("invalid protected profile root")
         profiles = tuple(ReductionRecoveryProfileV1.model_validate(row) for row in payload["profiles"])

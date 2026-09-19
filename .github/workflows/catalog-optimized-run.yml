@@ -757,7 +757,7 @@ jobs:
               or set(config) != {"schema_version", "profiles"}
               or config.get("schema_version") != "1"
               or not isinstance(config.get("profiles"), list)
-              or len(config["profiles"]) != 2
+              or len(config["profiles"]) != 3
               or any(
                   not isinstance(candidate, dict)
                   or candidate.get("campaign_key") != "catalog-fast-canary-v1"
@@ -766,7 +766,7 @@ jobs:
               )
           ):
               raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
-          if sorted(candidate["target_generation"] for candidate in config["profiles"]) != [8, 9]:
+          if sorted(candidate["target_generation"] for candidate in config["profiles"]) != [8, 9, 11]:
               raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
           matches = [
               candidate for candidate in config["profiles"]
@@ -3115,11 +3115,202 @@ jobs:
         id: outcome
         if: ${{ inputs.execution_mode == 'run' }}
         shell: bash
-        run: >-
-          python scripts/prepare_catalog_engine_outcome.py
-          --input engine-outcome-input.json
-          --output catalog-engine-outcome-v1.json
-          --github-output "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import io
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          import zipfile
+          from datetime import datetime, timedelta
+          from pathlib import Path
+
+          from aurora.infra.sp500_megarun.catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
+          from aurora.infra.sp500_megarun.catalog_worker_failure import worker_failure_artifact_name as official_worker_failure_artifact_name
+
+          payload = json.loads(Path("engine-outcome-input.json").read_text())
+          stages = payload["stage_results"]
+          recovery = payload["recovery_statuses"]
+          failed = [stage for stage in ("evaluate_a", "evaluate_b", "evaluate_c") if stages.get(stage) == "failure"]
+          eligible = (
+              not payload["reduction_only"] and failed
+              and "cancelled" not in stages.values()
+              and recovery and recovery[-1] == "complete" and "retry" in recovery
+              and all(stages.get(stage) == "success" for stage in (
+                  "engine_verify_sealed_plan", "prepare_runtime_and_inputs",
+                  "publish_sealed_payload_artifacts", "verify_component_store",
+                  "reconcile_wave_0", "ready_to_merge", "reduce_groups", "reduce",
+                  "verify_terminal_science", "audit_runtime",
+              ))
+          )
+          command = [sys.executable, "scripts/prepare_catalog_engine_outcome.py",
+                     "--input", "engine-outcome-input.json",
+                     "--output", "catalog-engine-outcome-v1.json",
+                     "--github-output", os.environ["GITHUB_OUTPUT"]]
+          if eligible:
+              run_id = os.environ["GITHUB_RUN_ID"]
+              attempt = os.environ["GITHUB_RUN_ATTEMPT"]
+              head = os.environ["GITHUB_SHA"]
+              if (str(payload["engine_run_id"]) != run_id
+                      or str(payload["engine_run_attempt"]) != attempt
+                      or payload["protected_commit_sha"] != head):
+                  raise ValueError("CATALOG_RECOVERED_OUTCOME_CURRENT_RUN_INVALID")
+              api_root = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions"
+
+              def api(path, *args):
+                  return json.loads(subprocess.run(
+                      ["gh", "api", path, *args], check=True, capture_output=True, text=True,
+                  ).stdout)
+
+              current = api(f"{api_root}/runs/{run_id}/attempts/{attempt}")
+              if (str(current["id"]) != run_id or str(current["run_attempt"]) != attempt
+                      or current["head_sha"] != head or current["head_branch"] != "main"
+                      or str(current["repository"]["id"]) != os.environ["GITHUB_REPOSITORY_ID"]
+                      or current["repository"]["full_name"] != os.environ["GITHUB_REPOSITORY"]
+                      or Path(current["path"]).parts != (".github", "workflows", "catalog-fast-controller.yml")):
+                  raise ValueError("CATALOG_RECOVERED_OUTCOME_RUN_ORIGIN_INVALID")
+              started = datetime.fromisoformat(current["run_started_at"].replace("Z", "+00:00"))
+              pages = api(f"{api_root}/runs/{run_id}/artifacts?per_page=100", "--paginate", "--slurp")
+              artifacts = [artifact for page in pages for artifact in page["artifacts"]]
+              job_pages = api(f"{api_root}/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", "--paginate", "--slurp")
+              jobs = [job for page in job_pages for job in page["jobs"]]
+              for inventory, rows in ((pages, artifacts), (job_pages, jobs)):
+                  if (not inventory or any(page["total_count"] != len(rows) for page in inventory)
+                          or len({row["id"] for row in rows}) != len(rows)):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_INVENTORY_INCOMPLETE")
+              root = Path(os.environ["RUNNER_TEMP"]) / "recovered-outcome-proof"
+              root.mkdir(exist_ok=False)
+              # Same limits as the historical reader/restore, including the full SP plan.
+              maximum_bytes = 64 * 1024 * 1024
+              extracted_sizes = []
+
+              def download(name, destination, publisher_name, publish_step, conclusion="success"):
+                  matches = [artifact for artifact in artifacts if artifact["name"] == name]
+                  if len(matches) != 1:
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_MISSING_OR_DUPLICATE")
+                  artifact = matches[0]
+                  origin = artifact["workflow_run"]
+                  if (artifact["expired"] or str(origin["id"]) != run_id
+                          or origin["head_sha"] != head
+                          or origin["head_branch"] != "main"
+                          or str(origin["repository_id"]) != os.environ["GITHUB_REPOSITORY_ID"]
+                          or str(origin["head_repository_id"]) != os.environ["GITHUB_REPOSITORY_ID"]
+                          or datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00")) < started):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_ORIGIN_INVALID")
+                  size = artifact.get("size_in_bytes")
+                  digest = artifact.get("digest")
+                  if (type(size) is not int or not 0 < size <= maximum_bytes
+                          or not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_METADATA_INVALID")
+                  publishers = [job for job in jobs if job["name"] == publisher_name]
+                  if len(publishers) != 1:
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_PUBLISHER_INVALID")
+                  publisher = publishers[0]
+                  if (str(publisher["run_id"]) != run_id or str(publisher["run_attempt"]) != attempt
+                          or publisher["head_sha"] != head or publisher["status"] != "completed"
+                          or publisher["conclusion"] != conclusion):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_PUBLISHER_INVALID")
+                  steps = [step for step in publisher["steps"] if step["name"] == publish_step]
+                  if len(steps) != 1 or steps[0]["status"] != "completed" or steps[0]["conclusion"] != "success":
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_PUBLISH_STEP_INVALID")
+                  start, created, end = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in (
+                      steps[0]["started_at"], artifact["created_at"], steps[0]["completed_at"],
+                  )]
+                  if (any(value.utcoffset() is None for value in (start, created, end)) or start > end
+                          or not (start <= created <= end if end.microsecond else start <= created < end + timedelta(seconds=1))):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_PUBLICATION_WINDOW_INVALID")
+                  archive_id = artifact["id"]
+                  if type(archive_id) is not int or archive_id <= 0:
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_ID_INVALID")
+                  with subprocess.Popen(["gh", "api", f"{api_root}/artifacts/{archive_id}/zip"],
+                                        stdout=subprocess.PIPE) as process:
+                      raw = process.stdout.read(size + 1)
+                      if len(raw) > size:
+                          process.kill()
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_ARCHIVE_SIZE_INVALID")
+                      if process.wait(timeout=60) != 0:
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_DOWNLOAD_FAILED")
+                  if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest[7:]:
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_ARTIFACT_DIGEST_INVALID")
+                  destination.mkdir(parents=True, exist_ok=False)
+                  with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                      seen = set()
+                      members = archive.infolist()
+                      if not members or len(members) > 4096:
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_ARCHIVE_COUNT_INVALID")
+                      extracted_sizes.append(sum(entry.file_size for entry in members))
+                      if sum(extracted_sizes) > 128 * 1024 * 1024:
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_ARCHIVE_TOTAL_SIZE_INVALID")
+                      for entry in members:
+                          path = Path(entry.filename)
+                          if (entry.orig_filename != entry.filename
+                                  or path.is_absolute() or entry.filename.startswith("/")
+                                  or ".." in path.parts or "\\" in entry.filename
+                                  or ":" in entry.filename or entry.filename.casefold() in seen
+                                  or path.as_posix() != entry.filename.rstrip("/")
+                                  or entry.flag_bits & 1
+                                  or (entry.external_attr >> 16) & 0o170000 not in (0, 0o040000 if entry.is_dir() else 0o100000)):
+                              raise ValueError("CATALOG_RECOVERED_OUTCOME_ARCHIVE_INVALID")
+                          if not entry.is_dir() and (not 0 < entry.file_size <= maximum_bytes
+                                  or not entry.compress_size or entry.file_size > 1000 * entry.compress_size):
+                              raise ValueError("CATALOG_RECOVERED_OUTCOME_ARCHIVE_MEMBER_SIZE_INVALID")
+                          seen.add(entry.filename.casefold())
+                      archive.extractall(destination)
+
+              authority = payload["authority_id"]
+              plan = root / "sealed-plan"
+              download(f"catalog-sealed-execution-plan-{authority}", plan,
+                       "gate", "Publish the already-materialized sealed plan")
+              verify_sealed_global_reuse_execution_plan(plan, expected_bindings={
+                  key: payload[key] for key in (
+                      "request_sha256", "authority_id", "campaign_id", "science_sha256",
+                      "execution_plan_sha256", "execution_protocol_sha256", "protected_commit_sha",
+                  )
+              })
+              download(f"catalog-terminal-science-{authority}", root / "science",
+                       "engine / verify_terminal_science", "Publish terminal science evidence")
+              for stage in failed:
+                  matrix = json.loads((plan / f"recipe_matrix_{stage[-1]}.json").read_text())
+                  names = []
+                  for row in matrix["include"]:
+                      worker = int(row["worker_id"])
+                      name = official_worker_failure_artifact_name(
+                          execution_plan_sha256=payload["execution_plan_sha256"],
+                          worker_id=worker, attempt_id=f"{authority}:worker:{worker:03d}:attempt:1",
+                      )
+                      # Jobs, not available artifacts, define the complete failed-worker set.
+                      # Protected matrix field order and GitHub's 100-character display limit.
+                      display = f"{stage} ({row['descriptor_bundle_artifact']}, {row['descriptor_member']}, {row['descriptor_sha256']}, {worker})"
+                      if len(display) > 100:
+                          display = display[:97] + "..."
+                      publisher_name = f"engine / {display} / evaluate"
+                      matches = [job for job in jobs if job["name"] == publisher_name]
+                      if len(matches) != 1:
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_WORKER_JOB_INVALID")
+                      job = matches[0]
+                      if (str(job["run_id"]) != run_id or str(job["run_attempt"]) != attempt
+                              or job["head_sha"] != head or job["status"] != "completed"
+                              or job["conclusion"] not in ("success", "failure")):
+                          raise ValueError("CATALOG_RECOVERED_OUTCOME_WORKER_JOB_INVALID")
+                      if job["conclusion"] == "failure":
+                          names.append((name, publisher_name))
+                  if not names or len(names) != len({name for name, _ in names}):
+                      raise ValueError("CATALOG_RECOVERED_OUTCOME_INITIAL_FAILURE_MISSING_OR_DUPLICATE")
+                  for name, publisher in names:
+                      download(name, root / "failures" / name, publisher,
+                               "Publish the sealed failed worker attempt", conclusion="failure")
+              command.extend([
+                  "--recovered-science-index", str(root / "science/catalog_terminal_science_index_v1.json"),
+                  "--sealed-plan", str(plan), "--recovered-failure-root", str(root / "failures"),
+              ])
+          subprocess.run(command, check=True)
+          PY
 
       - name: Publish exact engine outcome evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
