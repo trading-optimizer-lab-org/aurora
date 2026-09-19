@@ -1,0 +1,26 @@
+{
+  "document_type": "catalog_recovery_gen7_public_request_v1",
+  "title": "[AURORA CATALOG RUN REQUEST] 01a0b91d-df5d-7635-9421-4def26452d5c",
+  "request": {
+    "authorization": "USER_EXPLICITLY_REQUESTED_NEW_CATALOG_RUN",
+    "automatic_recovery": true,
+    "campaign_definition_sha256": "53d55700dd84340a154184c2c32594e7710ef278ce1f6096475fc72e7d982fc5",
+    "campaign_key": "catalog-fast-canary-v1",
+    "free_resources_only": true,
+    "launch_generation": 7,
+    "launch_ticket_sha256": "e81d26dda9a225c7e01551f49529e18639949c2a1690ee7da44c6c39f0e12450",
+    "max_same_failure_count": 3,
+    "previous_terminal_request_sha256": "67776ce5015c762184bdd8eb01fb2aca8c598c186dfeb656b64bdd41c271d53c",
+    "prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3",
+    "request_id": "01a0b91d-df5d-7635-9421-4def26452d5c",
+    "requester_attestation_algorithm": "rsa-pss-sha256-v1",
+    "requester_attestation_b64": "iopYOzKIfG1CpIGyOEth0GTXnDHCUMahAiKaUUJHVeOMXZ9wUrEyTPeGfDM657J/M0+M6Rydy+F05nY/bTTGL++WArBxqybXnxAQn/cTVgfr93qJQd16RXd3dYrm6e7wdUFqwgUtzUdeSR95suh2e3xIO20C29bXCvFqL0ZgHTy2Ba1Q0esO5VxyGJd8cE46wszaS3I704GYeDsBTLtzznDVZCmyS5/lnOuMtk8KRtO3/p8hflrROye3Z2rmj0x5mc6hW9+3uL/CKiGbawqEVlGlTBTfpifagtZ6YAoa7bchViEdMwPEHAXn1I1a1r8oVicIEXs9yPHjcA+ipsw4lQ==",
+    "requester_public_key_sha256": "7d9f2bf3eefca26d615b2843f3ac2de9f3b04ff398e2b0b6ed65fb8ebac23a5b",
+    "schema_version": "1"
+  },
+  "issue_number": 323,
+  "owner_run_id": 35436320227,
+  "owner_run_attempt": 1,
+  "request_sha256": "a0749c8833b52612096d8a820f3a46f5af48ce52848f8bfc02377f3236996896",
+  "terminal_receipt_sha256": "67224b935b44f2d7598e2b28d9cb686d4eee89a046d0ec3b0482db4aba9d8cc4"
+}
