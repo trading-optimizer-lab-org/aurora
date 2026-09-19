@@ -234,7 +234,7 @@ def test_gen9_authorizes_gen8_but_preserves_gen7_source() -> None:
         "run_attempt": 1,
         "protected_commit_sha": "41d904b66c33bb8d0150aa14c7ca2564afd3f154",
         "terminal_receipt_sha256": "a10a880af0c3a3bd4ebd69958f5e4761cf3c620da32abddaff080a346b8a0193",
-        "decision_sha256": None,
+        "decision_sha256": "91e1e0bb41a76b5014d8d705cb67ccb5b163c24c2551bd1d84cc91ab37ccf023",
     }
     with pytest.raises(FrozenInstanceError):
         profile.predecessor_bindings.run_id = 1

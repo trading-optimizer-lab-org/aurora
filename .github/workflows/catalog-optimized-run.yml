@@ -757,10 +757,22 @@ jobs:
               or set(config) != {"schema_version", "profiles"}
               or config.get("schema_version") != "1"
               or not isinstance(config.get("profiles"), list)
-              or len(config["profiles"]) != 1
-              or not isinstance(config["profiles"][0], dict)
-              or canonical_bytes(profile) != canonical_bytes(config["profiles"][0])
+              or len(config["profiles"]) != 2
+              or any(
+                  not isinstance(candidate, dict)
+                  or candidate.get("campaign_key") != "catalog-fast-canary-v1"
+                  or type(candidate.get("target_generation")) is not int
+                  for candidate in config["profiles"]
+              )
           ):
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
+          if sorted(candidate["target_generation"] for candidate in config["profiles"]) != [8, 9]:
+              raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
+          matches = [
+              candidate for candidate in config["profiles"]
+              if canonical_bytes(profile) == canonical_bytes(candidate)
+          ]
+          if len(matches) != 1:
               raise SystemExit("CATALOG_REDUCTION_RECOVERY_PROFILE_MISMATCH")
           profile_sha256 = canonical_sha256(profile)
           if bound != profile_sha256:

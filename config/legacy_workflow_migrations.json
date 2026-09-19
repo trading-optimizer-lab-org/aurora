@@ -40,7 +40,7 @@
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
         "reason": "restore authenticated predecessor reduction groups without reevaluation through a current sealed admission, retaining scientific verification and protected terminal publication",
-        "replacement_sha256": "994f55f3b0e94a20bf4dab6a575e8675dc5bef58bd6b10bec38f4a582d0cc8d8"
+        "replacement_sha256": "67ad74a470d3e1ead1cc2520b03c3accdb7b028852b68484ef07a382e191eca5"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
