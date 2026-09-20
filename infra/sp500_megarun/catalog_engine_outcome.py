@@ -17,7 +17,6 @@ from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from .catalog_request_contract import FrozenModel, Sha256
 from .catalog_sealed_plan import verify_sealed_global_reuse_execution_plan
-from .catalog_worker_failure import CatalogWorkerFailureReceiptV1, TRANSIENT_CLASSES
 from aurora.infra.github_performance.contracts import canonical_sha256
 
 
@@ -65,6 +64,9 @@ def verify_recovered_evaluation_evidence(
     the current run/attempt; its caller must download these artifacts from that
     run's protected publishers, never from arbitrary user-selected runs.
     """
+    # The controller reads outcomes without the scientific worker runtime.
+    from .catalog_worker_failure import CatalogWorkerFailureReceiptV1, TRANSIENT_CLASSES
+
     invalid = "CATALOG_RECOVERED_EVALUATION_EVIDENCE_INVALID"
     bindings = {key: str(expected[key]) for key in _RECOVERED_BINDINGS[:7]}
     verify_sealed_global_reuse_execution_plan(sealed_plan, expected_bindings=bindings)
