@@ -15,9 +15,6 @@ jobs:
         python: ["3.11", "3.12", "3.13"]
         os: [ubuntu-latest, windows-latest]
         shard: [0, 1]
-        exclude:
-          - os: ubuntu-latest
-            shard: 1
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -39,4 +36,4 @@ jobs:
         run: >-
           python scripts/run_ci_test_shard.py
           --shard-index ${{ matrix.shard }}
-          --shard-count ${{ matrix.os == 'windows-latest' && 2 || 1 }}
+          --shard-count 2

@@ -100,7 +100,7 @@
       "path": ".github/workflows/tests.yml",
       "previous_sha256": "9d9a893c6504f7d24843913d9b668be790c60429b7d3cf149efe4a37db2d0836",
       "reason": "keep the test command cross-platform and shard Windows execution below the protected timeout",
-      "replacement_sha256": "26d91399b7d5f502678038cf9add2af0a5bef9baac7cc5f63de169f20fe67811"
+      "replacement_sha256": "530bb5e96eaa02c3a79433a23e18d70480d849cb0014f344390c780595f659e5"
     },
     {
       "path": ".github/workflows/typecheck.yml",
