@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Protected, phased cloud intake; only the App client may POST a run request."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import argparse
 import hashlib
 import json
@@ -75,7 +75,7 @@ def _require_checkpoint_definition(root, manifest, proof):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_DEFINITION_INVALID")
 
 
-def _new_emission(root, context, run_id, commit, *, recovery_proof=None):
+def _new_emission(root, context, run_id, commit, *, recovery_proof=None, unreserved_proof=None, now=None):
     registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
     entry = resolve_catalog_campaign(registry, context.intent.campaign_key, root)
     manifest_path = root / entry.definition_manifest_path
@@ -99,6 +99,7 @@ def _new_emission(root, context, run_id, commit, *, recovery_proof=None):
         prompt_sha256=prompt_sha, imported_ticket=imported, lineage_transition=transition,
         lineage_resolver=lambda candidate: load_lineage_transition(root, candidate),
         recovery_proof=recovery_proof,
+        unreserved_proof=unreserved_proof, now=now,
     )
     draft = build_catalog_intent_draft(ticket=ticket, registry_entry=entry,
                                       campaign_manifest=manifest, prompt_bytes=prompt)
@@ -205,6 +206,7 @@ def execute_phase(*, root, work, phase, context, client, run_id, attempt, commit
             root, context.intent.campaign_key, owner.generation + 1 if owner else 1,
         )
         proof = None
+        unreserved_proof = None
         if profile is not None:
             from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import authenticate_checkpoint_recovery_owner
             from scripts.admit_catalog_fast_request import _download_owner_archive
@@ -215,9 +217,25 @@ def execute_phase(*, root, work, phase, context, client, run_id, attempt, commit
                     client.repository, os.environ["GH_TOKEN"], artifact_id),
             )
             proof = authenticated.proof
-        item = _new_emission(root, context, run_id, commit, recovery_proof=proof)
+            prior = next((row for row in current.emissions
+                          if row.request.campaign_key == context.intent.campaign_key), None)
+            if prior is not None and owner is not None and prior.request != owner.request:
+                from aurora.infra.sp500_megarun.catalog_unreserved_checkpoint_recovery import authenticate_unreserved_checkpoint_recovery
+                unreserved_proof = authenticate_unreserved_checkpoint_recovery(
+                    repo_root=root, repository=client.repository, protected_commit_sha=commit,
+                    authority=current, profile=profile, fetch_json=client, now=datetime.now(timezone.utc),
+                    download_artifact=lambda artifact_id: _download_owner_archive(
+                        client.repository, os.environ["GH_TOKEN"], artifact_id))
+        emission_options = {"recovery_proof": proof}
+        if unreserved_proof is not None:
+            emission_options.update(unreserved_proof=unreserved_proof, now=datetime.now(timezone.utc))
+        item = _new_emission(root, context, run_id, commit, **emission_options)
         transition = load_lineage_transition(root, item.request)
-        if proof is None:
+        if unreserved_proof is not None:
+            candidate = current.replace_unreserved_checkpoint_emission(
+                item, recovery_proof=proof, unreserved_proof=unreserved_proof,
+                lineage_transition=transition, now=datetime.now(timezone.utc))
+        elif proof is None:
             candidate = current.stage_emission(item, lineage_transition=transition)
         else:
             candidate = current.stage_checkpoint_emission(item, recovery_proof=proof,

@@ -11,7 +11,7 @@ from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityState
 from tests.test_catalog_fast_authority_github import publication_transport
 
 
-@pytest.mark.parametrize("corrupt", [False, True, "missing"])
+@pytest.mark.parametrize("corrupt", [False, True, "missing", "handoff", "handoff_corrupt"])
 def test_reader_cli_writes_only_after_current_publication_verified(tmp_path, monkeypatch, corrupt):
     from scripts import verify_catalog_fast_authority as command
 
@@ -20,7 +20,7 @@ def test_reader_cli_writes_only_after_current_publication_verified(tmp_path, mon
     (root / "config").mkdir(parents=True)
     (root / "config/catalog_authority_anchor_v1.json").write_text(json.dumps(fixture.anchor))
     output = tmp_path / "current.json"
-    if corrupt is True:
+    if corrupt is True or corrupt == "handoff_corrupt":
         fixture.artifact["digest"] = "sha256:" + "0" * 64
     if corrupt == "missing":
         original_get = fixture.client.get_json
@@ -43,13 +43,24 @@ def test_reader_cli_writes_only_after_current_publication_verified(tmp_path, mon
     monkeypatch.setenv("GITHUB_REPOSITORY", fixture.client.repository)
     monkeypatch.setenv("CATALOG_PROTECTED_COMMIT_SHA", "a" * 40)
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
-    exit_code = command.main(["--repo-root", str(root), "--output", str(output)])
-    if corrupt:
+    extra = []
+    if corrupt in {"handoff", "handoff_corrupt"}:
+        for name, value in {"GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main",
+                "GITHUB_RUN_ID": "800", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_JOB": "gate"}.items():
+            monkeypatch.setenv(name, value)
+        extra = ["--gate-handoff"]
+    exit_code = command.main(["--repo-root", str(root), "--output", str(output)] + extra)
+    if corrupt in {True, "missing", "handoff_corrupt"}:
         assert exit_code == (4 if corrupt == "missing" else 2)
         assert not output.exists()
+        assert not (tmp_path / ".catalog-fast-gate-handoff").exists()
     else:
         assert exit_code == 0
         assert FastAuthorityStateV1.model_validate_json(output.read_text()).revision == 1
+        if corrupt == "handoff":
+            saved = json.loads((tmp_path / ".catalog-fast-gate-handoff/authority.json").read_bytes())
+            assert saved["edition"][1] == "E_current"
+            assert saved["state"]["state_sha256"] == fixture.state.state_sha256
 
 
 def test_workflow_checks_current_authority_before_admission():
