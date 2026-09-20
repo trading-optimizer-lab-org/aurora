@@ -331,33 +331,92 @@ jobs:
           expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ steps.descriptor.outputs.numeric_profile_sha256 }}
 
-      - name: Download only exact assignment, data, components, and prior checkpoint
+      - name: Select exact recipe payload transports
+        id: recipe_transports
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ASSIGNMENT_ARTIFACT: ${{ steps.descriptor.outputs.assignment_artifact }}
-          PRIOR_CHECKPOINT: ${{ steps.descriptor.outputs.prior_checkpoint_chain_artifact }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/assignment" "$RUNNER_TEMP/data" "$RUNNER_TEMP/components" "$RUNNER_TEMP/prior"
-          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name "$ASSIGNMENT_ARTIFACT" --dir "$RUNNER_TEMP/assignment"
-          while IFS= read -r artifact; do
-            test -n "$artifact"
-            mkdir -p "$RUNNER_TEMP/data/$artifact"
-            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-              --name "$artifact" --dir "$RUNNER_TEMP/data/$artifact"
-          done < "$RUNNER_TEMP/descriptor-bundle/data-artifacts.txt"
-          while IFS= read -r artifact; do
-            test -n "$artifact"
-            mkdir -p "$RUNNER_TEMP/components/$artifact"
-            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-              --name "$artifact" --dir "$RUNNER_TEMP/components/$artifact"
-          done < "$RUNNER_TEMP/descriptor-bundle/component-artifacts.txt"
-          if [ -n "$PRIOR_CHECKPOINT" ]; then
-            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-              --name "$PRIOR_CHECKPOINT" --dir "$RUNNER_TEMP/prior"
-          fi
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          descriptor = json.loads(
+              (temp / "descriptor-bundle/recipe-descriptor.json").read_text()
+          )
+          names = [
+              descriptor["assignment_artifact"],
+              *descriptor["data_partition_artifacts"],
+              *descriptor["component_bundle_artifacts"],
+          ]
+          prior = descriptor["prior_checkpoint_chain_artifact"]
+          if not isinstance(prior, str):
+              raise SystemExit("RECIPE_PAYLOAD_ARTIFACT_SET_INVALID")
+          if prior:
+              names.append(prior)
+          if (
+              len(names) < 3
+              or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}", name) for name in names)
+              or len(set(names)) != len(names)
+          ):
+              raise SystemExit("RECIPE_PAYLOAD_ARTIFACT_SET_INVALID")
+          # Literal brace alternatives, never a wildcard or a REST token.
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+              out.write("pattern={" + ",".join(names) + "}\n")
+          PY
+
+      - name: Download only exact recipe payloads through runtime artifact service
+        id: recipe_download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: ${{ steps.recipe_transports.outputs.pattern }}
+          path: ${{ runner.temp }}/recipe-payloads
+          merge-multiple: false
+
+      - name: Stage exact recipe payload directories
+        id: stage_recipe_transports
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          descriptor = json.loads(
+              (temp / "descriptor-bundle/recipe-descriptor.json").read_text()
+          )
+          destinations = {descriptor["assignment_artifact"]: temp / "assignment"}
+          for field, folder in (
+              ("data_partition_artifacts", "data"),
+              ("component_bundle_artifacts", "components"),
+          ):
+              (temp / folder).mkdir()
+              for name in descriptor[field]:
+                  destinations[name] = temp / folder / name
+          prior = descriptor["prior_checkpoint_chain_artifact"]
+          if prior:
+              destinations[prior] = temp / "prior"
+          payloads = temp / "recipe-payloads"
+          # At least three names are required, so singleton flattening is invalid.
+          if (
+              not payloads.is_dir()
+              or set(path.name for path in payloads.iterdir()) != set(destinations)
+              or any(path.is_symlink() or not path.is_dir() for path in payloads.iterdir())
+          ):
+              raise SystemExit("RECIPE_PAYLOAD_INCOMPLETE")
+          for name, destination in destinations.items():
+              shutil.move(str(payloads / name), str(destination))
+          PY
+
+      - name: Verify exact assignment, components, and prior checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
           python - <<'PY'
           import hashlib
           import json

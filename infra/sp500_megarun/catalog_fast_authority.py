@@ -7,14 +7,17 @@ fallback. This module performs no remote writes or automatic initialization.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, model_serializer, model_validator
 
 from ..github_performance.contracts import canonical_sha256
-from .catalog_request_contract import CatalogRunRequestV1, FrozenModel, Sha256
+from .catalog_request_contract import CatalogLaunchTicketV1, CatalogRunRequestV1, FrozenModel, Sha256
 from .catalog_cloud_emission import CatalogCloudEmissionV1, CatalogCloudCompletedIntentV1
 from .catalog_lineage_transition import CatalogLineageTransitionV1, load_lineage_transition as load_lineage_transition
+
+if TYPE_CHECKING:
+    from .catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
 
 
 _PREFIX = "AURORA CATALOG FAST AUTHORITY V1\n"
@@ -38,6 +41,25 @@ class FastAuthorityCampaignV1(FrozenModel):
         return self.request.launch_generation
 
 
+class CheckpointRecoverySupersededIntentV1(FrozenModel):
+    """Retain the failed emission without inventing a scientific terminal."""
+
+    emission: CatalogCloudEmissionV1
+    source_owner_issue_number: int = Field(strict=True, ge=1)
+    source_owner_run_id: int = Field(strict=True, ge=1)
+    recovery_profile_sha256: Sha256
+    recovery_evidence_sha256: Sha256
+    successor_request_sha256: Sha256
+
+    @model_validator(mode="after")
+    def _binding(self) -> "CheckpointRecoverySupersededIntentV1":
+        if (self.emission.state != "PUBLICADO"
+            or self.emission.issue_number != self.source_owner_issue_number
+            or self.emission.request.request_sha256 == self.successor_request_sha256):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARCHIVE_INVALID")
+        return self
+
+
 class _AuthorityContent(FrozenModel):
     schema_version: Literal["1"] = "1"
     document_type: Literal["catalog_fast_authority_state_v1"] = "catalog_fast_authority_state_v1"
@@ -46,6 +68,7 @@ class _AuthorityContent(FrozenModel):
     campaigns: tuple[FastAuthorityCampaignV1, ...] = Field(max_length=128)
     emissions: tuple[CatalogCloudEmissionV1, ...] = Field(default=(), max_length=128)
     completed_intents: tuple[CatalogCloudCompletedIntentV1, ...] = Field(default=(), max_length=128)
+    recovery_superseded_intents: tuple[CheckpointRecoverySupersededIntentV1, ...] = Field(default=(), max_length=128)
 
     @model_serializer(mode="wrap")
     def _legacy_wire_shape(self, handler):
@@ -54,6 +77,8 @@ class _AuthorityContent(FrozenModel):
             payload.pop("emissions", None)
         if not self.completed_intents:
             payload.pop("completed_intents", None)
+        if not self.recovery_superseded_intents:
+            payload.pop("recovery_superseded_intents", None)
         return payload
 
     @model_validator(mode="after")
@@ -68,6 +93,11 @@ class _AuthorityContent(FrozenModel):
         archived_ids = tuple(row.intent_id for row in self.completed_intents)
         if archived_ids != tuple(sorted(set(archived_ids))) or set(archived_ids) & set(intent_ids):
             raise ValueError("CATALOG_CLOUD_EMISSIONS_INVALID")
+        superseded_ids = tuple(row.emission.intent_id for row in self.recovery_superseded_intents)
+        if (superseded_ids != tuple(sorted(set(superseded_ids)))
+            or set(superseded_ids) & (set(archived_ids) | set(intent_ids))
+            or len(superseded_ids) + len(archived_ids) > 128):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARCHIVE_INVALID")
         if (self.revision == 1) != (self.previous_state_sha256 is None):
             raise ValueError("CATALOG_FAST_AUTHORITY_REVISION_INVALID")
         return self
@@ -97,7 +127,111 @@ class FastAuthorityStateV1(_AuthorityContent):
         campaigns[row.request.campaign_key] = row
         return self._create(revision=self.revision + 1, previous_state_sha256=self.state_sha256,
                             campaigns=tuple(campaigns[key] for key in sorted(campaigns)), emissions=self.emissions,
-                            completed_intents=self.completed_intents)
+                            completed_intents=self.completed_intents,
+                            recovery_superseded_intents=self.recovery_superseded_intents)
+
+    def _checkpoint_predecessor(self, request: CatalogRunRequestV1 | CatalogLaunchTicketV1,
+                               recovery_proof: "CheckpointRecoveryOwnerProofV1",
+                               lineage_transition: CatalogLineageTransitionV1 | None) -> FastAuthorityCampaignV1:
+        from .catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
+
+        old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
+        if (
+            not isinstance(recovery_proof, CheckpointRecoveryOwnerProofV1)
+            or recovery_proof.evidence_kind != "failed_owner_without_terminal"
+            or old is None or old.is_terminal
+            or old.owner_issue_number != recovery_proof.source_issue_number
+            or old.owner_run_id != recovery_proof.source_run_id
+            or old.request.request_sha256 != recovery_proof.source_request_sha256
+            or request.campaign_key != recovery_proof.campaign_key
+            or request.launch_generation != recovery_proof.target_generation
+            or request.launch_generation != old.generation + 1
+            or request.previous_terminal_request_sha256 != old.request.request_sha256
+            or request.request_id == old.request.request_id
+            or lineage_transition is None
+            or not lineage_transition.authorizes(old.request, request)
+        ):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_INVALID")
+        return old
+
+    def _checkpoint_archive(self, request: CatalogRunRequestV1,
+                            recovery_proof: "CheckpointRecoveryOwnerProofV1") -> CheckpointRecoverySupersededIntentV1:
+        from .catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
+
+        if not isinstance(recovery_proof, CheckpointRecoveryOwnerProofV1):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARCHIVE_INVALID")
+        rows = [row for row in self.recovery_superseded_intents
+                if row.successor_request_sha256 == request.request_sha256]
+        if len(rows) != 1:
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARCHIVE_INVALID")
+        row = rows[0]
+        if (row.recovery_profile_sha256 != recovery_proof.profile_sha256
+            or row.recovery_evidence_sha256 != recovery_proof.evidence_sha256
+            or row.source_owner_issue_number != recovery_proof.source_issue_number
+            or row.source_owner_run_id != recovery_proof.source_run_id
+            or row.emission.request.request_sha256 != recovery_proof.source_request_sha256
+            or request.previous_terminal_request_sha256 != recovery_proof.source_request_sha256):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARCHIVE_INVALID")
+        return row
+
+    def stage_checkpoint_emission(self, emission: CatalogCloudEmissionV1, *,
+                                 recovery_proof: "CheckpointRecoveryOwnerProofV1",
+                                 lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
+        """Stage a protected successor, preserving its failed source as nonterminal.
+
+        The caller must authenticate this proof afresh and load the profile from
+        protected code. The serialized writer independently repeats this transition.
+        """
+        if emission.state != "SIGNED":
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID")
+        matching = next((row for row in self.emissions if row.intent_id == emission.intent_id), None)
+        if matching is not None:
+            mutable = {"state", "issue_number", "post_run_id", "post_run_attempt"}
+            if matching.model_dump(exclude=mutable) != emission.model_dump(exclude=mutable):
+                raise ValueError("CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID")
+            self._checkpoint_archive(emission.request, recovery_proof)
+            return self
+        if (any(row.intent_id == emission.intent_id for row in self.completed_intents)
+            or any(row.emission.intent_id == emission.intent_id for row in self.recovery_superseded_intents)):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_INTENT_REPLAY")
+        old = self._checkpoint_predecessor(emission.request, recovery_proof, lineage_transition)
+        prior = next((row for row in self.emissions if row.request.campaign_key == emission.request.campaign_key), None)
+        if (prior is None or prior.state != "PUBLICADO" or prior.request != old.request
+            or prior.issue_number != old.owner_issue_number):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID")
+        if len(self.completed_intents) + len(self.recovery_superseded_intents) >= 128:
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_HISTORY_CAPACITY_EXCEEDED")
+        archive = CheckpointRecoverySupersededIntentV1(
+            emission=prior, source_owner_issue_number=old.owner_issue_number,
+            source_owner_run_id=old.owner_run_id,
+            recovery_profile_sha256=recovery_proof.profile_sha256,
+            recovery_evidence_sha256=recovery_proof.evidence_sha256,
+            successor_request_sha256=emission.request.request_sha256,
+        )
+        rows = {row.request.campaign_key: row for row in self.emissions}
+        rows[emission.request.campaign_key] = emission
+        return self._create(
+            revision=self.revision + 1, previous_state_sha256=self.state_sha256,
+            campaigns=self.campaigns, emissions=tuple(rows[key] for key in sorted(rows)),
+            completed_intents=self.completed_intents,
+            recovery_superseded_intents=tuple(sorted((*self.recovery_superseded_intents, archive),
+                                                   key=lambda row: row.emission.intent_id)),
+        )
+
+    def reserve_checkpoint_successor(self, *, request: CatalogRunRequestV1, issue_number: int, run_id: int,
+                                    recovery_proof: "CheckpointRecoveryOwnerProofV1",
+                                    lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
+        """Reserve only the published successor already bound to the source proof."""
+        self._checkpoint_archive(request, recovery_proof)
+        emission = next((row for row in self.emissions if row.request.campaign_key == request.campaign_key), None)
+        if (emission is None or emission.request != request or emission.state != "PUBLICADO"
+            or emission.issue_number != issue_number):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID")
+        old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
+        if old is not None and old.request == request:
+            return self
+        self._checkpoint_predecessor(request, recovery_proof, lineage_transition)
+        return self._replace(FastAuthorityCampaignV1(request=request, owner_issue_number=issue_number, owner_run_id=run_id))
 
     def stage_emission(self, emission: CatalogCloudEmissionV1, *,
                        lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
@@ -108,6 +242,8 @@ class FastAuthorityStateV1(_AuthorityContent):
         """
         if emission.state != "SIGNED":
             raise ValueError("CATALOG_CLOUD_EMISSION_TRANSITION_INVALID")
+        if any(row.emission.intent_id == emission.intent_id for row in self.recovery_superseded_intents):
+            raise ValueError("CATALOG_CLOUD_INTENT_ALREADY_SUPERSEDED")
         archived = next((row for row in self.completed_intents if row.intent_id == emission.intent_id), None)
         if archived is not None:
             raise ValueError("CATALOG_CLOUD_INTENT_ALREADY_COMPLETED")
@@ -128,7 +264,7 @@ class FastAuthorityStateV1(_AuthorityContent):
         if prior is not None:
             if owner is None or owner.terminal_receipt_sha256 is None:
                 raise ValueError("CATALOG_CLOUD_TERMINAL_REQUIRED")
-            if len(completed) >= 128:
+            if len(completed) + len(self.recovery_superseded_intents) >= 128:
                 raise ValueError("CATALOG_CLOUD_HISTORY_CAPACITY_EXCEEDED")
             completed[prior.intent_id] = CatalogCloudCompletedIntentV1.from_emission(prior, owner.terminal_receipt_sha256)
         # Reuse the scientific generation/lineage transition solely for validation.
@@ -143,7 +279,8 @@ class FastAuthorityStateV1(_AuthorityContent):
         rows[emission.request.campaign_key] = emission
         return self._create(revision=self.revision + 1, previous_state_sha256=self.state_sha256,
                             campaigns=self.campaigns, emissions=tuple(rows[key] for key in sorted(rows)),
-                            completed_intents=tuple(completed[key] for key in sorted(completed)))
+                            completed_intents=tuple(completed[key] for key in sorted(completed)),
+                            recovery_superseded_intents=self.recovery_superseded_intents)
 
     def advance_emission(self, *, intent_id: str, state: str,
                          issue_number: int | None = None, post_run_id: int | None = None,
@@ -157,10 +294,14 @@ class FastAuthorityStateV1(_AuthorityContent):
         return self._create(revision=self.revision + 1, previous_state_sha256=self.state_sha256,
                             campaigns=self.campaigns,
                             emissions=tuple(updated if row.intent_id == intent_id else row for row in self.emissions),
-                            completed_intents=self.completed_intents)
+                            completed_intents=self.completed_intents,
+                            recovery_superseded_intents=self.recovery_superseded_intents)
 
     def reserve(self, *, request: CatalogRunRequestV1, issue_number: int, run_id: int,
                 lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
+        if any(row.emission.request.request_sha256 == request.request_sha256
+               for row in self.recovery_superseded_intents):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SOURCE_SUPERSEDED")
         emission = next((row for row in self.emissions if row.request.campaign_key == request.campaign_key), None)
         if emission is not None and request.launch_generation >= emission.request.launch_generation:
             if request != emission.request or emission.state not in {"PUBLICACION_INCIERTA", "PUBLICADO"}:
@@ -290,6 +431,9 @@ class FastAuthorityStateV1(_AuthorityContent):
 
     def terminalize(self, *, request: CatalogRunRequestV1, run_id: int,
                     terminal_receipt_sha256: str) -> "FastAuthorityStateV1":
+        if any(row.emission.request.request_sha256 == request.request_sha256
+               for row in self.recovery_superseded_intents):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SOURCE_SUPERSEDED")
         old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
         if old is None or old.owner_run_id != run_id or old.request.request_sha256 != request.request_sha256:
             raise ValueError("CATALOG_FAST_AUTHORITY_OWNER_MISMATCH")

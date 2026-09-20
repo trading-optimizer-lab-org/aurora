@@ -433,6 +433,7 @@ def build_global_reuse_execution_plan(
     preparation_only: bool = False,
     hot_checkpoint_upload_seconds_p95: float | None = None,
     worker_count_override: int | None = None,
+    cached_strategy_ids: tuple[str, ...] = (),
 ) -> CatalogGlobalReuseExecutionPlanV1:
     """Build a deterministic cold/warm/partial plan before reservation."""
     if not component_requirements or not recipes:
@@ -463,6 +464,19 @@ def build_global_reuse_execution_plan(
     recipe_ids = tuple(recipe.strategy_id for recipe in recipes)
     if len(set(recipe_ids)) != len(recipe_ids):
         raise ValueError("CATALOG_RECIPE_REQUIREMENT_DUPLICATE")
+    if (
+        not isinstance(cached_strategy_ids, tuple)
+        or any(not isinstance(strategy_id, str) for strategy_id in cached_strategy_ids)
+    ):
+        raise ValueError("CATALOG_CACHED_STRATEGY_IDS_TYPE_INVALID")
+    if len(set(cached_strategy_ids)) != len(cached_strategy_ids):
+        raise ValueError("CATALOG_CACHED_STRATEGY_ID_DUPLICATE")
+    if not set(cached_strategy_ids).issubset(recipe_ids):
+        raise ValueError("CATALOG_CACHED_STRATEGY_ID_UNKNOWN")
+    cached_strategy_set = set(cached_strategy_ids)
+    pending_recipes = tuple(
+        recipe for recipe in recipes if recipe.strategy_id not in cached_strategy_set
+    )
     if any(
         not set(recipe.component_ids).issubset(required_by_id)
         for recipe in recipes
@@ -858,14 +872,14 @@ def build_global_reuse_execution_plan(
     if set(component_assignment_by_id) != set(required_component_ids):
         raise ValueError("CATALOG_COMPONENT_ASSIGNMENT_COVERAGE_INVALID")
 
-    recipe_worker_count = min(worker_count, len(recipes))
+    recipe_worker_count = min(worker_count, len(pending_recipes))
     recipe_bins: list[list[CatalogRecipeRequirementV1]] = [
         [] for _ in range(recipe_worker_count)
     ]
     recipe_components: list[set[str]] = [set() for _ in range(recipe_worker_count)]
     recipe_loads = [0.0] * recipe_worker_count
     for recipe in sorted(
-        recipes,
+        pending_recipes,
         key=lambda item: (-item.estimated_seconds_p99, item.strategy_id),
     ):
         minimum_load = min(recipe_loads)
@@ -886,7 +900,7 @@ def build_global_reuse_execution_plan(
         recipe_loads[worker_id] += recipe.estimated_seconds_p99
     consumed_component_ids = set().union(*recipe_components)
     unconsumed_component_ids = set(required_component_ids) - consumed_component_ids
-    if unconsumed_component_ids:
+    if unconsumed_component_ids and recipe_components:
         recipe_components[0].update(unconsumed_component_ids)
     if layout is None and not pending_component_ids:
         projected_component_download_bytes = sum(
@@ -1017,6 +1031,17 @@ def build_global_reuse_execution_plan(
             )
         )
     checked_recipe_assignments = tuple(recipe_assignments)
+    assigned_strategy_ids = tuple(
+        strategy_id
+        for assignment in checked_recipe_assignments
+        for strategy_id in assignment.strategy_ids
+    )
+    if (
+        len(assigned_strategy_ids) != len(set(assigned_strategy_ids))
+        or set(assigned_strategy_ids)
+        != {recipe.strategy_id for recipe in pending_recipes}
+    ):
+        raise ValueError("CATALOG_RECIPE_ASSIGNMENT_COVERAGE_INVALID")
 
     def rows_for(
         assignments: tuple[

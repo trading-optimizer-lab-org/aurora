@@ -265,6 +265,11 @@ def materialize_prepared_catalog_plan(
         "decision_sha256": decision_sha256,
         "prepared_receipt_sha256": receipt.receipt_sha256,
     }
+    if "checkpoint_recovery" in controller["binding"]:
+        # Anchor the complete authenticated transport, not just its recipe IDs.
+        controller["binding"]["checkpoint_recovery_prepared_bundle_manifest_sha256"] = (
+            _manifest.manifest_sha256
+        )
     recovery_raw = None
     if reduction_recovery is not None:
         # Admission owns authorization and source selection. Seal its exact

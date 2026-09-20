@@ -20,6 +20,9 @@ from aurora.infra.sp500_megarun.catalog_campaign_registry import load_catalog_ca
 from aurora.infra.sp500_megarun.catalog_cloud_cutover import imported_cloud_ticket, load_cloud_retirement
 from aurora.infra.sp500_megarun.catalog_cloud_emission import CatalogCloudEmissionV1, CloudOriginEvidenceV1
 from aurora.infra.sp500_megarun.catalog_cloud_ticket import select_cloud_launch_ticket
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import (
+    CHECKPOINT_RECOVERY_CONFIG_RELATIVE_PATH, load_checkpoint_recovery_profile,
+)
 from aurora.infra.sp500_megarun.catalog_cloud_transport import _processing_record
 from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogGitHubReadOnlyClient
 from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
@@ -57,7 +60,22 @@ def _session(root):
     return cloud_app_session(root, key.encode("utf-8"))
 
 
-def _new_emission(root, context, run_id, commit):
+def _require_checkpoint_definition(root, manifest, proof):
+    """The signed definition must bind the exact protected recovery profile."""
+    profile = load_checkpoint_recovery_profile(root, proof.campaign_key, proof.target_generation)
+    path = root / CHECKPOINT_RECOVERY_CONFIG_RELATIVE_PATH
+    if (profile is None or profile.profile_sha256 != proof.profile_sha256
+            or manifest.campaign_key != proof.campaign_key or path.is_symlink()
+            or not path.resolve(strict=True).is_relative_to(root.resolve(strict=True))):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_DEFINITION_INVALID")
+    rows = [row for row in manifest.entries if row.path == CHECKPOINT_RECOVERY_CONFIG_RELATIVE_PATH]
+    raw = path.read_bytes()
+    if (len(rows) != 1 or rows[0].sha256 != hashlib.sha256(raw).hexdigest()
+            or rows[0].size_bytes != len(raw)):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_DEFINITION_INVALID")
+
+
+def _new_emission(root, context, run_id, commit, *, recovery_proof=None):
     registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
     entry = resolve_catalog_campaign(registry, context.intent.campaign_key, root)
     manifest_path = root / entry.definition_manifest_path
@@ -66,6 +84,8 @@ def _new_emission(root, context, run_id, commit):
     manifest = parse_catalog_campaign_definition_bytes(manifest_path.read_bytes())
     if manifest.registry_entry_sha256 != registry_entry_sha256(entry):
         raise ValueError("CATALOG_CLOUD_MANIFEST_REGISTRY_MISMATCH")
+    if recovery_proof is not None:
+        _require_checkpoint_definition(root, manifest, recovery_proof)
     prompt = (root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").read_bytes()
     prompt_sha = hashlib.sha256(prompt).hexdigest()
     imported = imported_cloud_ticket(
@@ -78,6 +98,7 @@ def _new_emission(root, context, run_id, commit):
         campaign_definition_sha256=manifest.campaign_definition_sha256,
         prompt_sha256=prompt_sha, imported_ticket=imported, lineage_transition=transition,
         lineage_resolver=lambda candidate: load_lineage_transition(root, candidate),
+        recovery_proof=recovery_proof,
     )
     draft = build_catalog_intent_draft(ticket=ticket, registry_entry=entry,
                                       campaign_manifest=manifest, prompt_bytes=prompt)
@@ -178,8 +199,29 @@ def execute_phase(*, root, work, phase, context, client, run_id, attempt, commit
     if phase == "signed":
         if item is not None:
             return {"changed": "false", "status": context.status}
-        item = _new_emission(root, context, run_id, commit)
-        candidate = current.stage_emission(item, lineage_transition=load_lineage_transition(root, item.request))
+        owner = next((row for row in current.campaigns
+                      if row.request.campaign_key == context.intent.campaign_key), None)
+        profile = load_checkpoint_recovery_profile(
+            root, context.intent.campaign_key, owner.generation + 1 if owner else 1,
+        )
+        proof = None
+        if profile is not None:
+            from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import authenticate_checkpoint_recovery_owner
+            from scripts.admit_catalog_fast_request import _download_owner_archive
+            authenticated = authenticate_checkpoint_recovery_owner(
+                repo_root=root, repository=client.repository, protected_commit_sha=commit,
+                profile=profile, fetch_json=client,
+                download_artifact=lambda artifact_id: _download_owner_archive(
+                    client.repository, os.environ["GH_TOKEN"], artifact_id),
+            )
+            proof = authenticated.proof
+        item = _new_emission(root, context, run_id, commit, recovery_proof=proof)
+        transition = load_lineage_transition(root, item.request)
+        if proof is None:
+            candidate = current.stage_emission(item, lineage_transition=transition)
+        else:
+            candidate = current.stage_checkpoint_emission(item, recovery_proof=proof,
+                                                          lineage_transition=transition)
     elif phase == "uncertain":
         if item is None:
             raise ValueError("CATALOG_CLOUD_SIGNED_EMISSION_REQUIRED")

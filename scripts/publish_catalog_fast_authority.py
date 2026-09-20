@@ -25,7 +25,7 @@ from aurora.infra.sp500_megarun.catalog_fast_reservation import load_fast_gate_o
 from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogGitHubReadOnlyClient, CatalogGitHubSnapshotError
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
-from scripts.admit_catalog_fast_request import _download_owner_archive, _historical_owner_commit_approved, _strict_json
+from scripts.admit_catalog_fast_request import _download_owner_archive, _historical_owner_commit_approved, _strict_json, _reserve_new_fast_request
 from scripts.verify_catalog_fast_authority import read_live_edit
 from aurora.infra.sp500_megarun.catalog_gate_budget import gate_timeout
 
@@ -197,11 +197,21 @@ def main(argv: list[str] | None = None) -> int:
             approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, commit))
         expected_edit_id = latest["data"]["repository"]["issue"]["userContentEdits"]["nodes"][0]["id"]
         transition = load_lineage_transition(root, request) if receipt is None or unlaunched_terminal else None
-        candidate = (current.reserve(request=request, issue_number=number, run_id=run_id,
-                                    lineage_transition=transition) if receipt is None
-            else current.close_unlaunched(request=request, issue_number=number, run_id=run_id,
+        recovery_proof = None
+        if receipt is None:
+            _, recovery_proof = _reserve_new_fast_request(
+                root=root, authority=current, request=request, issue_number=number, run_id=run_id,
+                client=client, protected_commit=commit,
+                download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+            )
+            candidate = (current.reserve(request=request, issue_number=number, run_id=run_id,
+                                        lineage_transition=transition) if recovery_proof is None
+                else current.reserve_checkpoint_successor(request=request, issue_number=number,
+                    run_id=run_id, recovery_proof=recovery_proof, lineage_transition=transition))
+        else:
+            candidate = (current.close_unlaunched(request=request, issue_number=number, run_id=run_id,
                 terminal_receipt_sha256=receipt.receipt_sha256, lineage_transition=transition) if unlaunched_terminal
-            else current.terminalize(request=request, run_id=run_id, terminal_receipt_sha256=receipt.receipt_sha256))
+                else current.terminalize(request=request, run_id=run_id, terminal_receipt_sha256=receipt.receipt_sha256))
         job_id = _publisher_job(client, run_id, attempt, commit, args.phase, number)
 
         def write(body: str) -> None:
@@ -213,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         publication = write_current_fast_authority(current=current, candidate=candidate,
             expected_edit_id=expected_edit_id, anchor=anchor, run_id=run_id, run_attempt=attempt,
             job_id=job_id, phase=args.phase, commit=commit, read_edit=read, write_body=write,
-            lineage_transition=transition, unlaunched_terminal=unlaunched_terminal)
+            lineage_transition=transition, unlaunched_terminal=unlaunched_terminal, recovery_proof=recovery_proof)
         with args.output.open("x", encoding="utf-8") as stream:
             stream.write(publication.model_dump_json() + "\n")
         if args.github_output is not None:

@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 
@@ -45,6 +46,17 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
 )
 from aurora.infra.sp500_megarun.catalog_resume import build_resume_work_manifest
 from scripts.compile_sp500_catalog_recipes import verify_recipe_dag_artifacts
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_binding import (
+    build_checkpoint_recovery_binding, verify_checkpoint_recovery_plan,
+)
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import (
+    load_checkpoint_recovery_profile, validate_exact_checkpoint_profile,
+)
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_source import verify_checkpoint_recovery_source
+from scripts.prepare_catalog_campaign import (
+    _checkpoint_recovery_state, _owned_recovery_directory, _recovery_files,
+)
 from scripts.plan_sp500_optimized_catalog_run import (
     CatalogComponentRequirementV1,
     CatalogRecipeRequirementV1,
@@ -262,6 +274,52 @@ def required_prepared_cache_keys(
     )
 
 
+def _load_checkpoint_recovery_seed(root, seed, campaign_key, seed_context):
+    profile = load_checkpoint_recovery_profile(root, campaign_key, 8)
+    document = seed_context.get('checkpoint_recovery')
+    if profile is None:
+        if document is not None:
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_UNEXPECTED')
+        return None
+    if not isinstance(document, Mapping) or document.get('schema_version') != '1':
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_SEED_INVALID')
+    if validate_exact_checkpoint_profile(root, document.get('profile')) != profile:
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_PROFILE_MISMATCH')
+    try:
+        proof = CheckpointRecoveryOwnerProofV1(**document['owner_proof'])
+    except (KeyError, TypeError) as exc:
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_OWNER_PROOF_INVALID') from exc
+    if document.get('binding') != build_checkpoint_recovery_binding(profile, proof):
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_BINDING_INVALID')
+    transport = seed / 'checkpoint-recovery'
+    if transport.is_symlink() or not transport.is_dir():
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
+    if document.get('files') != _recovery_files(transport):
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
+    paths = []
+    for name in ('source_plan_relative', 'checkpoint_relative'):
+        relative = document.get(name)
+        if (not isinstance(relative, str) or not relative or '\\' in relative
+                or Path(relative).is_absolute() or '..' in Path(relative).parts):
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
+        paths.append(_owned_recovery_directory(transport, transport / relative))
+    cached = document.get('cached_strategy_ids')
+    if not isinstance(cached, list):
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_SEED_INVALID')
+    source = verify_checkpoint_recovery_source(
+        paths[0], paths[1], dict(profile.source_plan_bindings), profile.science_sha256,
+        profile.catalog_manifest_sha256, tuple(cached), profile.worker_ids,
+    )
+    state = _checkpoint_recovery_state(repo_root=root, profile=profile, restore_root=transport,
+        restore=lambda: SimpleNamespace(profile=profile, proof=proof, source_validation=source,
+                                        source_plan_root=paths[0], checkpoint_root=paths[1]))
+    if (document.get('cached_strategy_ids_sha256') != profile.cached_strategy_ids_sha256
+            or document.get('source_plan_receipt_sha256') != profile.source_plan_receipt_sha256):
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_SEED_INVALID')
+    verify_checkpoint_recovery_plan(seed / 'sealed-plan', profile, proof)
+    return state
+
+
 def finalize_preparation(
     *,
     campaign_key: str,
@@ -322,6 +380,9 @@ def finalize_preparation(
     )
     if identity != expected_identity:
         raise ValueError("CATALOG_PREPARATION_STALE")
+
+    recovery = _load_checkpoint_recovery_seed(root, seed, entry.campaign_key, seed_context)
+    cached_strategy_ids = tuple(recovery['cached_strategy_ids']) if recovery else ()
 
     index = CatalogRebuildableStoreIndexV1.model_validate(_strict_json(index_path))
     for field in (
@@ -398,6 +459,7 @@ def finalize_preparation(
         preparation_only=False,
         hot_checkpoint_upload_seconds_p95=checkpoint_upload_seconds_p95,
         worker_count_override=qualified_workers,
+        cached_strategy_ids=cached_strategy_ids,
     )
     if (
         plan.pending_component_ids
@@ -409,7 +471,7 @@ def finalize_preparation(
 
     work_manifest = build_resume_work_manifest(
         tuple(item.strategy_id for item in recipes),
-        cached_strategy_ids=(),
+        cached_strategy_ids=cached_strategy_ids,
         maximum_workers=qualified_workers,
     )
     evidence_payload = CatalogAdmissionEvidenceV1.model_validate(
@@ -432,8 +494,8 @@ def finalize_preparation(
         contract,
         evidence,
         work_manifest_sha256=work_manifest.manifest_sha256,
-        pending_recipe_count=len(recipes),
-        cached_recipe_count=0,
+        pending_recipe_count=len(work_manifest.pending_strategy_ids),
+        cached_recipe_count=len(work_manifest.cached_strategy_ids),
     )
     dag_manifest = verify_recipe_dag_artifacts(
         seed / "recipe-dag/recipe_dag.parquet",
@@ -445,13 +507,17 @@ def finalize_preparation(
     )
 
     output_dir.mkdir(parents=False, exist_ok=False)
+    if recovery is not None:
+        shutil.copytree(seed / 'checkpoint-recovery', output_dir / 'checkpoint-recovery')
+        if _recovery_files(output_dir / 'checkpoint-recovery') != recovery['files']:
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
     evidence_dir = output_dir / "evidence"
     evidence_dir.mkdir()
     shutil.copy2(seed / "preparation-seed.json", evidence_dir / "preparation-seed.json")
     shutil.copy2(seed / "runtime-smoke.json", evidence_dir / "runtime-smoke.json")
     shutil.copy2(index_path, evidence_dir / "catalog-rebuildable-store-index-v1.json")
     template_dir = output_dir / f"templates/workers-{qualified_workers:03d}"
-    controller_binding = {
+    controller_binding: dict[str, object] = {
         "request_sha256": bindings["request_sha256"],
         "campaign_definition_sha256": identity.campaign_definition_sha256,
         "campaign_id": bindings["campaign_id"],
@@ -461,6 +527,9 @@ def finalize_preparation(
         "protected_commit_sha": expected_commit,
         "preparation_key_sha256": identity.preparation_key_sha256,
     }
+    if recovery is not None:
+        controller_binding['checkpoint_recovery'] = build_checkpoint_recovery_binding(
+            recovery['profile'], recovery['proof'])
     template_receipt = write_sealed_global_reuse_execution_plan(
         output_dir=template_dir,
         contract=contract,
@@ -490,6 +559,8 @@ def finalize_preparation(
             "decision_sha256": bindings["decision_sha256"],
         },
     )
+    if recovery is not None:
+        verify_checkpoint_recovery_plan(template_dir, recovery['profile'], recovery['proof'])
     runtime_smoke = _mapping(
         _strict_json(seed / "runtime-smoke.json"),
         "CATALOG_PRODUCTION_RUNTIME_SMOKE_INVALID",

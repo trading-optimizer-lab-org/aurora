@@ -46,6 +46,9 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
     CatalogRebuildableStoreIndexV1,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import authenticate_checkpoint_recovery_owner
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import load_checkpoint_recovery_profile
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_binding import verify_checkpoint_recovery_plan
 from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import (
     ReductionRecoveryProfileV1, load_reduction_recovery_profile,
 )
@@ -202,6 +205,25 @@ def _write_replay_decision(
     with github_output.open("a", encoding="utf-8", newline="\n") as stream:
         for key, value in outputs.items():
             stream.write(f"{key}={value}\n")
+
+
+def _reserve_new_fast_request(*, root, authority, request, issue_number, run_id,
+                              client, protected_commit, download_archive):
+    """Validate reservation without mutating the authenticated authority snapshot."""
+    profile = load_checkpoint_recovery_profile(root, request.campaign_key, request.launch_generation)
+    transition = load_lineage_transition(root, request)
+    if profile is None:
+        authority.reserve(request=request, issue_number=issue_number, run_id=run_id,
+                          lineage_transition=transition)
+        return None, None
+    authenticated = authenticate_checkpoint_recovery_owner(
+        repo_root=root, repository=client.repository, protected_commit_sha=protected_commit,
+        profile=profile, fetch_json=client, download_artifact=download_archive,
+    )
+    authority.reserve_checkpoint_successor(request=request, issue_number=issue_number, run_id=run_id,
+                                           recovery_proof=authenticated.proof,
+                                           lineage_transition=transition)
+    return profile, authenticated.proof
 
 
 def _require_reduction_recovery_predecessor(
@@ -369,6 +391,8 @@ def admit_request(
     pinned_terminal_sha256 = None
     unlaunched_request_exact = False
     reduction_recovery: Mapping[str, Any] | None = None
+    checkpoint_profile = None
+    checkpoint_proof = None
     existing_issue_state = (
         bool(labels & {"catalog-run-active-v1", "catalog-run-terminal-v1"})
         or issue.get("state") == "closed"
@@ -433,8 +457,11 @@ def admit_request(
                 publisher = os.environ.get("GITHUB_RUN_ID", "")
                 if not publisher.isascii() or not publisher.isdecimal() or int(publisher) < 1:
                     raise ValueError("CATALOG_FAST_GATE_INVOCATION_INVALID")
-                authority.reserve(request=request, issue_number=current_issue_number, run_id=int(publisher),
-                                  lineage_transition=load_lineage_transition(root, request))
+                checkpoint_profile, checkpoint_proof = _reserve_new_fast_request(
+                    root=root, authority=authority, request=request, issue_number=current_issue_number,
+                    run_id=int(publisher), client=client, protected_commit=expected_commit,
+                    download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                )
                 if profile is not None:
                     reduction_recovery = profile.model_dump(mode="json")
                     _require_reduction_recovery_predecessor(
@@ -442,10 +469,15 @@ def admit_request(
                         client=client, lookup_owner=lookup_owner,
                         download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
                     )
-                active_campaigns.update(row.request.campaign_key for row in authority.campaigns if not row.is_terminal)
+                active_campaigns.update(row.request.campaign_key for row in authority.campaigns
+                    if not row.is_terminal and not (checkpoint_proof is not None
+                        and row.request.request_sha256 == checkpoint_proof.source_request_sha256))
                 compact_handled = True
         if profile is not None and reduction_recovery is None and not durable_owner:
             raise ValueError("CATALOG_RECOVERY_PREDECESSOR_AUTHORITY_REQUIRED")
+        if (owner is None and not durable_owner and checkpoint_proof is None
+                and load_checkpoint_recovery_profile(root, request.campaign_key, request.launch_generation) is not None):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_AUTHORITY_REQUIRED")
         if owner is None and not compact_handled and (not existing_issue_state or alias_target is not None):
             active_inventory = client.stable_paginated(
                 f"/repos/{repository}/issues?state=open&labels=catalog-run-active-v1", root="list",
@@ -624,6 +656,18 @@ def admit_request(
                 bundle_dir=bundle,
                 expected_identity=identity,
             )
+            if checkpoint_profile is not None:
+                verify_checkpoint_recovery_plan(
+                    bundle / f"templates/workers-{prepared.qualified_worker_ceiling:03d}",
+                    checkpoint_profile, checkpoint_proof,
+                )
+            else:
+                template = bundle / f"templates/workers-{prepared.qualified_worker_ceiling:03d}"
+                controller = _mapping(_strict_json(template / "controller_binding.json"),
+                                      "CATALOG_FAST_CONTROLLER_BINDING_INVALID")
+                binding = _mapping(controller.get("binding"), "CATALOG_FAST_CONTROLLER_BINDING_INVALID")
+                if "checkpoint_recovery" in binding:
+                    raise ValueError("CATALOG_CHECKPOINT_RECOVERY_AUTHORITY_REQUIRED")
             store_index = CatalogRebuildableStoreIndexV1.model_validate(
                 _strict_json(
                     bundle / "evidence/catalog-rebuildable-store-index-v1.json"
@@ -723,6 +767,9 @@ def admit_request(
         )
     outputs = {
         "preserve_issue": "false",
+        "checkpoint_recovery_enabled": str(
+            decision.launch_required and checkpoint_profile is not None
+        ).lower(),
         "launch_required": str(decision.launch_required).lower(),
         "existing_run_id": str(decision.existing_run_id) if decision.existing_run_id is not None else "",
         "campaign_state": decision.state,

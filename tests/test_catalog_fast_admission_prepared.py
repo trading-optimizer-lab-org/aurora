@@ -23,10 +23,15 @@ from aurora.tests.test_inspect_catalog_fast_request import _entry, _signed_reque
 from scripts import admit_catalog_fast_request as admission
 
 
-@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing", "compact_cloud_relative_valid", "compact_cloud_relative_invalid", "compact_reduction_recovery", "compact_reduction_recovery_rejected"))
+@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing", "compact_cloud_relative_valid", "compact_cloud_relative_invalid", "compact_reduction_recovery", "compact_reduction_recovery_rejected", "unexpected_checkpoint_template"))
 def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monkeypatch, capsys, inventory_state):
     """Ignoring inventory completeness/stability must fail the negative cases."""
     bundle, template, plan, identity, prepared = prepared_transport_fixture(tmp_path)
+    if inventory_state == "unexpected_checkpoint_template":
+        path = template / "controller_binding.json"
+        payload = json.loads(path.read_text("utf-8"))
+        payload["binding"]["checkpoint_recovery"] = {"profile_sha256": "f" * 64}
+        path.write_text(json.dumps(payload), encoding="utf-8")
     # This exercises cache-index transport, not component coverage or evaluation.
     key = "aurora-catalog-v1-" + "1" * 64 + "-" + "2" * 64 + "-main"
     candidate = RebuildableStoreCandidateV1(object_family="runtime", logical_id="runtime",
@@ -229,6 +234,7 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
     else:
         assert result.launch_required is False
         assert result.reason_code == ("CATALOG_RECOVERY_PREDECESSOR_TERMINAL_INVALID" if inventory_state == "compact_reduction_recovery_rejected" else
+            "CATALOG_PREPARATION_INVALID" if inventory_state == "unexpected_checkpoint_template" else
             "CATALOG_FAST_OWNER_LOOKUP_UNAVAILABLE" if inventory_state == "compact_cloud_relative_invalid" else
             "CATALOG_CAMPAIGN_BUSY" if inventory_state == "compact_busy" else
             "CATALOG_FAST_AUTHORITY_LINEAGE_CHANGE_REQUIRES_MAINTENANCE" if inventory_state == "compact_lineage_missing" else
