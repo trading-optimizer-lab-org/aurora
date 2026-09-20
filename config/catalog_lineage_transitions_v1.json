@@ -12,7 +12,7 @@
       "campaign_key": "sp500-optimized-catalog-v1",
       "previous_request_sha256": "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
       "next_generation": 7,
-      "target_definition_sha256": "ee5d85b97c676d95cb9c628d10a2acf32608822fe583cf3043c7babf2c8479a7",
+      "target_definition_sha256": "60eec37650ab3293fe591f1563abf3dde7cb84d191f9814ac8a3c67ab0faac2a",
       "target_prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3",
       "source_ticket_contexts": [
         {
@@ -122,7 +122,7 @@
       "campaign_key": "catalog-fast-canary-v1",
       "previous_request_sha256": "655d64878185f1066590c4acafcd76e6b48c6626e03e5c331371caa735a5193b",
       "next_generation": 11,
-      "target_definition_sha256": "fa04ca1a86d20aac1b08ae157b1c1e16f4be9026018eecec807ef3ab81e70957",
+      "target_definition_sha256": "1383c18b231d67fb94e6cc2b26dc9d670a6f2e2923ba169af350a37dfb39d380",
       "target_prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3"
     }
   ]
