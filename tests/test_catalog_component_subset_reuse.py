@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 import pytest
@@ -17,7 +18,10 @@ from aurora.infra.sp500_megarun.catalog_optimization_contract import RunOptimiza
 from scripts.verify_sp500_component_store import seal_component_bundle
 
 
-@pytest.mark.parametrize("case", ["shared", "single", "missing", "duplicate", "expired", "empty", "invalid"])
+@pytest.mark.parametrize("case", [
+    "shared", "single", "pagination_shift", "missing", "duplicate", "expired", "empty", "invalid",
+    "bad_id", "shared_id", "filter_ignored", "count_mismatch", "invalid_response",
+])
 def test_component_download_selects_exact_ids_from_shared_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
 ) -> None:
@@ -44,6 +48,10 @@ def test_component_download_selects_exact_ids_from_shared_run(
         rows.append({"id": 44, "name": names[0], "expired": False})
     elif case == "expired":
         rows[0]["expired"] = True
+    elif case == "bad_id":
+        rows[0]["id"] = True
+    elif case == "shared_id":
+        rows[1]["id"] = rows[0]["id"]
     elif case == "empty":
         names = []
     elif case == "invalid":
@@ -58,12 +66,27 @@ def test_component_download_selects_exact_ids_from_shared_run(
     monkeypatch.setenv("GITHUB_REPOSITORY", "test/aurora")
 
     def inventory(command, **kwargs):
-        assert command == ["gh", "api", "repos/test/aurora/actions/runs/123/artifacts?per_page=100", "--paginate", "--slurp"]
-        return json.dumps([{"artifacts": rows[:1]}, {"artifacts": rows[1:]}])
+        assert command[:2] == ["gh", "api"]
+        endpoint = urlsplit(command[2])
+        assert endpoint.path == "repos/test/aurora/actions/runs/123/artifacts"
+        query = parse_qs(endpoint.query)
+        if "name" in query:
+            matches = [row for row in rows if row["name"] == query["name"][0]]
+            if case == "filter_ignored":
+                matches = [rows[2]]
+            if case == "invalid_response":
+                return json.dumps({"total_count": 1, "artifacts": [None]})
+            count = 2 if case == "count_mismatch" else len(matches)
+            return json.dumps({"total_count": count, "artifacts": matches})
+        assert command[3:] == ["--paginate", "--slurp"]
+        # A concurrent unrelated upload shifts the global page boundary:
+        # the same valid canary artifact appears again on the next page.
+        second_page = rows if case == "pagination_shift" else rows[1:]
+        return json.dumps([{"artifacts": rows[:1]}, {"artifacts": second_page}])
 
     monkeypatch.setattr(subprocess, "check_output", inventory)
     code = textwrap.dedent(selector["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
-    if case in {"shared", "single"}:
+    if case in {"shared", "single", "pagination_shift"}:
         exec(compile(code, "actual-component-selector", "exec"), {})
         outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
         assert outputs["artifact_ids"] == ("11" if case == "single" else "11,22")

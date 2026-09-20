@@ -1673,24 +1673,27 @@ jobs:
           if (not names or len(names) != len(set(names))
               or any(not isinstance(name, str) or not re.fullmatch(r"catalog-component-transport-[a-z0-9-]+", name) for name in names)):
               raise SystemExit("COMPONENT_TRANSPORT_NAMES_INVALID")
-          pages = json.loads(subprocess.check_output([
-              "gh", "api",
-              f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/artifacts?per_page=100",
-              "--paginate", "--slurp",
-          ], text=True))
-          expected = set(names)
           selected = {}
-          for page in pages:
-              for artifact in page["artifacts"]:
-                  name = artifact["name"]
-                  if name not in expected:
-                      continue
-                  artifact_id = artifact["id"]
-                  if (name in selected or artifact.get("expired") is not False
-                      or type(artifact_id) is not int or artifact_id <= 0):
-                      raise SystemExit("COMPONENT_TRANSPORT_ARTIFACT_INVALID")
-                  selected[name] = artifact_id
-          if set(selected) != expected or len(set(selected.values())) != len(names):
+          for name in names:
+              # Other campaigns can upload while this job runs. Filter before
+              # pagination so their inserts cannot move this artifact's offset.
+              page = json.loads(subprocess.check_output([
+                  "gh", "api",
+                  f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}/artifacts?name={name}&per_page=2",
+              ], text=True))
+              artifacts = page.get("artifacts") if isinstance(page, dict) else None
+              if (not isinstance(artifacts, list) or len(artifacts) != 1
+                  or type(page.get("total_count")) is not int or page["total_count"] != 1):
+                  raise SystemExit("COMPONENT_TRANSPORT_ARTIFACTS_INCOMPLETE")
+              artifact = artifacts[0]
+              if not isinstance(artifact, dict):
+                  raise SystemExit("COMPONENT_TRANSPORT_ARTIFACT_INVALID")
+              artifact_id = artifact.get("id")
+              if (artifact.get("name") != name or artifact.get("expired") is not False
+                  or type(artifact_id) is not int or artifact_id <= 0):
+                  raise SystemExit("COMPONENT_TRANSPORT_ARTIFACT_INVALID")
+              selected[name] = artifact_id
+          if len(set(selected.values())) != len(names):
               raise SystemExit("COMPONENT_TRANSPORT_ARTIFACTS_INCOMPLETE")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
               out.write("artifact_ids=" + ",".join(str(selected[name]) for name in names) + "\n")
