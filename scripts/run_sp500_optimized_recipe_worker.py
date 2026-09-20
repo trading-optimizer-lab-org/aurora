@@ -641,12 +641,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         assigned = [by_strategy_id[strategy_id] for strategy_id in assigned_ids]
     except KeyError as exc:
         raise SystemExit("RECIPE_WORK_MANIFEST_STRATEGY_UNKNOWN") from exc
+    selected_rows = (
+        json.loads(args.selected_config.read_text("utf-8"))
+        if args.shard_index == 0 and checkpoint_slot_index == 1
+        else []
+    )
     required_source_ids = tuple(
         sorted(
             {
                 str(component["configuration_sha256"])
                 for row in assigned
                 for component in row["components"]
+            }
+            | {
+                configuration_sha256(str(selected["lane_id"]), dict(selected["configuration"]))
+                for selected in selected_rows
             }
         )
     )
@@ -759,7 +768,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_years=FULL_YEARS,
             allowed_end=campaign.search_end,
         )
-        selected_rows = json.loads(args.selected_config.read_text("utf-8"))
         for selected in selected_rows:
             lane_id = str(selected["lane_id"])
             configuration = dict(selected["configuration"])

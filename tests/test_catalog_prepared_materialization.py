@@ -19,7 +19,7 @@ from scripts.plan_sp500_optimized_catalog_run import (
 )
 
 
-def prepared_transport_fixture(tmp_path, mismatch=None):
+def prepared_transport_fixture(tmp_path, mismatch=None, *, checkpoint_recovery=None):
     """Real writer output with explicitly synthetic scientific inputs."""
     bundle = tmp_path / "bundle"
     template = bundle / "templates/workers-007"
@@ -37,7 +37,9 @@ def prepared_transport_fixture(tmp_path, mismatch=None):
         request_sha256="a" * 64, execution_protocol_sha256="b" * 64,
         protected_commit_sha="a" * 40, decision_sha256="d" * 64, admission_token_sha256="e" * 64,
         controller_binding={"schema_version": "1", "request_sha256": "a" * 64,
-                            "authority_id": plan.authority_id, "campaign_id": plan.campaign_id},
+                            "authority_id": plan.authority_id, "campaign_id": plan.campaign_id,
+                            **({"checkpoint_recovery": checkpoint_recovery}
+                               if checkpoint_recovery is not None else {})},
         run_plan={"schema_version": "1", "admission_token_sha256": "e" * 64,
                   "processes_per_worker": 2},
         resume_work_manifest={"schema_version": "1", "pending_strategy_ids": [r.strategy_id for r in plan.recipe_requirements]},
@@ -79,8 +81,29 @@ def test_materialization_binds_prepared_identity_before_copying(tmp_path, mismat
         assert changed == {"controller_binding.json", "execution_plan_receipt.json"}
         binding = json.loads((target / "controller_binding.json").read_text("utf-8"))
         assert binding["binding"]["prepared_receipt_sha256"] == prepared.receipt_sha256
+        assert "checkpoint_recovery_prepared_bundle_manifest_sha256" not in binding["binding"]
     assert before == {p.relative_to(template).as_posix(): sha256(p.read_bytes()).hexdigest()
                       for p in template.rglob("*") if p.is_file()}
+
+
+def test_checkpoint_materialization_binds_exact_prepared_bundle(tmp_path):
+    profile_binding = {"profile_sha256": "3" * 64}
+    bundle, template, _plan, identity, prepared = prepared_transport_fixture(
+        tmp_path, checkpoint_recovery=profile_binding,
+    )
+    manifest = json.loads((bundle / "prepared-bundle-manifest.json").read_bytes())
+    original = (template / "controller_binding.json").read_bytes()
+    target = tmp_path / "sealed-checkpoint"
+    materialize_prepared_catalog_plan(
+        bundle_dir=bundle, expected_identity=identity, request_sha256="1" * 64,
+        decision_sha256="2" * 64, output_dir=target,
+    )
+    binding = json.loads((target / "controller_binding.json").read_bytes())["binding"]
+    assert binding["checkpoint_recovery"] == profile_binding
+    assert binding["checkpoint_recovery_prepared_bundle_manifest_sha256"] == manifest["manifest_sha256"]
+    assert binding["prepared_receipt_sha256"] == prepared.receipt_sha256
+    assert (template / "controller_binding.json").read_bytes() == original
+    verify_sealed_global_reuse_execution_plan(target)
 
 
 def test_materialization_seals_recovery_provenance_without_rewriting_template(tmp_path):

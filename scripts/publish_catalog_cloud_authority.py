@@ -11,10 +11,12 @@ import subprocess
 from typing import Any, cast
 
 from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import authenticate_checkpoint_recovery_owner
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import load_checkpoint_recovery_profile
 from aurora.infra.sp500_megarun.catalog_fast_authority_github import write_current_fast_authority
 from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
 from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_request
-from scripts.admit_catalog_fast_request import _strict_json
+from scripts.admit_catalog_fast_request import _strict_json, _download_owner_archive
 from scripts.publish_catalog_fast_authority import _publisher_job
 from scripts.verify_catalog_fast_authority import read_live_edit
 
@@ -60,6 +62,17 @@ def publish_cloud_candidate(
         raise ValueError("CATALOG_CLOUD_REQUEST_INVALID")
     job_id = _publisher_job(client, run_id, attempt, commit, phase)
     transition = load_lineage_transition(root, item.request) if phase == "intake-signed" else None
+    recovery_proof = None
+    if phase == "intake-signed":
+        profile = load_checkpoint_recovery_profile(root, item.request.campaign_key, item.request.launch_generation)
+        if profile is not None:
+            authenticated = authenticate_checkpoint_recovery_owner(
+                repo_root=root, repository=client.repository, protected_commit_sha=commit,
+                profile=profile, fetch_json=client,
+                download_artifact=lambda artifact_id: _download_owner_archive(
+                    client.repository, os.environ["GH_TOKEN"], artifact_id),
+            )
+            recovery_proof = authenticated.proof
 
     def patch_once(body):
         result = subprocess.run(
@@ -75,7 +88,7 @@ def publish_cloud_candidate(
         current=current, candidate=candidate, expected_edit_id=expected_edit_id,
         anchor=anchor, run_id=run_id, run_attempt=attempt, job_id=job_id,
         phase=phase, commit=commit, read_edit=lambda: read_live_edit(anchor),
-        write_body=patch_once, lineage_transition=transition,
+        write_body=patch_once, lineage_transition=transition, recovery_proof=recovery_proof,
     )
     with output.open("x", encoding="utf-8") as stream:
         stream.write(publication.model_dump_json() + "\n")

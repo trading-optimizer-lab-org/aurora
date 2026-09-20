@@ -5,6 +5,7 @@ from uuid import UUID
 
 from .catalog_cloud_intake import AuthenticatedCloudIntentV1
 from .catalog_cloud_replay import resolve_cloud_replay
+from .catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
 from .catalog_fast_authority import FastAuthorityStateV1
 from .catalog_lineage_transition import CatalogLineageTransitionV1
 from .catalog_request_contract import CatalogLaunchTicketV1
@@ -18,6 +19,7 @@ def select_cloud_launch_ticket(
     lineage_transition: CatalogLineageTransitionV1 | None = None,
     lineage_resolver: Callable[[CatalogLaunchTicketV1], CatalogLineageTransitionV1 | None] | None = None,
     new_request_id: Callable[[], UUID] = _uuid7,
+    recovery_proof: CheckpointRecoveryOwnerProofV1 | None = None,
 ) -> CatalogLaunchTicketV1:
     """Preserve the verified cutover ticket or advance one cloud terminal.
 
@@ -32,13 +34,15 @@ def select_cloud_launch_ticket(
                   if row.request.campaign_key == intent.campaign_key), None)
     owner = next((row for row in authority.campaigns
                   if row.request.campaign_key == intent.campaign_key), None)
+    if recovery_proof is not None and (prior is None or owner is None):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID")
     if prior is None:
         if imported_ticket is None:
             raise ValueError("CATALOG_CLOUD_CUTOVER_TICKET_REQUIRED")
         ticket = imported_ticket
     else:
         if (prior.state != "PUBLICADO" or owner is None
-                or owner.terminal_receipt_sha256 is None
+                or (owner.terminal_receipt_sha256 is None and recovery_proof is None)
                 or owner.owner_issue_number != prior.issue_number
                 or owner.request != prior.request):
             raise ValueError("CATALOG_CAMPAIGN_BUSY")
@@ -58,6 +62,11 @@ def select_cloud_launch_ticket(
         if ticket.launch_generation != 1 or ticket.previous_terminal_request_sha256 is not None:
             raise ValueError("CATALOG_CLOUD_TICKET_PREDECESSOR_INVALID")
     else:
+        if recovery_proof is not None:
+            if lineage_transition is None and lineage_resolver is not None:
+                lineage_transition = lineage_resolver(ticket)
+            authority._checkpoint_predecessor(ticket, recovery_proof, lineage_transition)
+            return ticket
         if (not owner.is_terminal or ticket.launch_generation != owner.generation + 1
                 or ticket.previous_terminal_request_sha256 != owner.request.request_sha256
                 or ticket.request_id == owner.request.request_id):

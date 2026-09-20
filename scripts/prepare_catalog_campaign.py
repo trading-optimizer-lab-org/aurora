@@ -9,6 +9,7 @@ user-requested catalog run exists.  Its sealed plan is consumed only in
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from datetime import datetime
 import hashlib
 import json
@@ -17,7 +18,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import Any, Mapping
+import tempfile
+from typing import Any, Callable, Mapping, cast
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +32,23 @@ from aurora.infra.github_performance.merge_planner import MergeResourceProjectio
 from aurora.infra.sp500_megarun.catalog_admission import (
     CatalogAdmissionEvidenceV1,
     build_catalog_run_plan,
+)
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_binding import (
+    build_checkpoint_recovery_binding,
+    verify_checkpoint_recovery_plan,
+)
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_owner import (
+    CheckpointRecoveryOwnerProofV1,
+)
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import (
+    CHECKPOINT_RECOVERY_CHECKPOINT_COUNT,
+    CheckpointRecoveryProfileV1,
+    canonical_cached_strategy_ids_sha256,
+    load_checkpoint_recovery_profile,
+    validate_exact_checkpoint_profile,
+)
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_restore import (
+    restore_catalog_checkpoint_recovery,
 )
 from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
     verify_catalog_campaign_definition,
@@ -209,6 +228,204 @@ def _sha_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _download_checkpoint_recovery_artifact(
+    repository: str,
+    token: str,
+    artifact_id: int,
+) -> bytes:
+    """Download one bounded recovery archive without exposing the token."""
+
+    if (
+        repository != _REPOSITORY
+        or not token
+        or type(artifact_id) is not int
+        or artifact_id < 1
+    ):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_READER_INVALID")
+    maximum_bytes = 64 * 1024 * 1024
+    try:
+        with tempfile.TemporaryFile() as stream:
+            result = subprocess.run(
+                [
+                    "gh",
+                    "api",
+                    f"repos/{repository}/actions/artifacts/{artifact_id}/zip",
+                ],
+                stdout=stream,
+                stderr=subprocess.PIPE,
+                env={**os.environ, "GH_TOKEN": token},
+                timeout=60,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_DOWNLOAD_FAILED")
+            stream.seek(0)
+            raw = stream.read(maximum_bytes + 1)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_DOWNLOAD_FAILED") from exc
+    if not raw or len(raw) > maximum_bytes:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_ARCHIVE_SIZE_INVALID")
+    return raw
+
+
+def _owned_recovery_directory(
+    restore_root: Path,
+    value: object,
+) -> Path:
+    """Require a restored directory to remain below the one restore root."""
+
+    if not isinstance(value, Path):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
+    if value.is_symlink() or restore_root.is_symlink():
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
+    try:
+        resolved_root = restore_root.resolve(strict=True)
+        resolved = value.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID") from exc
+    if (
+        not resolved_root.is_dir()
+        or not resolved.is_dir()
+        or not resolved.is_relative_to(resolved_root)
+    ):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
+    current = resolved_root
+    for part in value.absolute().relative_to(resolved_root).parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
+    return resolved
+
+
+def _recovery_files(root: Path) -> list[dict[str, object]]:
+    files = []
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink():
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
+        if path.is_file():
+            files.append({'path': path.relative_to(root).as_posix(),
+                          'sha256': _sha_file(path), 'size_bytes': path.stat().st_size})
+    if not files:
+        raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
+    return files
+
+
+def _checkpoint_recovery_state(
+    *,
+    repo_root: Path,
+    profile: CheckpointRecoveryProfileV1 | None,
+    restore_root: Path,
+    restore: Callable[[], object] | None,
+) -> dict[str, object] | None:
+    """Validate the one authenticated restore used by the SP8 preparation."""
+
+    if profile is None:
+        return None
+    if restore is None:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESTORE_REQUIRED")
+    try:
+        result = restore()
+        result_profile = getattr(result, "profile")
+        proof = getattr(result, "proof")
+        source_validation = getattr(result, "source_validation")
+        resume_index = getattr(source_validation, "resume_index")
+        source_plan_root = _owned_recovery_directory(
+            restore_root,
+            getattr(result, "source_plan_root"),
+        )
+        checkpoint_root = _owned_recovery_directory(
+            restore_root,
+            getattr(result, "checkpoint_root"),
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("CATALOG_"):
+            raise
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID") from exc
+    if not isinstance(result_profile, CheckpointRecoveryProfileV1):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PROFILE_INVALID")
+    protected_profile = validate_exact_checkpoint_profile(repo_root, result_profile)
+    if protected_profile != profile:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PROFILE_MISMATCH")
+    if not isinstance(proof, CheckpointRecoveryOwnerProofV1):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_OWNER_PROOF_INVALID")
+    if (
+        proof.profile_sha256 != protected_profile.profile_sha256
+        or proof.source_request_sha256 != protected_profile.source_request_sha256
+        or proof.source_run_id != protected_profile.source_run_id
+        or proof.source_run_attempt != protected_profile.source_run_attempt
+        or proof.source_protected_commit_sha
+        != protected_profile.source_protected_commit_sha
+    ):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_OWNER_PROOF_INVALID")
+    if source_plan_root == checkpoint_root:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
+    try:
+        cached_strategy_ids = tuple(resume_index.strategy_ids)
+        resume_index_sha256 = resume_index.index_sha256
+        source_plan_receipt_sha256 = source_validation.plan_receipt_sha256
+        source_science_sha256 = source_validation.science_identity_sha256
+        source_catalog_sha256 = source_validation.catalog_manifest_sha256
+        checkpoint_count = source_validation.checkpoint_count
+    except AttributeError as exc:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID") from exc
+    if (
+        any(type(item) is not str or not item for item in cached_strategy_ids)
+        or len(set(cached_strategy_ids)) != len(cached_strategy_ids)
+        or len(cached_strategy_ids) != protected_profile.expected_result_count
+        or protected_profile.expected_total_count <= len(cached_strategy_ids)
+        or canonical_cached_strategy_ids_sha256(cached_strategy_ids)
+        != protected_profile.cached_strategy_ids_sha256
+        or resume_index.physical_result_count != len(cached_strategy_ids)
+        or resume_index.duplicate_result_count != 0
+        or source_plan_receipt_sha256
+        != protected_profile.source_plan_receipt_sha256
+        or source_science_sha256 != protected_profile.science_sha256
+        or source_catalog_sha256 != protected_profile.catalog_manifest_sha256
+        or checkpoint_count != CHECKPOINT_RECOVERY_CHECKPOINT_COUNT
+    ):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SOURCE_INVALID")
+    return {
+        "profile": protected_profile,
+        "proof": proof,
+        "binding": build_checkpoint_recovery_binding(protected_profile, proof),
+        "cached_strategy_ids": cached_strategy_ids,
+        "resume_index_sha256": resume_index_sha256,
+        "source_plan_receipt_sha256": source_plan_receipt_sha256,
+        "files": _recovery_files(restore_root),
+        "source_plan_relative": source_plan_root.relative_to(
+            restore_root.resolve(strict=True)
+        ).as_posix(),
+        "checkpoint_relative": checkpoint_root.relative_to(
+            restore_root.resolve(strict=True)
+        ).as_posix(),
+    }
+
+
+def _checkpoint_recovery_seed_document(
+    state: Mapping[str, object],
+) -> dict[str, object]:
+    profile = state["profile"]
+    proof = state["proof"]
+    if not isinstance(profile, CheckpointRecoveryProfileV1) or not isinstance(
+        proof, CheckpointRecoveryOwnerProofV1
+    ):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
+    return {
+        "schema_version": "1",
+        "profile": profile.model_dump(mode="json"),
+        "owner_proof": asdict(proof),
+        "binding": state["binding"],
+        # _checkpoint_recovery_state validates and stores a tuple of string IDs.
+        "cached_strategy_ids": list(cast(tuple[str, ...], state["cached_strategy_ids"])),
+        "cached_strategy_ids_sha256": profile.cached_strategy_ids_sha256,
+        "resume_index_sha256": state["resume_index_sha256"],
+        "source_plan_receipt_sha256": state["source_plan_receipt_sha256"],
+        "source_plan_relative": state["source_plan_relative"],
+        "checkpoint_relative": state["checkpoint_relative"],
+        "files": state["files"],
+    }
+
+
 def _preparation_projections() -> tuple[
     MergeResourceProjectionV1,
     MergeResourceProjectionV1,
@@ -288,6 +505,7 @@ def prepare_campaign(
     runtime_smoke_path: Path,
     output_dir: Path,
     github_output: Path | None,
+    checkpoint_recovery_restore: Callable[[], object] | None = None,
 ) -> dict[str, object]:
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GH_TOKEN", "")
@@ -428,6 +646,46 @@ def prepare_campaign(
         download_root=runner_temp / "catalog-preparation-indexes",
     )
 
+    checkpoint_recovery_profile = load_checkpoint_recovery_profile(
+        root,
+        entry.campaign_key,
+        8,
+    )
+    checkpoint_recovery_staging = target.parent / (
+        f".{target.name}-checkpoint-recovery"
+    )
+    checkpoint_recovery_state: dict[str, object] | None = None
+    if checkpoint_recovery_profile is not None:
+        if checkpoint_recovery_profile.science_sha256 != science_sha256:
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SCIENCE_MISMATCH")
+        if checkpoint_recovery_restore is None:
+            checkpoint_recovery_restore = lambda: restore_catalog_checkpoint_recovery(
+                repo_root=root,
+                repository=repository,
+                protected_commit_sha=expected_commit,
+                profile=checkpoint_recovery_profile,
+                output_dir=checkpoint_recovery_staging,
+                fetch_json=client,
+                download_artifact=lambda artifact_id: (
+                    _download_checkpoint_recovery_artifact(
+                        repository,
+                        token,
+                        artifact_id,
+                    )
+                ),
+            )
+        checkpoint_recovery_state = _checkpoint_recovery_state(
+            repo_root=root,
+            profile=checkpoint_recovery_profile,
+            restore_root=checkpoint_recovery_staging,
+            restore=checkpoint_recovery_restore,
+        )
+    cached_strategy_ids = (
+        tuple(cast(tuple[str, ...], checkpoint_recovery_state["cached_strategy_ids"]))
+        if checkpoint_recovery_state is not None
+        else ()
+    )
+
     protocol_sha256 = execution_protocol_sha256(
         root=root,
         entry=entry,
@@ -458,9 +716,15 @@ def prepare_campaign(
         reduction_projection=central_projection,
         hierarchical_reduction_projection=hierarchical_projection,
         preparation_only=True,
+        cached_strategy_ids=cached_strategy_ids,
     )
 
     output_dir.mkdir(parents=False, exist_ok=False)
+    if checkpoint_recovery_state is not None:
+        checkpoint_recovery_output = output_dir / "checkpoint-recovery"
+        if checkpoint_recovery_output.exists() or checkpoint_recovery_output.is_symlink():
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_OUTPUT_EXISTS")
+        os.replace(checkpoint_recovery_staging, checkpoint_recovery_output)
     dag_dir = output_dir / "recipe-dag"
     dag_manifest = write_recipe_dag_artifacts(catalog_path, dag_dir)
     source_document = _document(
@@ -489,7 +753,7 @@ def prepare_campaign(
 
     work_manifest = build_resume_work_manifest(
         tuple(item.strategy_id for item in recipes),
-        cached_strategy_ids=(),
+        cached_strategy_ids=cached_strategy_ids,
         maximum_workers=contract.execution.workers,
     )
     admission_base = dict(
@@ -529,8 +793,8 @@ def prepare_campaign(
         contract,
         evidence,
         work_manifest_sha256=work_manifest.manifest_sha256,
-        pending_recipe_count=len(recipes),
-        cached_recipe_count=0,
+        pending_recipe_count=len(work_manifest.pending_strategy_ids),
+        cached_recipe_count=len(work_manifest.cached_strategy_ids),
     )
     _write_json(output_dir / "template-admission-evidence.json", evidence)
     controller_binding = {
@@ -547,6 +811,8 @@ def prepare_campaign(
             "protected_commit_sha",
         }
     }
+    if checkpoint_recovery_state is not None:
+        controller_binding["checkpoint_recovery"] = checkpoint_recovery_state["binding"]
     sealed_receipt = write_sealed_global_reuse_execution_plan(
         output_dir=output_dir / "sealed-plan",
         contract=contract,
@@ -563,6 +829,12 @@ def prepare_campaign(
         recipe_dag_manifest=dag_manifest,
         source_artifacts=source_document,
     )
+    if checkpoint_recovery_state is not None:
+        verify_checkpoint_recovery_plan(
+            output_dir / "sealed-plan",
+            checkpoint_recovery_state["profile"],
+            checkpoint_recovery_state["proof"],
+        )
     context_identity = {
         "schema_version": "1",
         "document_type": "catalog_preparation_seed_v1",
@@ -579,6 +851,10 @@ def prepare_campaign(
         "recipe_dag_manifest_sha256": dag_manifest["manifest_sha256"],
         "sealed_plan_receipt_sha256": sealed_receipt["receipt_sha256"],
     }
+    if checkpoint_recovery_state is not None:
+        context_identity["checkpoint_recovery"] = _checkpoint_recovery_seed_document(
+            checkpoint_recovery_state
+        )
     context = {
         **context_identity,
         "content_sha256": canonical_sha256(context_identity),

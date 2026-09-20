@@ -92,3 +92,49 @@ def test_imported_ticket_is_not_silently_migrated():
     with pytest.raises(ValueError, match="TICKET_CONTEXT_MISMATCH"):
         select(FastAuthorityStateV1.bootstrap(campaigns=()), ticket_for(emission().request),
                prompt_sha256="c" * 64)
+
+
+@pytest.mark.parametrize('defect', [None, 'run', 'request', 'generation', 'lineage'])
+def test_checkpoint_ticket_requires_exact_failed_owner_and_lineage(defect):
+    from dataclasses import replace
+    from tests.test_catalog_checkpoint_recovery_authority import _case
+
+    state, _, item, proof, lineage = _case()
+    intent = _validate().model_copy(update={
+        'campaign_key': item.request.campaign_key, 'intent_id': item.intent_id,
+    })
+    if defect == 'run':
+        proof = replace(proof, source_run_id=123)
+    elif defect == 'request':
+        proof = replace(proof, source_request_sha256='f' * 64)
+    elif defect == 'generation':
+        proof = replace(proof, target_generation=9)
+    elif defect == 'lineage':
+        lineage = None
+    arguments = dict(authority=state, intent=intent,
+        campaign_definition_sha256=item.request.campaign_definition_sha256,
+        prompt_sha256=item.request.prompt_sha256, imported_ticket=None,
+        lineage_transition=lineage, recovery_proof=proof,
+        new_request_id=lambda: UUID(item.request.request_id))
+    if defect:
+        with pytest.raises(ValueError, match='CATALOG_CHECKPOINT_RECOVERY_'):
+            select_cloud_launch_ticket(**arguments)
+    else:
+        ticket = select_cloud_launch_ticket(**arguments)
+        assert ticket == ticket_for(item.request)
+        assert not state.campaigns[0].is_terminal
+
+
+def test_checkpoint_ticket_without_source_emission_is_rejected_before_signing():
+    from tests.test_catalog_checkpoint_recovery_authority import _case
+
+    state, _, item, proof, lineage = _case()
+    without_emission = FastAuthorityStateV1._create(revision=state.revision,
+        previous_state_sha256=state.previous_state_sha256, campaigns=state.campaigns)
+    intent = _validate().model_copy(update={'campaign_key': item.request.campaign_key,
+                                          'intent_id': item.intent_id})
+    with pytest.raises(ValueError, match='CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID'):
+        select_cloud_launch_ticket(authority=without_emission, intent=intent,
+            campaign_definition_sha256=item.request.campaign_definition_sha256,
+            prompt_sha256=item.request.prompt_sha256, imported_ticket=ticket_for(item.request),
+            lineage_transition=lineage, recovery_proof=proof)

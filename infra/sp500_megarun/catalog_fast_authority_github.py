@@ -15,9 +15,12 @@ import re
 import subprocess
 import zipfile
 from datetime import datetime
-from typing import Any, Callable, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol
 
 from .catalog_fast_authority import CatalogLineageTransitionV1, FastAuthorityStateV1, FastAuthorityEditBindingV1, bind_authority_edit, verify_authority_edit
+
+if TYPE_CHECKING:
+    from .catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
@@ -240,6 +243,7 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     write_body: Callable[[str], None],
     lineage_transition: CatalogLineageTransitionV1 | None = None,
     unlaunched_terminal: bool = False,
+    recovery_proof: CheckpointRecoveryOwnerProofV1 | None = None,
 ) -> FastAuthorityEditBindingV1:
     """Mutate under the workflow's shared writer lock, then bind the observed edit.
 
@@ -252,6 +256,8 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_INVALID")
     if unlaunched_terminal and phase != "finalize":
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
+    if recovery_proof is not None and phase not in {"intake-signed", "gate"}:
+        raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
     if phase in _INTAKE_PHASES:
         old_emissions = {row.intent_id: row for row in current.emissions}
         changed_emissions = [row for row in candidate.emissions if old_emissions.get(row.intent_id) != row]
@@ -261,7 +267,9 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         if phase == "intake-signed":
             if emission.producer_run_id != run_id or emission.producer_commit != commit:
                 raise ValueError("CATALOG_FAST_AUTHORITY_PRODUCER_INVALID")
-            expected = current.stage_emission(emission, lineage_transition=lineage_transition)
+            expected = (current.stage_emission(emission, lineage_transition=lineage_transition)
+                if recovery_proof is None else current.stage_checkpoint_emission(
+                    emission, recovery_proof=recovery_proof, lineage_transition=lineage_transition))
         else:
             expected_state = "PUBLICACION_INCIERTA" if phase == "intake-uncertain" else "PUBLICADO"
             if emission.state != expected_state:
@@ -282,8 +290,10 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         raise ValueError("CATALOG_FAST_AUTHORITY_TRANSITION_INVALID")
     row = changed[0]
     if phase == "gate":
-        expected = current.reserve(request=row.request, issue_number=row.owner_issue_number, run_id=run_id,
-                                   lineage_transition=lineage_transition)
+        expected = (current.reserve(request=row.request, issue_number=row.owner_issue_number, run_id=run_id,
+                                    lineage_transition=lineage_transition) if recovery_proof is None
+            else current.reserve_checkpoint_successor(request=row.request, issue_number=row.owner_issue_number,
+                run_id=run_id, recovery_proof=recovery_proof, lineage_transition=lineage_transition))
     elif phase == "finalize":
         if row.terminal_receipt_sha256 is None:
             raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_REQUIRED")

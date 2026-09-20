@@ -223,9 +223,11 @@ jobs:
             ${{ runner.temp }}/catalog-preparation-seed/runtime-smoke.json
             ${{ runner.temp }}/catalog-preparation-seed/template-admission-evidence.json
             ${{ runner.temp }}/catalog-preparation-seed/recipe-dag
+            ${{ runner.temp }}/catalog-preparation-seed/sealed-plan
+            ${{ runner.temp }}/catalog-preparation-seed/checkpoint-recovery
           if-no-files-found: error
           retention-days: 1
-          compression-level: 0
+          compression-level: 6
 
   publish_payload_artifacts:
     needs: seed
@@ -348,7 +350,7 @@ jobs:
           path: ${{ runner.temp }}/prepared-bundle
           if-no-files-found: error
           retention-days: 90
-          compression-level: 0
+          compression-level: 6
 
   finish:
     needs: [preflight, seed, prepare_engine, finalize]

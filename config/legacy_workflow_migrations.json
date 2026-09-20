@@ -34,25 +34,25 @@
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
       "reason": "retain protected admission and exact PREPARED recovery while requiring verified terminal authority before closing expired unlaunched cloud requests",
-      "replacement_sha256": "41984f4c0a92b44666e7e3530a3f60b43d09dc6ee12ec3508ee39d7d9d2a12e2"
+      "replacement_sha256": "82630e1c92c434356e5b61c3c78094972e9f48281eb88bc7da5695570a0e696a"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
         "reason": "restore authenticated predecessor reduction groups without reevaluation through a current sealed admission, retaining scientific verification and protected terminal publication",
-        "replacement_sha256": "b7976d8699ec5a123de7a5cd618617df01112964d0e1ce2aa57995d51f30dffa"
+        "replacement_sha256": "139317851395b331ca812d8b98791338cc99e3264308f17fc101c96073d440ad"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
       "previous_sha256": "219b28147a66b2932d9cab120dddc5dbd5e41dcaa0017855c3691efa1e481a63",
       "reason": "retain immutable caller binding and pre-runtime failure receipts while sealing failures after terminal manifest construction or publication",
-      "replacement_sha256": "ba702087f8660a71c9ba8768421e0211795abcf53ba4872fe9a7c616d5c738ae"
+      "replacement_sha256": "9adff5f7145d110f1b2e436433f7cc7dfb8c33b2e229e7abdf3aefaf3c571613"
     },
     {
       "path": ".github/workflows/catalog-prepare-one.yml",
       "previous_sha256": "3574b886740be21a68bbb62bc6d71744b74d32cb2aaed2716843a70d6ff334f9",
       "reason": "retain sealed payload publication and verify an exact durable PREPARED artifact before rebuilding after a bundle cache miss",
-      "replacement_sha256": "085e4f4ddb6b051ff6f44f0924b281bc9c2d94b43cf38a3cc9e973cbc653df2a"
+      "replacement_sha256": "4a207cfcedbcd620f6c477f982bb9e189d63abd327cbba3eb5ea72357633bc1b"
     },
     {
       "path": ".github/workflows/catalog-prepare.yml",
