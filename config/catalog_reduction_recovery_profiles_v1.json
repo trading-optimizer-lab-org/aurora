@@ -110,6 +110,61 @@
           "publish_step_name": "Upload one bounded reduction group"
         }
       ]
+    },
+    {
+      "schema_version": "1",
+      "campaign_key": "catalog-fast-canary-v1",
+      "target_generation": 11,
+      "source_request_sha256": "655d64878185f1066590c4acafcd76e6b48c6626e03e5c331371caa735a5193b",
+      "source_issue_number": 333,
+      "source_run_id": 35460847765,
+      "source_run_attempt": 1,
+      "source_terminal_receipt_sha256": "3a414441d7498154f1c3128f9fc4dc286075286e86fb2a3d001574b0236e9bf5",
+      "source_plan_bindings": {
+        "request_sha256": "655d64878185f1066590c4acafcd76e6b48c6626e03e5c331371caa735a5193b",
+        "decision_sha256": "4bedf1b0e05eb1d15b14aad37d08d2d42fa76f1299ccbddd501900c8869dbdc5",
+        "protected_commit_sha": "26a6832e3d0b9f0c319b99afc328ea9fb4831acf",
+        "authority_id": "abe7c473-f1dd-56ce-a1f0-6477b3f6c211",
+        "campaign_id": "235cb870254559227dbac2e56f7d492af786851d044aa61c4c30e6cb083fd8db",
+        "science_sha256": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+        "execution_plan_sha256": "c0e73224fd7eb5af9abf51587f44fbaee791dabb1862164ac2829ed6eee2032c",
+        "execution_protocol_sha256": "a856bc16bb3c5b39746a47eefa8f3c079641d0b13b2a686b43ce4c359ef119cc"
+      },
+      "source_plan_receipt_sha256": "27027da90e69ac0aeefc83c8d0818095c062f576e69a9f3521cf3c4f2418dea2",
+      "science_sha256": "57a24398bba9779f2095d20dc50f15975cd04949964055ae322411a3d57906a2",
+      "catalog_manifest_sha256": "2de5b6a09fb10b71adff0f45af450f30c7f3dbfb196bfea8f01f92d4cf3cb981",
+      "strategy_ids": [
+        "SCV1-0008de8188a0dfedb69e2087fa0786d8876821d9dfaeaf970a6b3f830fc031b0",
+        "SCV1-0009261998f567e326cbcff4b17ed79c26420ecd05771957455abfdb0cfdda0a",
+        "SCV1-000aec232b3b9f37549bab3388af27d55b6e1c57ac2192525a985f8d437b3b7b",
+        "SCV1-000c5a76a3c0dac7d7dd53a1cffe80b86b511dc5cc447830033209746bd771fa",
+        "SCV1-000ca745fd2a8fe5ac48e736fdcf7ae52b8dec69e68363e1b18b903cdb414dd4",
+        "SCV1-00122340e81efb755e5586b43a952a5e1801bc131060752e2ac2487d6463661c",
+        "SCV1-001937e4fad670d10fd93267f0c65a5a643a59dfc1d22e2b4d92c1c08d6ddf40",
+        "SCV1-002e6ef7635802db02a3ed6deca385d1f368d0d080f5389d5feb0edc54b1a7f4"
+      ],
+      "artifacts": [
+        {
+          "role": "plan",
+          "artifact_id": 10589334329,
+          "artifact_name": "catalog-sealed-execution-plan-abe7c473-f1dd-56ce-a1f0-6477b3f6c211",
+          "digest": "sha256:add2ee8fee2f85e974a3ba03283486bba22aa9e247cd2ab24cba09a901504f45",
+          "receipt_sha256": null,
+          "size_bytes": 175881,
+          "publisher_job_name": "gate",
+          "publish_step_name": "Publish the already-materialized sealed plan"
+        },
+        {
+          "role": "group",
+          "artifact_id": 10588699408,
+          "artifact_name": "catalog-reduction-group-c0e73224fd7eb5af-g00",
+          "digest": "sha256:690a055084703b6a7e2e7c1cd5969237d8f53c6cf05de1080dde20edd84d017b",
+          "receipt_sha256": "b506bbd0a353fc0c5bb9b512ec4b419edfd59418e8724893f73c326af30f7448",
+          "size_bytes": 28228,
+          "publisher_job_name": "engine / reduce_groups (catalog-checkpoint-c0e73224fd7eb5af-g00-*, 0, catalog-reduction-group-c0e73224fd7e...",
+          "publish_step_name": "Upload one bounded reduction group"
+        }
+      ]
     }
   ]
 }

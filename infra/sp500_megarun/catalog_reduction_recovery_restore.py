@@ -402,7 +402,7 @@ def _read_signed_request(
     expected_campaign = _profile_attr(profile, "campaign_key", "CATALOG_RECOVERY_PROFILE_INVALID")
     if request.request_sha256 != expected_request_sha or request.campaign_key != expected_campaign:
         raise ValueError("CATALOG_RECOVERY_SOURCE_REQUEST_MISMATCH")
-    if request.launch_generation != 7:
+    if request.launch_generation != profile.source_generation:
         raise ValueError("CATALOG_RECOVERY_SOURCE_GENERATION_INVALID")
     return request
 
@@ -436,10 +436,14 @@ def _require_owner_and_terminal(owner: Any, terminal: Any, profile: Any, request
     )
     if (
         terminal.state != "BLOCKED"
-        or terminal.reason_code != "CATALOG_REDUCTION_FAILED"
+        or terminal.reason_code != profile.terminal_reason_code
         or terminal.receipt_sha256 != expected_receipt
         or terminal.request_sha256 != request.request_sha256
         or terminal.campaign_key != profile.campaign_key
+        or (profile.source_generation == 10 and (
+            terminal.observed_recipe_count != 0
+            or terminal.result_science_sha256 is not None
+        ))
     ):
         raise ValueError("CATALOG_RECOVERY_TERMINAL_MISMATCH")
 

@@ -213,8 +213,9 @@ def test_restore_uses_the_integrated_profile_and_source_consumers() -> None:
     assert restore.verify_reduction_recovery_source is verify_reduction_recovery_source
 
 
+@pytest.mark.parametrize("source_generation,terminal_reason", [(7, "CATALOG_REDUCTION_FAILED"), (10, "CATALOG_ENGINE_STAGE_FAILED")])
 def test_happy_restore_orchestrates_real_source_and_owner_archive_consumers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_generation: int, terminal_reason: str
 ) -> None:
     """Exercise the successful boundary without faking validators or extraction.
 
@@ -254,7 +255,7 @@ def test_happy_restore_orchestrates_real_source_and_owner_archive_consumers(
     run_url = f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{run_id}"
     terminal = CatalogTerminalReceiptV1.create(
         state="BLOCKED",
-        reason_code="CATALOG_REDUCTION_FAILED",
+        reason_code=terminal_reason,
         request_sha256=request_sha,
         submission_key_sha256="b" * 64,
         campaign_key=campaign_key,
@@ -303,6 +304,8 @@ def test_happy_restore_orchestrates_real_source_and_owner_archive_consumers(
         ),
     )
     profile = SimpleNamespace(
+        source_generation=source_generation,
+        terminal_reason_code=terminal_reason,
         profile_sha256="p" * 64,
         campaign_key=campaign_key,
         source_request_sha256=request_sha,
@@ -493,3 +496,66 @@ def test_runtime_has_no_forbidden_admission_imports() -> None:
     )
     assert "scripts.admit_catalog_fast_request" not in source
     assert "catalog_fast_authority" not in source
+
+
+def _gen11_profile():
+    from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import ReductionRecoveryProfileV1
+
+    return ReductionRecoveryProfileV1.model_validate_json(
+        (ROOT / "tests/fixtures/catalog_recovery_gen10_source_profile.json").read_text("utf-8")
+    )
+
+
+@pytest.mark.parametrize("generation", [7, 9, 10, 11])
+def test_source_request_generation_is_bound_to_gen10_not_target_minus_one(
+    monkeypatch: pytest.MonkeyPatch, generation: int
+) -> None:
+    profile = _gen11_profile()
+    request = SimpleNamespace(request_sha256=profile.source_request_sha256,
+                              campaign_key=profile.campaign_key, launch_generation=generation)
+    monkeypatch.setattr(restore, "_load_controller_actors", lambda _: ({"trusted"}, "public-key"))
+
+    class Client:
+        def get_json(self, path):
+            assert path.endswith("/issues/333")
+            return {"number": 333, "user": {"login": "trusted"}, "title": "signed", "body": "request"}, None
+
+    if generation == 10:
+        assert restore._read_signed_request(Client(), ROOT, profile, lambda *_: request) is request
+    else:
+        with pytest.raises(ValueError, match="CATALOG_RECOVERY_SOURCE_GENERATION_INVALID"):
+            restore._read_signed_request(Client(), ROOT, profile, lambda *_: request)
+
+
+@pytest.mark.parametrize("mutation", [None, "reason", "receipt", "state", "attempt", "commit", "decision", "observed", "science"])
+def test_gen10_owner_terminal_requires_exact_failure_and_provenance(mutation: str | None) -> None:
+    profile = _gen11_profile()
+    request = SimpleNamespace(request_sha256=profile.source_request_sha256, campaign_key=profile.campaign_key)
+    owner = SimpleNamespace(run_id=profile.source_run_id,
+        run={"run_attempt": 1, "head_sha": profile.source_plan_bindings["protected_commit_sha"]},
+        decision=SimpleNamespace(request_sha256=profile.source_request_sha256,
+            decision_sha256=profile.source_plan_bindings["decision_sha256"], campaign_key=profile.campaign_key))
+    terminal = SimpleNamespace(state="BLOCKED", reason_code="CATALOG_ENGINE_STAGE_FAILED",
+        receipt_sha256=profile.source_terminal_receipt_sha256, request_sha256=profile.source_request_sha256,
+        campaign_key=profile.campaign_key, observed_recipe_count=0, result_science_sha256=None)
+    if mutation == "reason":
+        terminal.reason_code = "CATALOG_REDUCTION_FAILED"
+    elif mutation == "receipt":
+        terminal.receipt_sha256 = "0" * 64
+    elif mutation == "state":
+        terminal.state = "SUCCESS"
+    elif mutation == "attempt":
+        owner.run["run_attempt"] = 2
+    elif mutation == "commit":
+        owner.run["head_sha"] = "0" * 40
+    elif mutation == "decision":
+        owner.decision.decision_sha256 = "0" * 64
+    elif mutation == "observed":
+        terminal.observed_recipe_count = 8
+    elif mutation == "science":
+        terminal.result_science_sha256 = "0" * 64
+    if mutation is None:
+        restore._require_owner_and_terminal(owner, terminal, profile, request)
+    else:
+        with pytest.raises(ValueError, match="CATALOG_RECOVERY_(OWNER|TERMINAL)"):
+            restore._require_owner_and_terminal(owner, terminal, profile, request)
