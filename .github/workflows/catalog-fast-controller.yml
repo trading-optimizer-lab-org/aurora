@@ -173,6 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/verify_catalog_fast_authority.py \
+            --gate-handoff \
             --repo-root . \
             --output "$RUNNER_TEMP/catalog-fast-authority-current.json"
 
@@ -218,6 +219,7 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/admit_catalog_fast_request.py \
+            --gate-handoff \
             --request-context "$RUNNER_TEMP/catalog-fast-request-context.json" \
             --prepared-bundle "$RUNNER_TEMP/prepared-bundle" \
             --repo-root . \
@@ -313,7 +315,7 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/publish_catalog_fast_authority.py \
-            --repo-root . --phase gate \
+            --repo-root . --phase gate --gate-handoff \
             --request-context "$RUNNER_TEMP/catalog-fast-request-context.json" \
             --decision "$RUNNER_TEMP/catalog-fast-gate/catalog-fast-decision-v1.json" \
               --output "$RUNNER_TEMP/catalog-fast-authority-publication-v1.json" \

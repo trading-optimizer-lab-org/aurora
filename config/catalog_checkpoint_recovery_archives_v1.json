@@ -1,0 +1,29 @@
+{
+  "archives": [
+    {
+      "artifact_digest": "sha256:39c2de849800df5b6319f1340da6e00ac97fd8f3b9bfa321f75a88877a6a2bc6",
+      "artifact_id": 10608043279,
+      "bundle_manifest_sha256": "12f6c4974149fa7ee08ec9f31863b7c6bc2f68c44757dc90c4f7a0f83c1b66dd",
+      "identity": {
+        "campaign_definition_sha256": "3e569c6b2637c569364d517ad584a86d25f1047aaad246436790feede014580a",
+        "campaign_key": "sp500-optimized-catalog-v1",
+        "catalog_manifest_sha256": "53739fc5a3ef9d9d7ed1ffe51d835fa1359bfcf94316d55551804aa333a01cc1",
+        "data_contract_sha256": "9b2a971c1d1ad0374ad63e03e03c91127bf634e0ed822195c06180140acfa2c8",
+        "dependency_lock_sha256": "6da502ae3f4fa26258b4b8f3053865638b23fcb3752dd4a5dc426731ec806895",
+        "engine_id": "optimized_catalog_v1",
+        "feature_contract_sha256": "58dd6dba2857223c2040ef383b7ec0513b957675f4ba104ffc408ab5f47ad62c",
+        "optimization_policy_sha256": "5a1e4ecb3495d4d54a11e2fd870fe9533825e5742cc00700103e62eabb7a4a89",
+        "protected_commit_sha": "d90ab8b63492c69a9727d9ce558a678907c15621",
+        "schema_version": "1",
+        "scientific_contract_sha256": "f0e8c6db17a915f7c5f1dfec7d49ce5a69375c7252c23b49d82283120266419f",
+        "selected_config_sha256": "cca71084795e9997978f4ad82578a37b3fdbd82bf6f486ea62c202405a7b0fb8"
+      },
+      "prepared_receipt_sha256": "8842aef325d3bbb834b52b8b57874eff610c4353a1a96d55d42e4c8fb5a9d188",
+      "profile_sha256": "fc3aff1e9ccfc0e4608e510a538f8ce839c371669585b8b680a658e54d7e81b7",
+      "run_attempt": 1,
+      "run_id": 35519707067,
+      "size_bytes": 51024253
+    }
+  ],
+  "schema_version": "1"
+}

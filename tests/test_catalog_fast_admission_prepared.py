@@ -23,7 +23,7 @@ from aurora.tests.test_inspect_catalog_fast_request import _entry, _signed_reque
 from scripts import admit_catalog_fast_request as admission
 
 
-@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing", "compact_cloud_relative_valid", "compact_cloud_relative_invalid", "compact_reduction_recovery", "compact_reduction_recovery_rejected", "unexpected_checkpoint_template"))
+@pytest.mark.parametrize("inventory_state", ("complete", "incomplete", "unstable", "complete_with_previous", "stale_generation", "wrong_predecessor", "invalid_terminal_author", "missing_terminal_author", "compact_valid", "compact_handoff", "compact_busy", "compact_wrong_predecessor", "compact_corrupt", "compact_missing_cli", "compact_lineage_approved", "compact_lineage_missing", "compact_cloud_relative_valid", "compact_cloud_relative_invalid", "compact_reduction_recovery", "compact_reduction_recovery_rejected", "unexpected_checkpoint_template"))
 def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monkeypatch, capsys, inventory_state):
     """Ignoring inventory completeness/stability must fail the negative cases."""
     bundle, template, plan, identity, prepared = prepared_transport_fixture(tmp_path)
@@ -214,9 +214,20 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
         assert "CATALOG_FAST_AUTHORITY_SNAPSHOT_REQUIRED" in capsys.readouterr().err
         assert not target.exists()
         return
-    if inventory_state == "compact_valid":
+    extra = []
+    if inventory_state == "compact_handoff":
+        from scripts.catalog_fast_gate_handoff import stage_authority
+        from tests.test_catalog_fast_authority_github import publication_transport
+        source = publication_transport(state=authority)
+        (root / "config/catalog_authority_anchor_v1.json").write_text(json.dumps(source.anchor))
+        for name, value in {"GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main",
+                "GITHUB_RUN_ATTEMPT": "1", "GITHUB_JOB": "gate"}.items():
+            monkeypatch.setenv(name, value)
+        stage_authority(state=authority, edit=source.edit, anchor=source.anchor, commit="a" * 40)
+        extra = ["--gate-handoff"]
+    if inventory_state in {"compact_valid", "compact_handoff"}:
         assert admission.main(["--request-context", str(context_path), "--prepared-bundle", str(bundle),
-            "--repo-root", str(root), "--output-dir", str(target), "--github-output", str(tmp_path / "github-output")]) == 0
+            "--repo-root", str(root), "--output-dir", str(target), "--github-output", str(tmp_path / "github-output")] + extra) == 0
         result = CatalogFastLaunchDecisionV1.model_validate_json((target / "catalog-fast-decision-v1.json").read_text("utf-8"))
     else:
         result = admission.admit_request(request_context_path=context_path, prepared_bundle=bundle,
@@ -224,9 +235,14 @@ def test_new_admission_materializes_only_with_verified_inventory(tmp_path, monke
             output_dir=target, github_output=tmp_path / "github-output")
     if inventory_state.startswith("compact_reduction_recovery"):
         assert recovery_checks == [True]
-    if inventory_state in {"complete", "complete_with_previous", "compact_valid", "compact_lineage_approved", "compact_cloud_relative_valid", "compact_reduction_recovery"}:
+    if inventory_state in {"complete", "complete_with_previous", "compact_valid", "compact_handoff", "compact_lineage_approved", "compact_cloud_relative_valid", "compact_reduction_recovery"}:
         assert result.launch_required is True
         assert result.selected_workers == 7
+        if inventory_state == "compact_handoff":
+            staged = json.loads((tmp_path / ".catalog-fast-gate-handoff/admission.json").read_bytes())
+            assert staged["request_sha256"] == result.request_sha256
+            assert staged["decision_sha256"] == result.decision_sha256
+            assert staged["recovery"] is None
         verify_sealed_global_reuse_execution_plan(target / "sealed-plan", expected_bindings={
             "request_sha256": request.request_sha256, "decision_sha256": result.decision_sha256})
         if inventory_state == "compact_reduction_recovery":

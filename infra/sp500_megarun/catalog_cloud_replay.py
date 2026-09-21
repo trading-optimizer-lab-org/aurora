@@ -25,10 +25,12 @@ def resolve_cloud_replay(
             raise ValueError("CATALOG_CLOUD_AUTHORITY_INVALID")
         if completed_row.intent_id == intent.intent_id:
             candidates.append(completed_row)
-    for superseded_row in authority.recovery_superseded_intents:
+    for superseded_emission in (
+            *(item.emission for item in authority.recovery_superseded_intents),
+            *(item.emission for item in authority.unreserved_superseded_intents)):
         # It remains a published request, never a fabricated completed intent.
-        if superseded_row.emission.intent_id == intent.intent_id:
-            candidates.append(superseded_row.emission)
+        if superseded_emission.intent_id == intent.intent_id:
+            candidates.append(superseded_emission)
     if not candidates:
         if intent.is_resume:
             raise ValueError("CATALOG_CLOUD_RESUME_UNKNOWN")

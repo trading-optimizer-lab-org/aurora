@@ -29,12 +29,16 @@ def test_checkpoint_admission_authenticates_before_excluding_failed_campaign(mon
     arguments = dict(root=tmp_path, authority=state, request=item.request, issue_number=341,
                      run_id=800, client=SimpleNamespace(repository='trading-optimizer-lab-org/aurora'),
                      protected_commit='a' * 40, download_archive=lambda _: b'')
+    authenticated = []
+    arguments['on_authenticated'] = authenticated.append
     if defect:
         with pytest.raises(ValueError, match='CATALOG_CHECKPOINT_RECOVERY_'):
             admission._reserve_new_fast_request(**arguments)
+        assert authenticated == []
     else:
         profile, actual = admission._reserve_new_fast_request(**arguments)
         assert profile is marker and actual is proof
+        assert len(authenticated) == 1 and authenticated[0].proof is proof
     assert len(calls) == 1
     assert calls[0]['profile'] is marker
     assert not state.campaigns[0].is_terminal

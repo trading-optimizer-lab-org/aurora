@@ -5,6 +5,7 @@ the local file is never treated as sufficient evidence of durable publication.
 """
 
 import json
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import subprocess
@@ -63,6 +64,7 @@ def publish_cloud_candidate(
     job_id = _publisher_job(client, run_id, attempt, commit, phase)
     transition = load_lineage_transition(root, item.request) if phase == "intake-signed" else None
     recovery_proof = None
+    unreserved_proof = None
     if phase == "intake-signed":
         profile = load_checkpoint_recovery_profile(root, item.request.campaign_key, item.request.launch_generation)
         if profile is not None:
@@ -73,6 +75,31 @@ def publish_cloud_candidate(
                     client.repository, os.environ["GH_TOKEN"], artifact_id),
             )
             recovery_proof = authenticated.proof
+            owner = next((row for row in current.campaigns
+                          if row.request.campaign_key == item.request.campaign_key), None)
+            prior = next((row for row in current.emissions
+                          if row.request.campaign_key == item.request.campaign_key), None)
+            if prior is not None and owner is not None and prior.request != owner.request:
+                from aurora.infra.sp500_megarun.catalog_unreserved_checkpoint_recovery import authenticate_unreserved_checkpoint_recovery
+                unreserved_proof = authenticate_unreserved_checkpoint_recovery(
+                    repo_root=root, repository=client.repository, protected_commit_sha=commit,
+                    authority=current, profile=profile, fetch_json=client, now=datetime.now(timezone.utc),
+                    download_artifact=lambda artifact_id: _download_owner_archive(
+                        client.repository, os.environ["GH_TOKEN"], artifact_id))
+                refreshed = current.replace_unreserved_checkpoint_emission(
+                    item, recovery_proof=recovery_proof, unreserved_proof=unreserved_proof,
+                    lineage_transition=transition, now=datetime.now(timezone.utc))
+                # Reauthentication changes the observation digest, not the proposed
+                # emission, predecessor, history or revision. Compare everything else.
+                FastAuthorityStateV1.model_validate(candidate.model_dump(mode="json"))
+                links = tuple(row.model_copy(update={"proof": unreserved_proof})
+                              if row.successor_request_sha256 == item.request.request_sha256 else row
+                              for row in candidate.unreserved_superseded_intents)
+                normalized = candidate.model_copy(update={"unreserved_superseded_intents": links,
+                                                          "state_sha256": refreshed.state_sha256})
+                if normalized != refreshed:
+                    raise ValueError("CATALOG_CLOUD_PUBLICATION_TRANSITION_INVALID")
+                candidate = refreshed
 
     def patch_once(body):
         result = subprocess.run(
@@ -89,6 +116,7 @@ def publish_cloud_candidate(
         anchor=anchor, run_id=run_id, run_attempt=attempt, job_id=job_id,
         phase=phase, commit=commit, read_edit=lambda: read_live_edit(anchor),
         write_body=patch_once, lineage_transition=transition, recovery_proof=recovery_proof,
+        unreserved_proof=unreserved_proof, now=datetime.now(timezone.utc),
     )
     with output.open("x", encoding="utf-8") as stream:
         stream.write(publication.model_dump_json() + "\n")

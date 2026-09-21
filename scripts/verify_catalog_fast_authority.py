@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--gate-handoff", action="store_true")
     args = parser.parse_args(argv)
     try:
         commit = os.environ.get("CATALOG_PROTECTED_COMMIT_SHA", "")
@@ -68,10 +69,20 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(anchor, dict):
             raise ValueError("CATALOG_FAST_AUTHORITY_ANCHOR_INVALID")
         client = CatalogGitHubReadOnlyClient(repository, token)
+        latest: dict[str, Any] = {}
+
+        def read():
+            nonlocal latest
+            latest = read_live_edit(anchor)
+            return latest
+
         state = load_current_fast_authority(client=client, anchor=anchor, protected_commit=commit,
-            read_edit=lambda: read_live_edit(anchor),
+            read_edit=read,
             download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
             approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, commit))
+        if args.gate_handoff:
+            from scripts.catalog_fast_gate_handoff import stage_authority
+            stage_authority(state=state, edit=latest, anchor=anchor, commit=commit)
         with output.open("x", encoding="utf-8") as stream:
             stream.write(state.model_dump_json() + "\n")
         print(json.dumps({"status": "CURRENT_AUTHORITY_VERIFIED", "revision": state.revision,

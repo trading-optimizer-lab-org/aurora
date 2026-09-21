@@ -20,6 +20,8 @@ def select_cloud_launch_ticket(
     lineage_resolver: Callable[[CatalogLaunchTicketV1], CatalogLineageTransitionV1 | None] | None = None,
     new_request_id: Callable[[], UUID] = _uuid7,
     recovery_proof: CheckpointRecoveryOwnerProofV1 | None = None,
+    unreserved_proof=None,
+    now=None,
 ) -> CatalogLaunchTicketV1:
     """Preserve the verified cutover ticket or advance one cloud terminal.
 
@@ -36,7 +38,18 @@ def select_cloud_launch_ticket(
                   if row.request.campaign_key == intent.campaign_key), None)
     if recovery_proof is not None and (prior is None or owner is None):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID")
-    if prior is None:
+    if unreserved_proof is not None:
+        if recovery_proof is None or owner is None or prior is None:
+            raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
+        ticket = CatalogLaunchTicketV1(
+            schema_version="1", request_id=str(new_request_id()), campaign_key=intent.campaign_key,
+            launch_generation=owner.generation + 1,
+            campaign_definition_sha256=campaign_definition_sha256, prompt_sha256=prompt_sha256,
+            previous_terminal_request_sha256=owner.request.request_sha256,
+        )
+        authority._require_unreserved_checkpoint(ticket, recovery_proof=recovery_proof,
+                                                 unreserved_proof=unreserved_proof, now=now)
+    elif prior is None:
         if imported_ticket is None:
             raise ValueError("CATALOG_CLOUD_CUTOVER_TICKET_REQUIRED")
         ticket = imported_ticket

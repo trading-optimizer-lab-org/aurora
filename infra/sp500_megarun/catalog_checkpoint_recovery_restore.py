@@ -521,6 +521,23 @@ def restore_catalog_checkpoint_recovery(
     ):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_AUTHENTICATION_INVALID")
 
+    # A protected PREPARED publication may preserve the authenticated source
+    # after the original short-lived plan artifact has expired.
+    from .catalog_checkpoint_recovery_archive import restore_archived_checkpoint_recovery
+
+    archived = restore_archived_checkpoint_recovery(
+        repo_root=root,
+        repository=repository,
+        protected_commit_sha=protected_commit_sha,
+        profile=protected_profile,
+        authenticated=authenticated,
+        output_dir=target,
+        fetch_json=source,
+        download_artifact=download_artifact,
+    )
+    if archived is not None:
+        return archived
+
     downloaded: dict[str, bytes] = {}
     for artifact in (*plans, *checkpoints):
         _validate_publisher(owner, artifact)

@@ -111,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--terminal-receipt", type=Path)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--gate-handoff", action="store_true")
     args = parser.parse_args(argv)
     try:
         repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -130,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
             paths += (args.github_output,)
         if (args.phase == "finalize") != (args.terminal_receipt is not None):
             raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_INPUT_INVALID")
+        if args.gate_handoff and args.phase != "gate":
+            raise ValueError("CATALOG_FAST_GATE_HANDOFF_INVALID")
         if (args.repo_root.is_symlink() or args.output.exists()
             or any(path.is_symlink() or not path.resolve(strict=False).is_relative_to(temp)
                    for path in paths)
@@ -192,18 +195,26 @@ def main(argv: list[str] | None = None) -> int:
             latest = read_live_edit(anchor)
             return latest
 
-        current = load_current_fast_authority(client=client, anchor=anchor, protected_commit=commit,
-            read_edit=read, download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
-            approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, commit))
-        expected_edit_id = latest["data"]["repository"]["issue"]["userContentEdits"]["nodes"][0]["id"]
-        transition = load_lineage_transition(root, request) if receipt is None or unlaunched_terminal else None
         recovery_proof = None
+        if args.gate_handoff:
+            from scripts.catalog_fast_gate_handoff import consume_admission
+            current, expected_edit_id, recovery_proof = consume_admission(
+                root=root, anchor=anchor, commit=commit, context=context, decision=decision,
+                client=client, read_edit=read,
+                download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id))
+        else:
+            current = load_current_fast_authority(client=client, anchor=anchor, protected_commit=commit,
+                read_edit=read, download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                approve_historical_commit=lambda candidate: _historical_owner_commit_approved(client, candidate, commit))
+            expected_edit_id = latest["data"]["repository"]["issue"]["userContentEdits"]["nodes"][0]["id"]
+        transition = load_lineage_transition(root, request) if receipt is None or unlaunched_terminal else None
         if receipt is None:
-            _, recovery_proof = _reserve_new_fast_request(
-                root=root, authority=current, request=request, issue_number=number, run_id=run_id,
-                client=client, protected_commit=commit,
-                download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
-            )
+            if not args.gate_handoff:
+                _, recovery_proof = _reserve_new_fast_request(
+                    root=root, authority=current, request=request, issue_number=number, run_id=run_id,
+                    client=client, protected_commit=commit,
+                    download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                )
             candidate = (current.reserve(request=request, issue_number=number, run_id=run_id,
                                         lineage_transition=transition) if recovery_proof is None
                 else current.reserve_checkpoint_successor(request=request, issue_number=number,

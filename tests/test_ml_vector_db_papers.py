@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from aurora.ml import vector_db_papers
 from aurora.ml.vector_db_papers import (
     PapersVectorDB,
     PapersVectorDBConfig,
@@ -43,11 +44,19 @@ def test_add_validates(db):
         db.add_papers([{"id": "x"}])
 
 
-def test_search_relevance(db):
-    db.add_papers(_papers())
-    hits = db.search("triple barrier method", k=2)
+def test_search_relevance(db, monkeypatch):
+    papers = _papers()
+    query = "triple barrier method"
+    vocabulary = sorted(set(" ".join([query, *(p["abstract"] for p in papers)]).split()))
+    token_indices = {token: index for index, token in enumerate(vocabulary)}
+    assert len(token_indices) <= db.config.embedding_dim
+    # Isolate ranking from random hash collisions while retaining the real
+    # embedding, normalization, and nearest-neighbour implementations.
+    monkeypatch.setattr(vector_db_papers, "hash", token_indices.__getitem__, raising=False)
+    db.add_papers(papers)
+    hits = db.search(query, k=2)
     ids = [h["id"] for h in hits]
-    assert "p1" in ids
+    assert ids[0] == "p1"
     # Each hit has a score
     for h in hits:
         assert "score" in h

@@ -387,7 +387,9 @@ def _authority_edit_id(payload: object) -> str:
 
 
 def _authority_contains_intent(authority: FastAuthorityStateV1, intent_id: str) -> bool:
-    rows = (*authority.emissions, *authority.completed_intents)
+    rows = (*authority.emissions, *authority.completed_intents,
+            *(row.emission for row in authority.recovery_superseded_intents),
+            *(row.emission for row in authority.unreserved_superseded_intents))
     return any(row.intent_id == intent_id for row in rows)
 
 

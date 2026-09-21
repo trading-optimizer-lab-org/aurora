@@ -24,7 +24,10 @@ from tests.test_catalog_fast_path import NOW
     for fault in (None, "write_rejected", "foreign_decision", "reusable")] + [("finalize", "foreign_receipt", "1")]
     + [("finalize", fault, "2") for fault in (None, "write_rejected", "foreign_decision", "reusable", "foreign_receipt")]
     + [("gate", fault, "1") for fault in ("lineage_approved", "lineage_missing")]
-    + [("finalize", fault, "2") for fault in ("unlaunched", "unlaunched_young")])
+    + [("finalize", fault, "2") for fault in ("unlaunched", "unlaunched_young")]
+    + [("gate", fault, "1") for fault in ("handoff", "handoff_cas", "handoff_after",
+                                            "handoff_publisher", "handoff_request")]
+    + [("finalize", "handoff_finalize", "1")])
 def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeypatch, fault, phase, version):
     from scripts import publish_catalog_fast_authority as command
 
@@ -107,11 +110,13 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
     receipt_path = tmp_path / "terminal.json"
     receipt_path.write_text(receipt.model_dump_json())
     calls = []
+    edit_reads = []
     old_get = fixture.client.get_json
 
     def get_json(path):
         if path.endswith("/issues/280"):
-            return {"number": 280, "title": title, "body": body, "user": {"login": "requester"},
+            return {"number": 280, "title": title, "body": body,
+                    "user": {"login": "foreign" if fault == "handoff_request" else "requester"},
                     "created_at": context.get("issue_created_at"), "state": "open", "labels": []}, None
         if path.endswith(f"/actions/runs/{run_id}"):
             if fault == "reusable":
@@ -121,7 +126,8 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
             return {**fixture.run, "id": run_id, "path": ".github/workflows/catalog-fast-controller.yml", "event": "issues"}, None
         if path.endswith(f"/actions/runs/{run_id}/attempts/1/jobs?per_page=100&page=1"):
             return {"total_count": 1, "jobs": [{"id": 790, "name": f"catalog-request-280 / {phase}" if fault == "reusable" else phase, "run_id": run_id,
-                "run_attempt": 1, "head_sha": "a" * 40, "status": "in_progress"}]}, None
+                "run_attempt": 1, "head_sha": "a" * 40,
+                "status": "completed" if fault == "handoff_publisher" else "in_progress"}]}, None
         return old_get(path)
 
     fixture.client.get_json = get_json
@@ -136,6 +142,12 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
         if args[0] == "git":
             return SimpleNamespace(returncode=0, stdout="a" * 40 + "\n")
         if args == ["gh", "api", "graphql", "--input", "-"]:
+            edit_reads.append(True)
+            live = fixture.edit["data"]["repository"]["issue"]
+            if fault == "handoff_cas" and len(edit_reads) == 2:
+                live["userContentEdits"]["nodes"][0]["id"] = "E_changed_before_patch"
+            if fault == "handoff_after" and len(edit_reads) == 3:
+                live["body"] += "foreign edit"
             return SimpleNamespace(returncode=0, stdout=json.dumps(fixture.edit))
         assert args == ["gh", "api", "--method", "PATCH", "repos/" + fixture.client.repository + "/issues/161", "--input", "-"]
         calls.append(args)
@@ -156,10 +168,27 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
         monkeypatch.setenv(name, value)
     output = tmp_path / "publication.json"
     github_output = tmp_path / "github-output"
+    extra = []
+    if fault in {"handoff", "handoff_cas", "handoff_after", "handoff_publisher", "handoff_request"}:
+        import importlib.util
+        assert importlib.util.find_spec("scripts.catalog_fast_gate_handoff") is not None, (
+            "writer needs a same-job handoff instead of repeating historical authentication"
+        )
+        from scripts.catalog_fast_gate_handoff import stage_authority, stage_admission
+        stage_authority(state=fixture.state, edit=fixture.edit, anchor=fixture.anchor, commit="a" * 40)
+        stage_admission(anchor=fixture.anchor, commit="a" * 40, authority=fixture.state,
+                        context=context, decision=decision, authenticated=None)
+        def no_history(**kwargs):
+            raise AssertionError("historical authentication repeated in writer")
+        monkeypatch.setattr(command, "load_current_fast_authority", no_history)
+        monkeypatch.setattr(command, "_reserve_new_fast_request", no_history)
+        extra = ["--gate-handoff"]
+    if fault == "handoff_finalize":
+        extra = ["--gate-handoff"]
     code = command.main(["--repo-root", str(root), "--phase", phase, "--request-context", str(context_path),
         "--decision", str(decision_path), "--output", str(output), "--github-output", str(github_output)] +
-        (["--terminal-receipt", str(receipt_path)] if phase == "finalize" else []))
-    if fault in {None, "reusable", "lineage_approved", "unlaunched"}:
+        (["--terminal-receipt", str(receipt_path)] if phase == "finalize" else []) + extra)
+    if fault in {None, "reusable", "lineage_approved", "unlaunched", "handoff"}:
         assert code == 0
         assert github_output.read_text().strip() == f"authority_artifact_name=catalog-fast-authority-{run_id}-1-{phase}-790"
         publication = FastAuthorityEditBindingV1.model_validate_json(output.read_text())
@@ -189,7 +218,7 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
     else:
         assert code == 2
         assert not output.exists()
-        assert len(calls) == (1 if fault == "write_rejected" else 0)
+        assert len(calls) == (1 if fault in {"write_rejected", "handoff_after"} else 0)
 
 
 def test_gate_durable_publication_is_verified_before_queue_exposure():

@@ -244,6 +244,8 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     lineage_transition: CatalogLineageTransitionV1 | None = None,
     unlaunched_terminal: bool = False,
     recovery_proof: CheckpointRecoveryOwnerProofV1 | None = None,
+    unreserved_proof=None,
+    now: datetime | None = None,
 ) -> FastAuthorityEditBindingV1:
     """Mutate under the workflow's shared writer lock, then bind the observed edit.
 
@@ -258,6 +260,8 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
     if recovery_proof is not None and phase not in {"intake-signed", "gate"}:
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
+    if unreserved_proof is not None and (phase != "intake-signed" or recovery_proof is None):
+        raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
     if phase in _INTAKE_PHASES:
         old_emissions = {row.intent_id: row for row in current.emissions}
         changed_emissions = [row for row in candidate.emissions if old_emissions.get(row.intent_id) != row]
@@ -267,9 +271,14 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         if phase == "intake-signed":
             if emission.producer_run_id != run_id or emission.producer_commit != commit:
                 raise ValueError("CATALOG_FAST_AUTHORITY_PRODUCER_INVALID")
-            expected = (current.stage_emission(emission, lineage_transition=lineage_transition)
-                if recovery_proof is None else current.stage_checkpoint_emission(
-                    emission, recovery_proof=recovery_proof, lineage_transition=lineage_transition))
+            if unreserved_proof is not None:
+                expected = current.replace_unreserved_checkpoint_emission(
+                    emission, recovery_proof=recovery_proof, unreserved_proof=unreserved_proof,
+                    lineage_transition=lineage_transition, now=now)
+            else:
+                expected = (current.stage_emission(emission, lineage_transition=lineage_transition)
+                    if recovery_proof is None else current.stage_checkpoint_emission(
+                        emission, recovery_proof=recovery_proof, lineage_transition=lineage_transition))
         else:
             expected_state = "PUBLICACION_INCIERTA" if phase == "intake-uncertain" else "PUBLICADO"
             if emission.state != expected_state:

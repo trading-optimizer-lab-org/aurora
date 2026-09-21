@@ -46,7 +46,9 @@ from aurora.infra.sp500_megarun.catalog_rebuildable_store_index import (
     CatalogRebuildableStoreIndexV1,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
-from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import authenticate_checkpoint_recovery_owner
+from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import (
+    CheckpointRecoveryOwnerAuthenticationV1, authenticate_checkpoint_recovery_owner,
+)
 from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import load_checkpoint_recovery_profile
 from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_binding import verify_checkpoint_recovery_plan
 from aurora.infra.sp500_megarun.catalog_reduction_recovery_profile import (
@@ -69,6 +71,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--github-output", required=True, type=Path)
+    parser.add_argument("--gate-handoff", action="store_true")
     return parser
 
 
@@ -208,7 +211,7 @@ def _write_replay_decision(
 
 
 def _reserve_new_fast_request(*, root, authority, request, issue_number, run_id,
-                              client, protected_commit, download_archive):
+                              client, protected_commit, download_archive, on_authenticated=None):
     """Validate reservation without mutating the authenticated authority snapshot."""
     profile = load_checkpoint_recovery_profile(root, request.campaign_key, request.launch_generation)
     transition = load_lineage_transition(root, request)
@@ -223,6 +226,8 @@ def _reserve_new_fast_request(*, root, authority, request, issue_number, run_id,
     authority.reserve_checkpoint_successor(request=request, issue_number=issue_number, run_id=run_id,
                                            recovery_proof=authenticated.proof,
                                            lineage_transition=transition)
+    if on_authenticated is not None:
+        on_authenticated(authenticated)
     return profile, authenticated.proof
 
 
@@ -312,6 +317,7 @@ def admit_request(
     repo_root: Path,
     output_dir: Path,
     github_output: Path,
+    gate_handoff: bool = False,
 ) -> CatalogFastLaunchDecisionV1:
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GH_TOKEN", "")
@@ -393,6 +399,7 @@ def admit_request(
     reduction_recovery: Mapping[str, Any] | None = None
     checkpoint_profile = None
     checkpoint_proof = None
+    checkpoint_authentication: list[CheckpointRecoveryOwnerAuthenticationV1] = []
     existing_issue_state = (
         bool(labels & {"catalog-run-active-v1", "catalog-run-terminal-v1"})
         or issue.get("state") == "closed"
@@ -461,6 +468,7 @@ def admit_request(
                     root=root, authority=authority, request=request, issue_number=current_issue_number,
                     run_id=int(publisher), client=client, protected_commit=expected_commit,
                     download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                    on_authenticated=checkpoint_authentication.append,
                 )
                 if profile is not None:
                     reduction_recovery = profile.model_dump(mode="json")
@@ -765,6 +773,15 @@ def admit_request(
             output_dir=output_dir / "sealed-plan",
             reduction_recovery=reduction_recovery,
         )
+        if gate_handoff:
+            from scripts.catalog_fast_gate_handoff import stage_admission
+            if checkpoint_profile is not None and len(checkpoint_authentication) != 1:
+                raise ValueError("CATALOG_FAST_GATE_HANDOFF_INVALID")
+            stage_admission(anchor=_mapping(_strict_json(root / "config/catalog_authority_anchor_v1.json"),
+                                           "CATALOG_FAST_GATE_HANDOFF_INVALID"),
+                commit=expected_commit, authority=authority, context=context, decision=decision,
+                profile=checkpoint_profile,
+                authenticated=checkpoint_authentication[0] if checkpoint_authentication else None)
     outputs = {
         "preserve_issue": "false",
         "checkpoint_recovery_enabled": str(
@@ -815,6 +832,7 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=args.repo_root,
             output_dir=args.output_dir,
             github_output=args.github_output,
+            gate_handoff=args.gate_handoff,
         )
         return 0
     except (CatalogGitHubSnapshotError, json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
