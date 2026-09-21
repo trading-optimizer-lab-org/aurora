@@ -282,6 +282,9 @@ def _production_reader_fixture(
     class Client:
         repository = REPOSITORY
 
+        def __init__(self):
+            self.inventory_paths = []
+
         def get_json(self, path: str) -> tuple[object, object]:
             if path.endswith(f"/issues/{ISSUE}"):
                 return {
@@ -297,7 +300,8 @@ def _production_reader_fixture(
             raise AssertionError(path)
 
         def stable_paginated(self, path: str, *, root: str) -> object:
-            if path.endswith(f"/actions/artifacts?name=catalog-fast-gate-{ISSUE}"):
+            self.inventory_paths.append(path)
+            if path.endswith(f"/actions/runs/{RUN_ID}/artifacts?name=catalog-fast-gate-{ISSUE}"):
                 return SimpleNamespace(
                     stable=True,
                     collection=SimpleNamespace(complete=True, rows=(artifact,)),
@@ -359,6 +363,57 @@ def test_authentication_uses_real_owner_reader_for_current_merge_and_ancestor(
     assert CURRENT_COMMIT != profile.source_protected_commit_sha
     assert authenticated.owner.run_id == RUN_ID
     assert authenticated.proof.source_protected_commit_sha == COMMIT
+    assert client.inventory_paths[0] == (
+        f"/repos/{REPOSITORY}/actions/runs/{RUN_ID}/artifacts?name=catalog-fast-gate-{ISSUE}"
+    )
+    assert all('/actions/artifacts?' not in path for path in client.inventory_paths)
+
+
+@pytest.mark.parametrize('case, error', [
+    ('wrong_run', 'CATALOG_FAST_OWNER_PIN_MISMATCH'),
+    ('duplicate', 'CATALOG_FAST_OWNER_AMBIGUOUS'),
+    ('missing', 'CATALOG_CHECKPOINT_RECOVERY_OWNER_MISSING'),
+    ('incomplete', 'CATALOG_FAST_OWNER_INVENTORY_INCOMPLETE'),
+])
+def test_pinned_recovery_owner_still_rejects_invalid_inventory(monkeypatch, case, error):
+    profile = _profile()
+    request = _real_request()
+    profile.source_request_sha256 = request.request_sha256
+    profile.source_plan_bindings['request_sha256'] = request.request_sha256
+    client, download, _ = _production_reader_fixture(profile, request, _good_comparison())
+    _patch_profile(monkeypatch, profile)
+    _patch_request_parser(monkeypatch, request)
+    original = client.stable_paginated
+
+    def inventory(path, *, root):
+        result = original(path, root=root)
+        if path.endswith(f'/artifacts?name=catalog-fast-gate-{ISSUE}'):
+            if case == 'wrong_run':
+                artifact = result.collection.rows[0]
+                result.collection.rows = ({**artifact, 'workflow_run': {
+                    **artifact['workflow_run'], 'id': RUN_ID + 1}},)
+            elif case == 'duplicate':
+                result.collection.rows *= 2
+            elif case == 'missing':
+                result.collection.rows = ()
+            else:
+                result.collection.complete = False
+        return result
+
+    monkeypatch.setattr(client, 'stable_paginated', inventory)
+    with pytest.raises(ValueError, match=error):
+        auth.authenticate_checkpoint_recovery_owner(
+            **{**_base_kwargs(client, profile), 'download_artifact': download})
+
+
+@pytest.mark.parametrize('pin', [True, False, 0, -1, '35504391586'])
+def test_owner_pin_rejects_invalid_values_before_io(pin):
+    client = _InjectedClient(actor='unused', comparison={})
+    with pytest.raises(ValueError, match='CATALOG_FAST_OWNER_LOOKUP_INVALID'):
+        auth.load_fast_gate_owner(client=client, issue_number=ISSUE, request=_real_request(),
+            approved_commits=frozenset({CURRENT_COMMIT}),
+            download_archive=lambda _: pytest.fail('unexpected download'), pinned_owner_run_id=pin)
+    assert client.calls == []
 
 
 def test_authentication_returns_owner_and_stable_failure_proof(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -378,6 +433,7 @@ def test_authentication_returns_owner_and_stable_failure_proof(monkeypatch: pyte
         observed.update(kwargs)
         assert kwargs["approved_commits"] == frozenset({CURRENT_COMMIT})
         assert kwargs["terminal_owner_run_id"] == RUN_ID
+        assert kwargs["pinned_owner_run_id"] == RUN_ID
         approve = kwargs["approve_historical_commit"]
         assert callable(approve) and approve(COMMIT) is True
         return owner

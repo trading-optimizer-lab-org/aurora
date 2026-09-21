@@ -279,6 +279,7 @@ def authenticate_checkpoint_recovery_owner(
         ),
         download_archive=download_artifact,
         terminal_owner_run_id=protected.source_run_id,
+        pinned_owner_run_id=protected.source_run_id,
     )
     if not isinstance(owner, FastGateOwnerEvidence):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_OWNER_MISSING")
