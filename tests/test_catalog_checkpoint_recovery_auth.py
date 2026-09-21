@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -33,6 +34,26 @@ OTHER_COMMIT = "b" * 40
 REQUEST_SHA = "db7838f228058a301bb369a02e7133096cc48846cf0be8d6dac79372152ba2e1"
 RUN_ID = 35504391586
 RUN_ATTEMPT = 1
+
+
+@pytest.mark.skipif(os.environ.get("AURORA_PUBLIC_CHECKS_PROBE") != "1", reason="explicit read-only CI capability probe")
+def test_public_check_discovery_with_existing_ci_permissions():
+    """The public Checks exemption must work with an authenticated limited token."""
+    from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogGitHubReadOnlyClient
+
+    client = CatalogGitHubReadOnlyClient(REPOSITORY, os.environ["GH_TOKEN"])
+    for name, job_id in (("gate", 106061624865), ("finalize", 106062671367)):
+        result = client.stable_paginated(
+            f"/repos/{REPOSITORY}/check-suites/96135672007/check-runs?check_name={name}&filter=all",
+            root="check_runs",
+        )
+        assert result.stable and result.collection.complete
+        assert len(result.collection.rows) == 1
+        check = result.collection.rows[0]
+        assert check["name"] == name
+        assert check["head_sha"] == COMMIT
+        assert check["details_url"] == f"https://github.com/{REPOSITORY}/actions/runs/{RUN_ID}/job/{job_id}"
+        assert check["app"]["id"] == 15368
 ISSUE = 339
 
 ROOT = Path(__file__).resolve().parents[1]
