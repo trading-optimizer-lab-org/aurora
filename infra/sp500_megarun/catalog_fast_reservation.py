@@ -350,6 +350,7 @@ def load_fast_gate_owner(
     approved_commits: frozenset[str], download_archive: Callable[[int], bytes],
     approve_historical_commit: Callable[[str], bool] | None = None,
     terminal_owner_run_id: int | None = None,
+    pinned_owner_run_id: int | None = None,
 ) -> FastGateOwnerEvidence | FastGateAliasEvidence | None:
     """Look up existing publication, not all historical runs or terminal issues.
 
@@ -357,6 +358,8 @@ def load_fast_gate_owner(
     caller must also inspect durable request state for expired/deleted evidence.
     More than sixteen publications requires offline reconciliation, not a long
     discovery loop in admission. Terminal run conclusion is not science proof.
+    A protected recovery profile may pin the owner; unrelated replay artifacts
+    are then outside discovery scope, not substitutes for that owner's evidence.
     """
     if (
         client.repository != "trading-optimizer-lab-org/aurora"
@@ -366,21 +369,32 @@ def load_fast_gate_owner(
         or (terminal_owner_run_id is not None and (
             type(terminal_owner_run_id) is not int or terminal_owner_run_id < 1
         ))
+        or (pinned_owner_run_id is not None and (
+            type(pinned_owner_run_id) is not int or pinned_owner_run_id < 1
+        ))
     ):
         raise ValueError("CATALOG_FAST_OWNER_LOOKUP_INVALID")
     prefix = f"/repos/{client.repository}"
+    artifact_scope = (f"{prefix}/actions/artifacts" if pinned_owner_run_id is None
+                      else f"{prefix}/actions/runs/{pinned_owner_run_id}/artifacts")
     inventory = client.stable_paginated(
-        f"{prefix}/actions/artifacts?name=catalog-fast-gate-{issue_number}", root="artifacts",
+        f"{artifact_scope}?name=catalog-fast-gate-{issue_number}", root="artifacts",
     )
     if inventory.stable is not True or inventory.collection.complete is not True:
         raise ValueError("CATALOG_FAST_OWNER_INVENTORY_INCOMPLETE")
     rows = inventory.collection.rows
+    if pinned_owner_run_id is not None and len(rows) > 1:
+        raise ValueError("CATALOG_FAST_OWNER_AMBIGUOUS")
     if len(rows) > 16:
         raise ValueError("CATALOG_FAST_OWNER_RECONCILIATION_REQUIRED")
     owners: list[FastGateOwnerEvidence] = []
     alias_targets: set[int] = set()
     for artifact in rows:
         source = artifact.get("workflow_run")
+        if pinned_owner_run_id is not None and (
+            not isinstance(source, Mapping) or source.get("id") != pinned_owner_run_id
+        ):
+            raise ValueError("CATALOG_FAST_OWNER_PIN_MISMATCH")
         commit = source.get("head_sha") if isinstance(source, Mapping) else None
         if (
             not isinstance(source, Mapping)
