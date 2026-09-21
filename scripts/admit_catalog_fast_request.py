@@ -222,6 +222,7 @@ def _reserve_new_fast_request(*, root, authority, request, issue_number, run_id,
     authenticated = authenticate_checkpoint_recovery_owner(
         repo_root=root, repository=client.repository, protected_commit_sha=protected_commit,
         profile=profile, fetch_json=client, download_artifact=download_archive,
+        checkpoint_control_jobs=True,
     )
     authority.reserve_checkpoint_successor(request=request, issue_number=issue_number, run_id=run_id,
                                            recovery_proof=authenticated.proof,

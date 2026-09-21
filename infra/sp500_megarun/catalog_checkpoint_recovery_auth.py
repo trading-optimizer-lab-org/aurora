@@ -238,6 +238,7 @@ def authenticate_checkpoint_recovery_owner(
     profile: CheckpointRecoveryProfileV1,
     fetch_json: _ReadOnlyClient,
     download_artifact: Callable[[int], bytes],
+    checkpoint_control_jobs: bool = False,
 ) -> CheckpointRecoveryOwnerAuthenticationV1:
     """Authenticate the source owner without publishing or mutating anything.
 
@@ -280,6 +281,7 @@ def authenticate_checkpoint_recovery_owner(
         download_archive=download_artifact,
         terminal_owner_run_id=protected.source_run_id,
         pinned_owner_run_id=protected.source_run_id,
+        checkpoint_control_jobs=checkpoint_control_jobs,
     )
     if not isinstance(owner, FastGateOwnerEvidence):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_OWNER_MISSING")

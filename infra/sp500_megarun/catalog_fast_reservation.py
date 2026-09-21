@@ -345,12 +345,76 @@ def load_owner_terminal_receipt(
     return receipt
 
 
+def _load_checkpoint_control_jobs(client: _OwnerReader, run: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    """Discover only the two control jobs through their exact Actions check suite.
+
+    Checks are locators, not substitutes for Actions job/step provenance. Both
+    named inventories and the job bodies remain stable-checked. Public Checks
+    reads require no new token permission; private repositories fail closed.
+    """
+    code = "CATALOG_CHECKPOINT_CONTROL_JOBS_INVALID"
+    run_id, attempt, suite_id = run.get("id"), run.get("run_attempt"), run.get("check_suite_id")
+    repository = run.get("repository")
+    if (any(type(value) is not int or value < 1 for value in (run_id, attempt, suite_id))
+            or not isinstance(repository, Mapping) or repository.get("private") is not False
+            or repository.get("full_name") != client.repository
+            or "path" not in run
+            or not _is_expected_workflow_path(run["path"], ".github/workflows/catalog-fast-controller.yml")
+            or run.get("event") != "issues" or run.get("status") != "completed"
+            or run.get("conclusion") != "failure"):
+        raise ValueError(code)
+    prefix = f"/repos/{client.repository}"
+    jobs = []
+    for name in ("gate", "finalize"):
+        checks = client.stable_paginated(
+            f"{prefix}/check-suites/{suite_id}/check-runs?check_name={name}&filter=all",
+            root="check_runs",
+        )
+        if (checks.stable is not True or checks.collection.complete is not True
+                or len(checks.collection.rows) != 1):
+            raise ValueError(code)
+        check = checks.collection.rows[0]
+        check_id = check.get("id")
+        if (type(check_id) is not int or check_id < 1 or check.get("name") != name
+                or check.get("head_sha") != run.get("head_sha")
+                or check.get("status") != "completed"
+                or not isinstance(check.get("check_suite"), Mapping)
+                or check["check_suite"].get("id") != suite_id
+                or not isinstance(check.get("app"), Mapping)
+                or check["app"].get("id") != 15368 or check["app"].get("slug") != "github-actions"):
+            raise ValueError(code)
+        match = re.fullmatch(
+            rf"https://github\.com/{re.escape(client.repository)}/actions/runs/{run_id}/job/([1-9][0-9]*)",
+            str(check.get("details_url", "")),
+        )
+        if match is None:
+            raise ValueError(code)
+        job_id = int(match[1])
+        job, _ = client.get_json(f"{prefix}/actions/jobs/{job_id}")
+        after, _ = client.get_json(f"{prefix}/actions/jobs/{job_id}")
+        if (not isinstance(job, Mapping) or job != after
+                or type(job.get("id")) is not int or job["id"] != job_id
+                or job.get("name") != name or job.get("run_id") != run_id
+                or job.get("run_attempt") != attempt or job.get("head_sha") != run.get("head_sha")
+                or job.get("status") != "completed" or job.get("conclusion") != check.get("conclusion")
+                or job.get("check_run_url") != f"https://api.github.com{prefix}/check-runs/{check_id}"):
+            raise ValueError(code)
+        jobs.append(job)
+    after_run, _ = client.get_json(f"{prefix}/actions/runs/{run_id}")
+    if not isinstance(after_run, Mapping) or any(after_run.get(key) != run.get(key) for key in (
+            "id", "run_attempt", "head_sha", "head_branch", "status", "conclusion",
+            "path", "event", "check_suite_id", "repository")):
+        raise ValueError(code)
+    return tuple(jobs)
+
+
 def load_fast_gate_owner(
     *, client: _OwnerReader, issue_number: int, request: CatalogRunRequestV1,
     approved_commits: frozenset[str], download_archive: Callable[[int], bytes],
     approve_historical_commit: Callable[[str], bool] | None = None,
     terminal_owner_run_id: int | None = None,
     pinned_owner_run_id: int | None = None,
+    checkpoint_control_jobs: bool = False,
 ) -> FastGateOwnerEvidence | FastGateAliasEvidence | None:
     """Look up existing publication, not all historical runs or terminal issues.
 
@@ -371,6 +435,10 @@ def load_fast_gate_owner(
         ))
         or (pinned_owner_run_id is not None and (
             type(pinned_owner_run_id) is not int or pinned_owner_run_id < 1
+        ))
+        or type(checkpoint_control_jobs) is not bool
+        or (checkpoint_control_jobs and (
+            pinned_owner_run_id is None or terminal_owner_run_id != pinned_owner_run_id
         ))
     ):
         raise ValueError("CATALOG_FAST_OWNER_LOOKUP_INVALID")
@@ -419,13 +487,19 @@ def load_fast_gate_owner(
         run, _ = client.get_json(f"{prefix}/actions/runs/{run_id}")
         if not isinstance(run, Mapping) or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1:
             raise ValueError("CATALOG_FAST_OWNER_RUN_INVALID")
-        jobs = client.stable_paginated(
-            f"{prefix}/actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs", root="jobs",
-        )
-        if jobs.stable is not True or jobs.collection.complete is not True:
-            raise ValueError("CATALOG_FAST_OWNER_INVENTORY_INCOMPLETE")
+        if checkpoint_control_jobs:
+            if not decision.launch_required:
+                raise ValueError("CATALOG_CHECKPOINT_CONTROL_JOBS_INVALID")
+            job_rows = _load_checkpoint_control_jobs(client, run)
+        else:
+            jobs = client.stable_paginated(
+                f"{prefix}/actions/runs/{run_id}/attempts/{run['run_attempt']}/jobs", root="jobs",
+            )
+            if jobs.stable is not True or jobs.collection.complete is not True:
+                raise ValueError("CATALOG_FAST_OWNER_INVENTORY_INCOMPLETE")
+            job_rows = jobs.collection.rows
         publisher_id = _verify_fast_gate_publication_metadata(
-            artifact=artifact, run=run, jobs=jobs.collection.rows,
+            artifact=artifact, run=run, jobs=job_rows,
             expected_issue_number=issue_number, expected_commit=source["head_sha"],
             requires_reservation=decision.launch_required,
         )
@@ -437,7 +511,7 @@ def load_fast_gate_owner(
             prefix_name = "" if _is_expected_workflow_path(
                 run["path"], ".github/workflows/catalog-fast-controller.yml"
             ) else f"catalog-request-{issue_number} / "
-            for job in jobs.collection.rows:
+            for job in job_rows:
                 name = str(job.get("name", ""))
                 if name == prefix_name + "gate":
                     for step in job.get("steps", ()):
@@ -451,12 +525,12 @@ def load_fast_gate_owner(
             # and issue-state checks in admission still protect missing owners.
             if terminal_owner_run_id is not None and run_id == terminal_owner_run_id:
                 owners.append(FastGateOwnerEvidence(
-                    publisher_id, dict(run), decision, tuple(jobs.collection.rows),
+                    publisher_id, dict(run), decision, tuple(job_rows),
                     unlaunched_terminal=True,
                 ))
             continue
         if decision.launch_required:
-            owners.append(FastGateOwnerEvidence(publisher_id, dict(run), decision, tuple(jobs.collection.rows)))
+            owners.append(FastGateOwnerEvidence(publisher_id, dict(run), decision, tuple(job_rows)))
         else:
             if decision.existing_run_id == publisher_id or type(decision.existing_run_id) is not int:
                 raise ValueError("CATALOG_FAST_ALIAS_TARGET_INVALID")
