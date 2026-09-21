@@ -340,7 +340,7 @@ def test_restore_uses_injected_transport_and_publishes_only_after_local_validati
     monkeypatch.setattr(restore, "read_owner_artifact_archive", read_archive)
 
     result = restore.restore_catalog_checkpoint_recovery(
-        repo_root=ROOT,
+        repo_root=tmp_path,
         repository=REPOSITORY,
         protected_commit_sha="e" * 40,
         profile=profile,
@@ -448,7 +448,7 @@ def test_restore_real_source_full_plan_and_120_checkpoint_archives(tmp_path, mon
         return fixture["plan_receipt"]
     monkeypatch.setattr(restore, "verify_sealed_global_reuse_execution_plan", sealed)
     result = restore.restore_catalog_checkpoint_recovery(
-        repo_root=ROOT, repository=REPOSITORY, protected_commit_sha="e" * 40,
+        repo_root=tmp_path, repository=REPOSITORY, protected_commit_sha="e" * 40,
         profile=profile, output_dir=tmp_path / "restored", fetch_json=client,
         download_artifact=downloads.__getitem__,
     )

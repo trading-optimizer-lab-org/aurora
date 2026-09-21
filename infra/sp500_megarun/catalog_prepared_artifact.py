@@ -41,6 +41,7 @@ from .catalog_fast_path import (
     CatalogPreparedReceiptV1,
     CatalogPreparationIdentityV1,
 )
+from .catalog_fast_reservation import _is_expected_workflow_path
 from .catalog_gate_budget import gate_timeout
 from .catalog_github_snapshot import CatalogGitHubReadOnlyClient
 from .catalog_prepared_bundle import (
@@ -51,7 +52,6 @@ from .catalog_prepared_bundle import (
 
 REPOSITORY = "trading-optimizer-lab-org/aurora"
 REPOSITORY_ID = 1232647748
-WORKFLOW_PATH = ".github/workflows/catalog-prepare.yml"
 ALLOWED_WORKFLOW_EVENTS = frozenset({"push", "schedule"})
 PRODUCER_BRANCH = "main"
 PREFLIGHT_PHASE = "preflight"
@@ -325,7 +325,9 @@ def _run_matches(run: Mapping[str, Any], expected_identity: CatalogPreparationId
     repository = run.get("repository")
     attempt = run.get("run_attempt")
     return (
-        run.get("path") == WORKFLOW_PATH
+        _is_expected_workflow_path(
+            run.get("path"), ".github/workflows/catalog-prepare.yml"
+        )
         and run.get("event") in ALLOWED_WORKFLOW_EVENTS
         and run.get("head_branch") == PRODUCER_BRANCH
         and run.get("head_sha") == expected_identity.protected_commit_sha

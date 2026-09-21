@@ -170,6 +170,44 @@ def test_ticket_replacement_requires_fresh_proof_and_preserves_generation(proof_
             select_cloud_launch_ticket(**kwargs)
 
 
+def test_replacement_with_new_definition_preserves_signed_old_transport():
+    from uuid import UUID
+    from aurora.infra.sp500_megarun.catalog_cloud_ticket import select_cloud_launch_ticket
+    from aurora.infra.sp500_megarun.catalog_lineage_transition import CatalogLineageTransitionV1
+    from tests.test_catalog_cloud_intake import _validate
+
+    state, prior, new, source, lineage = replacement_case()
+    definition = canonical_sha256({"change": "authenticated archived checkpoint transport"})
+    request = signed_request(campaign_key=new.request.campaign_key, launch_generation=8,
+        previous_terminal_request_sha256=state.campaigns[0].request.request_sha256,
+        campaign_definition_sha256=definition, prompt_sha256=new.request.prompt_sha256,
+        request_id=new.request.request_id)
+    new = emission(request=request, intent_issue_number=new.intent_issue_number, intent_id=new.intent_id)
+    transition = CatalogLineageTransitionV1.model_validate({
+        **lineage.model_dump(), "target_definition_sha256": definition,
+    })
+    intent = _validate().model_copy(update=dict(intent_id=new.intent_id, campaign_key=request.campaign_key,
+        issue_number=new.intent_issue_number, repository_id=new.repository_id, author_id=new.actor_id,
+        intent_sha256=new.intent_sha256))
+    kwargs = dict(authority=state, intent=intent, imported_ticket=None,
+        campaign_definition_sha256=definition, prompt_sha256=request.prompt_sha256,
+        recovery_proof=source, unreserved_proof=proof_for(state, prior, source), now=NOW,
+        new_request_id=lambda: UUID(request.request_id))
+    with pytest.raises(ValueError):
+        select_cloud_launch_ticket(**kwargs, lineage_transition=lineage)
+    ticket = select_cloud_launch_ticket(**kwargs, lineage_transition=transition)
+    assert ticket.launch_generation == 8
+    assert ticket.campaign_definition_sha256 == definition
+    assert ticket.previous_terminal_request_sha256 == state.campaigns[0].request.request_sha256
+    result = replace_emission(state, prior, new, source, transition)
+    archive = result.unreserved_superseded_intents[0]
+    assert archive.emission == prior
+    assert archive.recovery_profile_sha256 == source.profile_sha256
+    assert result.campaigns == state.campaigns
+    assert result.recovery_superseded_intents == state.recovery_superseded_intents
+    assert FastAuthorityStateV1.model_validate_json(result.model_dump_json()) == result
+
+
 @pytest.mark.parametrize("defect", [None, "proof", "phase", "candidate", "expired"])
 def test_writer_rederives_replacement_before_any_write(monkeypatch, defect):
     from aurora.infra.sp500_megarun import catalog_fast_authority_github as writer

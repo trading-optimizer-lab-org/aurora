@@ -43,6 +43,9 @@ _ARCHIVE_MEMBER_PATH_KEYS = frozenset({"content_manifest_path"})
 _PROVENANCE_WORKFLOW_MARKER_MODULE = (
     "infra/sp500_megarun/catalog_fast_reservation.py"
 )
+_PREPARED_ARTIFACT_PROVENANCE_MARKER_MODULE = (
+    "infra/sp500_megarun/catalog_prepared_artifact.py"
+)
 _PROVENANCE_WORKFLOW_MARKER_FUNCTION = "_is_expected_workflow_path"
 _PROVENANCE_WORKFLOW_IDENTITY_BASENAMES = frozenset(
     {
@@ -336,6 +339,8 @@ class _ClosureBuilder:
         node: ast.Constant,
         parents: dict[ast.AST, ast.AST],
     ) -> bool:
+        if relative == _PREPARED_ARTIFACT_PROVENANCE_MARKER_MODULE:
+            return _ClosureBuilder._is_prepared_artifact_workflow_identity(node, parents)
         if relative != _PROVENANCE_WORKFLOW_MARKER_MODULE:
             return False
         parent = parents.get(node)
@@ -366,6 +371,45 @@ class _ClosureBuilder:
             and parts[0] == ".github"
             and parts[1] == "workflows"
             and parts[2] in _PROVENANCE_WORKFLOW_IDENTITY_BASENAMES
+        )
+
+    @staticmethod
+    def _is_prepared_artifact_workflow_identity(
+        node: ast.Constant,
+        parents: dict[ast.AST, ast.AST],
+    ) -> bool:
+        if type(node.value) is not str:
+            return False
+        parts = node.value.split("/")
+        if (
+            len(parts) != 3
+            or parts[0] != ".github"
+            or parts[1] != "workflows"
+            or parts[2] != "catalog-prepare.yml"
+        ):
+            return False
+        parent = parents.get(node)
+        if not isinstance(parent, ast.Call):
+            return False
+        if not (
+            isinstance(parent.func, ast.Name)
+            and parent.func.id == _PROVENANCE_WORKFLOW_MARKER_FUNCTION
+            and len(parent.args) == 2
+            and not parent.keywords
+            and parent.args[1] is node
+        ):
+            return False
+        path_expression = parent.args[0]
+        return (
+            isinstance(path_expression, ast.Call)
+            and isinstance(path_expression.func, ast.Attribute)
+            and isinstance(path_expression.func.value, ast.Name)
+            and path_expression.func.value.id == "run"
+            and path_expression.func.attr == "get"
+            and len(path_expression.args) == 1
+            and not path_expression.keywords
+            and isinstance(path_expression.args[0], ast.Constant)
+            and path_expression.args[0].value == "path"
         )
 
     def _consider_string_edge(
