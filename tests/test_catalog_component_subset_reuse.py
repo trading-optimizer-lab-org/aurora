@@ -20,7 +20,8 @@ from scripts.verify_sp500_component_store import seal_component_bundle
 
 @pytest.mark.parametrize("case", [
     "shared", "single", "pagination_shift", "missing", "duplicate", "expired", "empty", "invalid",
-    "bad_id", "shared_id", "filter_ignored", "count_mismatch", "invalid_response",
+    "bad_id", "shared_id", "filter_ignored", "count_mismatch", "invalid_response", "prior_attempt",
+    "old_only", "attempt_mismatch", "sha_mismatch", "attempt_changed", "bad_time", "naive_time", "paged_prior",
 ])
 def test_component_download_selects_exact_ids_from_shared_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
@@ -40,12 +41,16 @@ def test_component_download_selects_exact_ids_from_shared_run(
     rows = [{"id": 11, "name": names[0], "expired": False},
             {"id": 22, "name": names[1], "expired": False},
             {"id": 33, "name": "catalog-component-transport-sp500-cached-000", "expired": False}]
+    for row in rows:
+        row["created_at"] = "2026-09-21T20:08:00Z"
     if case == "single":
         names = names[:1]
     elif case == "missing":
         rows.pop(1)
     elif case == "duplicate":
-        rows.append({"id": 44, "name": names[0], "expired": False})
+        rows.append({"id": 44, "name": names[0], "expired": False, "created_at": "2026-09-21T20:08:00Z"})
+    elif case == "prior_attempt":
+        rows.append({"id": 44, "name": names[0], "expired": False, "created_at": "2026-09-21T19:56:00Z"})
     elif case == "expired":
         rows[0]["expired"] = True
     elif case == "bad_id":
@@ -56,6 +61,15 @@ def test_component_download_selects_exact_ids_from_shared_run(
         names = []
     elif case == "invalid":
         names = ["../foreign"]
+    elif case == "old_only":
+        rows[0]["created_at"] = "2026-09-21T19:56:00Z"
+    elif case == "bad_time":
+        rows[0]["created_at"] = "invalid"
+    elif case == "naive_time":
+        rows[0]["created_at"] = "2026-09-21T20:08:00"
+    elif case == "paged_prior":
+        rows.extend({"id": 100 + i, "name": names[0], "expired": False,
+                     "created_at": "2026-09-21T19:56:00Z"} for i in range(105))
     (plan / "component_store_input_manifest.json").write_text(json.dumps({
         "bundles": [{"component_transport_artifact": name} for name in names],
     }))
@@ -63,21 +77,38 @@ def test_component_download_selects_exact_ids_from_shared_run(
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
     monkeypatch.setenv("GITHUB_REPOSITORY", "test/aurora")
 
+    run_reads = 0
+
     def inventory(command, **kwargs):
+        nonlocal run_reads
         assert command[:2] == ["gh", "api"]
         endpoint = urlsplit(command[2])
+        if endpoint.path == "repos/test/aurora/actions/runs/123":
+            run_reads += 1
+            return json.dumps({
+                "id": 123,
+                "run_attempt": 3 if case == "attempt_mismatch" or (case == "attempt_changed" and run_reads > 1) else 2,
+                "head_sha": "b" * 40 if case == "sha_mismatch" else "a" * 40,
+                "run_started_at": "2026-09-21T20:03:55Z",
+            })
         assert endpoint.path == "repos/test/aurora/actions/runs/123/artifacts"
+        assert command[3:] == ["--paginate", "--slurp"]
         query = parse_qs(endpoint.query)
         if "name" in query:
             matches = [row for row in rows if row["name"] == query["name"][0]]
             if case == "filter_ignored":
                 matches = [rows[2]]
             if case == "invalid_response":
-                return json.dumps({"total_count": 1, "artifacts": [None]})
+                return json.dumps([{"total_count": 1, "artifacts": [None]}])
             count = 2 if case == "count_mismatch" else len(matches)
-            return json.dumps({"total_count": count, "artifacts": matches})
+            if case == "paged_prior" and len(matches) > 100:
+                return json.dumps([{"total_count": count, "artifacts": matches[:100]},
+                                   {"total_count": count, "artifacts": matches[100:]}])
+            return json.dumps([{"total_count": count, "artifacts": matches}])
         assert command[3:] == ["--paginate", "--slurp"]
         # A concurrent unrelated upload shifts the global page boundary:
         # the same valid canary artifact appears again on the next page.
@@ -86,7 +117,7 @@ def test_component_download_selects_exact_ids_from_shared_run(
 
     monkeypatch.setattr(subprocess, "check_output", inventory)
     code = textwrap.dedent(selector["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
-    if case in {"shared", "single", "pagination_shift"}:
+    if case in {"shared", "single", "pagination_shift", "prior_attempt", "paged_prior"}:
         exec(compile(code, "actual-component-selector", "exec"), {})
         outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
         assert outputs["artifact_ids"] == ("11" if case == "single" else "11,22")
