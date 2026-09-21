@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +34,26 @@ OTHER_COMMIT = "b" * 40
 REQUEST_SHA = "db7838f228058a301bb369a02e7133096cc48846cf0be8d6dac79372152ba2e1"
 RUN_ID = 35504391586
 RUN_ATTEMPT = 1
+
+
+@pytest.mark.skipif(os.environ.get("AURORA_PUBLIC_CHECKS_PROBE") != "1", reason="explicit read-only CI capability probe")
+def test_public_check_discovery_with_existing_ci_permissions():
+    """The public Checks exemption must work with an authenticated limited token."""
+    from aurora.infra.sp500_megarun.catalog_github_snapshot import CatalogGitHubReadOnlyClient
+
+    client = CatalogGitHubReadOnlyClient(REPOSITORY, os.environ["GH_TOKEN"])
+    for name, job_id in (("gate", 106061624865), ("finalize", 106062671367)):
+        result = client.stable_paginated(
+            f"/repos/{REPOSITORY}/check-suites/96135672007/check-runs?check_name={name}&filter=all",
+            root="check_runs",
+        )
+        assert result.stable and result.collection.complete
+        assert len(result.collection.rows) == 1
+        check = result.collection.rows[0]
+        assert check["name"] == name
+        assert check["head_sha"] == COMMIT
+        assert check["details_url"] == f"https://github.com/{REPOSITORY}/actions/runs/{RUN_ID}/job/{job_id}"
+        assert check["app"]["id"] == 15368
 ISSUE = 339
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -243,9 +265,10 @@ def _production_reader_fixture(
     }
     run = {
         **owner.run,
+        "check_suite_id": 96135672007,
         "path": ".github/workflows/catalog-fast-controller.yml",
         "event": "issues",
-        "repository": {"id": 123, "full_name": REPOSITORY},
+        "repository": {"id": 123, "full_name": REPOSITORY, "private": False},
     }
     gate = {
         "id": 9102,
@@ -284,8 +307,25 @@ def _production_reader_fixture(
 
         def __init__(self):
             self.inventory_paths = []
+            self.job_reads = []
+            self.control_jobs = {job['id']: {**job,
+                'check_run_url': f"https://api.github.com/repos/{REPOSITORY}/check-runs/{job['id']}"
+            } for job in jobs}
+            self.checks = {
+                job['name']: {
+                    'id': job['id'], 'name': job['name'], 'head_sha': COMMIT,
+                    'status': 'completed', 'conclusion': job['conclusion'],
+                    'check_suite': {'id': 96135672007},
+                    'app': {'id': 15368, 'slug': 'github-actions'},
+                    'details_url': f"https://github.com/{REPOSITORY}/actions/runs/{RUN_ID}/job/{job['id']}",
+                } for job in jobs
+            }
 
         def get_json(self, path: str) -> tuple[object, object]:
+            if '/actions/jobs/' in path:
+                identifier = int(path.rsplit('/', 1)[1])
+                self.job_reads.append(identifier)
+                return deepcopy(self.control_jobs[identifier]), None
             if path.endswith(f"/issues/{ISSUE}"):
                 return {
                     "number": ISSUE,
@@ -301,6 +341,12 @@ def _production_reader_fixture(
 
         def stable_paginated(self, path: str, *, root: str) -> object:
             self.inventory_paths.append(path)
+            for name, check in self.checks.items():
+                if path == (f'/repos/{REPOSITORY}/check-suites/96135672007/'
+                            f'check-runs?check_name={name}&filter=all'):
+                    assert root == 'check_runs'
+                    return SimpleNamespace(stable=True,
+                        collection=SimpleNamespace(complete=True, rows=(check,)))
             if path.endswith(f"/actions/runs/{RUN_ID}/artifacts?name=catalog-fast-gate-{ISSUE}"):
                 return SimpleNamespace(
                     stable=True,
@@ -367,6 +413,132 @@ def test_authentication_uses_real_owner_reader_for_current_merge_and_ancestor(
         f"/repos/{REPOSITORY}/actions/runs/{RUN_ID}/artifacts?name=catalog-fast-gate-{ISSUE}"
     )
     assert all('/actions/artifacts?' not in path for path in client.inventory_paths)
+
+
+def test_checkpoint_authentication_never_downloads_all_worker_jobs(monkeypatch):
+    """Large historical worker inventories must not sit in the live gate."""
+    profile = _profile()
+    request = _real_request()
+    profile.source_request_sha256 = request.request_sha256
+    profile.source_plan_bindings['request_sha256'] = request.request_sha256
+    client, download, _ = _production_reader_fixture(profile, request, _good_comparison())
+    _patch_profile(monkeypatch, profile)
+    _patch_request_parser(monkeypatch, request)
+    inventory = client.stable_paginated
+
+    def read_inventory(path, *, root):
+        if root == 'jobs':
+            pytest.fail('Recovery must discover its two control jobs without the worker inventory')
+        return inventory(path, root=root)
+
+    monkeypatch.setattr(client, 'stable_paginated', read_inventory)
+    authenticated = auth.authenticate_checkpoint_recovery_owner(
+        **{**_base_kwargs(client, profile), 'download_artifact': download,
+           'checkpoint_control_jobs': True})
+    assert authenticated.proof.source_finalizer_job_id == 9001
+    assert {job['name'] for job in authenticated.owner.jobs} == {'gate', 'finalize'}
+    assert set(client.job_reads) == {9001, 9102}
+
+
+def test_checkpoint_restore_authentication_keeps_full_publisher_inventory_by_default(monkeypatch):
+    profile = _profile()
+    request = _real_request()
+    profile.source_request_sha256 = request.request_sha256
+    profile.source_plan_bindings['request_sha256'] = request.request_sha256
+    client, download, _ = _production_reader_fixture(profile, request, _good_comparison())
+    _patch_profile(monkeypatch, profile)
+    _patch_request_parser(monkeypatch, request)
+    inventory = client.stable_paginated
+
+    def read_inventory(path, *, root):
+        result = inventory(path, root=root)
+        if root == 'jobs':
+            result.collection.rows += ({'id': 9300, 'name': 'engine / evaluate_a / evaluate'},)
+        return result
+
+    monkeypatch.setattr(client, 'stable_paginated', read_inventory)
+    authenticated = auth.authenticate_checkpoint_recovery_owner(
+        **{**_base_kwargs(client, profile), 'download_artifact': download})
+    assert authenticated.owner.jobs[-1]['id'] == 9300
+    assert client.job_reads == []
+    assert not any('/check-suites/' in path for path in client.inventory_paths)
+
+
+@pytest.mark.parametrize('case', [
+    'duplicate', 'missing', 'incomplete', 'unstable', 'wrong_suite', 'wrong_app',
+    'wrong_name', 'wrong_commit', 'wrong_run_url', 'wrong_repository_url',
+    'wrong_job_attempt', 'wrong_job_run', 'wrong_job_commit', 'wrong_backlink',
+    'changed_job', 'changed_run', 'private_repository',
+])
+def test_checkpoint_control_job_discovery_fails_closed(monkeypatch, case):
+    profile = _profile()
+    request = _real_request()
+    profile.source_request_sha256 = request.request_sha256
+    profile.source_plan_bindings['request_sha256'] = request.request_sha256
+    client, download, _ = _production_reader_fixture(profile, request, _good_comparison())
+    _patch_profile(monkeypatch, profile)
+    _patch_request_parser(monkeypatch, request)
+    inventory, get = client.stable_paginated, client.get_json
+    gate_check = client.checks['gate']
+    gate_job = client.control_jobs[9102]
+    if case == 'wrong_suite':
+        gate_check['check_suite'] = {'id': 1}
+    elif case == 'wrong_app':
+        gate_check['app'] = {'id': 1, 'slug': 'github-actions'}
+    elif case == 'wrong_name':
+        gate_check['name'] = 'another-gate'
+    elif case == 'wrong_commit':
+        gate_check['head_sha'] = OTHER_COMMIT
+    elif case == 'wrong_run_url':
+        gate_check['details_url'] = f'https://github.com/{REPOSITORY}/actions/runs/1/job/9102'
+    elif case == 'wrong_repository_url':
+        gate_check['details_url'] = f'https://github.com/other/repo/actions/runs/{RUN_ID}/job/9102'
+    elif case == 'wrong_job_attempt':
+        gate_job['run_attempt'] = 2
+    elif case == 'wrong_job_run':
+        gate_job['run_id'] = 1
+    elif case == 'wrong_job_commit':
+        gate_job['head_sha'] = OTHER_COMMIT
+    elif case == 'wrong_backlink':
+        gate_job['check_run_url'] = f'https://api.github.com/repos/{REPOSITORY}/check-runs/9001'
+
+    run_reads = 0
+
+    def read_json(path):
+        nonlocal run_reads
+        result, response = get(path)
+        result = deepcopy(result)
+        if path.endswith(f'/actions/runs/{RUN_ID}'):
+            run_reads += 1
+            if case == 'private_repository':
+                result['repository']['private'] = True
+            elif case == 'changed_run' and run_reads > 1:
+                result['run_attempt'] = 2
+        if case == 'changed_job' and path.endswith('/actions/jobs/9102') and len(client.job_reads) == 2:
+            result['steps'] = []
+        return result, response
+
+    def read_inventory(path, *, root):
+        if root == 'jobs':
+            pytest.fail('Invalid compact provenance must not trigger a broad fallback')
+        result = inventory(path, root=root)
+        if root == 'check_runs':
+            if case == 'duplicate':
+                result.collection.rows *= 2
+            elif case == 'missing':
+                result.collection.rows = ()
+            elif case == 'incomplete':
+                result.collection.complete = False
+            elif case == 'unstable':
+                result.stable = False
+        return result
+
+    monkeypatch.setattr(client, 'get_json', read_json)
+    monkeypatch.setattr(client, 'stable_paginated', read_inventory)
+    with pytest.raises(ValueError, match='CATALOG_CHECKPOINT_CONTROL_JOBS_INVALID'):
+        auth.authenticate_checkpoint_recovery_owner(
+            **{**_base_kwargs(client, profile), 'download_artifact': download,
+               'checkpoint_control_jobs': True})
 
 
 @pytest.mark.parametrize('case, error', [
