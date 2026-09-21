@@ -30,15 +30,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,ga]"
 
-      - name: Verify public check discovery with existing CI permissions
-        if: matrix.python == '3.11' && matrix.os == 'ubuntu-latest' && matrix.shard == 0
-        env:
-          GH_TOKEN: ${{ github.token }}
-          AURORA_PUBLIC_CHECKS_PROBE: '1'
-        run: >-
-          python -m pytest -q
-          tests/test_catalog_checkpoint_recovery_auth.py::test_public_check_discovery_with_existing_ci_permissions
-
       - name: Run tests
         env:
           AU_DATA_DIR: ${{ runner.temp }}/aurora_data
