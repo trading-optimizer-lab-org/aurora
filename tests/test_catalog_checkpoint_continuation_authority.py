@@ -108,8 +108,7 @@ def _bind_closed_gen9_request_hash(monkeypatch: pytest.MonkeyPatch) -> None:
     original = CatalogRunRequestV1.request_sha256
     assert isinstance(original, property)
 
-    @property
-    def request_sha256(request: CatalogRunRequestV1) -> str:
+    def request_sha256_getter(request: CatalogRunRequestV1) -> str:
         if request.launch_generation == 8:
             return CHECKPOINT_RECOVERY_SOURCE8_REQUEST_SHA256
         if request.request_id == GEN9_REQUEST_ID and request.launch_generation == 9:
@@ -117,7 +116,11 @@ def _bind_closed_gen9_request_hash(monkeypatch: pytest.MonkeyPatch) -> None:
         assert original.fget is not None
         return original.fget(request)
 
-    monkeypatch.setattr(CatalogRunRequestV1, "request_sha256", request_sha256)
+    monkeypatch.setattr(
+        CatalogRunRequestV1,
+        "request_sha256",
+        property(request_sha256_getter),
+    )
 
 
 def _state_with(state: FastAuthorityStateV1, **updates: object) -> FastAuthorityStateV1:

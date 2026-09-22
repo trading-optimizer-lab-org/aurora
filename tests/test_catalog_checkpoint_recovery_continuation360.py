@@ -206,22 +206,34 @@ def test_target10_authenticates_fresh_predecessor_owner_and_terminal(
     staged = _stage_profile10(tmp_path / "typed-handoff", monkeypatch)
     owner = staged["predecessor"].owner
     terminal = staged["predecessor"].terminal
-    calls: list[tuple[str, object]] = []
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def record_request(**kwargs: object) -> object:
+        calls.append(("request", kwargs))
+        return request
+
+    def record_owner(**kwargs: object) -> object:
+        calls.append(("owner", kwargs))
+        return owner
+
+    def record_terminal(**kwargs: object) -> object:
+        calls.append(("terminal", kwargs))
+        return terminal
 
     monkeypatch.setattr(
         auth,
         "_read_signed_request_for_identity",
-        lambda **kwargs: (calls.append(("request", kwargs)) or request),
+        record_request,
     )
     monkeypatch.setattr(
         auth,
         "load_fast_gate_owner",
-        lambda **kwargs: (calls.append(("owner", kwargs)) or owner),
+        record_owner,
     )
     monkeypatch.setattr(
         auth,
         "load_owner_terminal_receipt",
-        lambda **kwargs: (calls.append(("terminal", kwargs)) or terminal),
+        record_terminal,
     )
 
     client = SimpleNamespace(
