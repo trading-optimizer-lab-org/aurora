@@ -289,10 +289,10 @@ def test_real_workflow_cache_inventory_is_stable_when_access_time_changes_betwee
     # recomputing page 2 then starts at row 100 (a duplicate), while row 201 is
     # absent from the later pages. The validator must reject that inventory.
     access_before = sorted(
-        rows, key=lambda row: row["last_accessed_at"], reverse=True
+        rows, key=lambda row: str(row["last_accessed_at"]), reverse=True
     )
     access_after = sorted(
-        mutated_rows, key=lambda row: row["last_accessed_at"], reverse=True
+        mutated_rows, key=lambda row: str(row["last_accessed_at"]), reverse=True
     )
     unstable_pages = pages_before_and_after(access_before, access_after)
     assert access_before[:100][-1]["id"] == 100
@@ -303,8 +303,8 @@ def test_real_workflow_cache_inventory_is_stable_when_access_time_changes_betwee
 
     # Sorting by immutable creation time keeps all three page memberships
     # unchanged even though row 201's access time changes between pages.
-    created_before = sorted(rows, key=lambda row: row["created_at"])
-    created_after = sorted(mutated_rows, key=lambda row: row["created_at"])
+    created_before = sorted(rows, key=lambda row: str(row["created_at"]))
+    created_after = sorted(mutated_rows, key=lambda row: str(row["created_at"]))
     stable_pages = pages_before_and_after(created_before, created_after)
     assert [row["id"] for row in created_before] == [
         row["id"] for row in created_after
