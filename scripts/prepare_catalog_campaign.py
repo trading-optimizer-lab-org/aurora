@@ -372,7 +372,9 @@ def _checkpoint_recovery_state(
         any(type(item) is not str or not item for item in cached_strategy_ids)
         or len(set(cached_strategy_ids)) != len(cached_strategy_ids)
         or len(cached_strategy_ids) != protected_profile.expected_result_count
-        or protected_profile.expected_total_count <= len(cached_strategy_ids)
+        or protected_profile.expected_total_count < len(cached_strategy_ids)
+        or (protected_profile.expected_total_count == len(cached_strategy_ids)
+            and protected_profile.target_generation != 9)
         or canonical_cached_strategy_ids_sha256(cached_strategy_ids)
         != protected_profile.cached_strategy_ids_sha256
         or resume_index.physical_result_count != len(cached_strategy_ids)
@@ -381,7 +383,9 @@ def _checkpoint_recovery_state(
         != protected_profile.source_plan_receipt_sha256
         or source_science_sha256 != protected_profile.science_sha256
         or source_catalog_sha256 != protected_profile.catalog_manifest_sha256
-        or checkpoint_count != CHECKPOINT_RECOVERY_CHECKPOINT_COUNT
+        or checkpoint_count != (protected_profile.total_checkpoint_count
+                                if protected_profile.target_generation == 9
+                                else CHECKPOINT_RECOVERY_CHECKPOINT_COUNT)
     ):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SOURCE_INVALID")
     return {
@@ -646,7 +650,7 @@ def prepare_campaign(
         download_root=runner_temp / "catalog-preparation-indexes",
     )
 
-    checkpoint_recovery_profile = load_checkpoint_recovery_profile(
+    checkpoint_recovery_profile = load_checkpoint_recovery_profile(root, entry.campaign_key, 9) or load_checkpoint_recovery_profile(
         root,
         entry.campaign_key,
         8,

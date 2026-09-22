@@ -146,6 +146,10 @@ def _run_checkpoint_gate(
     (sealed_plan / "controller_binding.json").write_text(
         json.dumps(_controller(binding)), encoding="utf-8"
     )
+    (sealed_plan / "run_plan.json").write_text(
+        json.dumps({"cached_recipe_count": binding["cached_recipe_count"] if binding else 0}),
+        encoding="utf-8",
+    )
     output = tmp_path / "github-output"
     environment = os.environ.copy()
     environment.update(

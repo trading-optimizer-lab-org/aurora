@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -42,6 +43,7 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_WORKER_COUNT = 60
 _RECOVERY_WORKER_COUNT = 30
 _CHECKPOINT_SLOT_COUNT = 4
+_SUPPORTED_CHECKPOINT_LAYOUTS = {4: _RECOVERY_WORKER_COUNT, 2: _SOURCE_WORKER_COUNT}
 _REQUIRED_BINDINGS = frozenset(
     {
         "request_sha256",
@@ -89,6 +91,12 @@ _CHECKPOINT_REQUIRED_FILES = frozenset(
 _CHECKPOINT_ALLOWED_FILES = _CHECKPOINT_REQUIRED_FILES | frozenset(
     {"unit_attempts.parquet", "resource_summary.json", "resource_telemetry.parquet"}
 )
+_SELECTED_RESULTS_FILE = "selected_results.jsonl"
+_SELECTED_RESULTS_FIELDS = frozenset(
+    {"configuration", "lane_id", "result", "source_strategy_key"}
+)
+_SELECTED_RESULTS_ROW_COUNT = 13
+_MISSING = object()
 
 
 class ValidatedCheckpointRecoverySource(FrozenModel):
@@ -163,6 +171,92 @@ def _read_json_object(path: Path, *, error_code: str) -> dict[str, object]:
     return payload
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError("duplicate JSON key")
+        payload[key] = value
+    return payload
+
+
+def _reject_nonfinite_json_constant(value: str) -> object:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
+def _validate_finite_json(value: object) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("non-finite JSON number")
+    if isinstance(value, Mapping):
+        for item in value.values():
+            _validate_finite_json(item)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_finite_json(item)
+
+
+def _validate_selected_results_sidecar(path: Path) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+    try:
+        if path.stat().st_size > 8 * 1024 * 1024:
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID") from exc
+
+    rows: list[dict[str, object]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        try:
+            row = json.loads(
+                line,
+                object_pairs_hook=_reject_duplicate_json_keys,
+                parse_constant=_reject_nonfinite_json_constant,
+            )
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID") from exc
+        if not isinstance(row, dict):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        try:
+            _validate_finite_json(row)
+        except ValueError as exc:
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID") from exc
+        rows.append(row)
+
+    if len(rows) != _SELECTED_RESULTS_ROW_COUNT:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+    source_keys: set[str] = set()
+    for row in rows:
+        if set(row) != _SELECTED_RESULTS_FIELDS:
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        configuration = row["configuration"]
+        lane_id = row["lane_id"]
+        result = row["result"]
+        source_strategy_key = row["source_strategy_key"]
+        if (
+            not isinstance(configuration, dict)
+            or not isinstance(lane_id, str)
+            or not lane_id.strip()
+            or any(ord(character) < 0x20 for character in lane_id)
+            or not isinstance(result, dict)
+            or not isinstance(source_strategy_key, str)
+            or not source_strategy_key.strip()
+            or any(ord(character) < 0x20 for character in source_strategy_key)
+            or source_strategy_key in source_keys
+        ):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        info = result.get("info")
+        if (
+            not isinstance(info, dict)
+            or info.get("validation_opened") is not False
+            or info.get("locked_opened") is not False
+        ):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        source_keys.add(source_strategy_key)
+
+
 def _require_sha256(value: object, *, error_code: str) -> str:
     if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
         raise ValueError(error_code)
@@ -204,7 +298,16 @@ def _validate_ids(
     return result
 
 
-def _validate_worker_ids(values: Sequence[int]) -> tuple[int, ...]:
+def _validate_checkpoint_slot_count(value: int) -> int:
+    if type(value) is not int or value not in _SUPPORTED_CHECKPOINT_LAYOUTS:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SLOT_PLAN_INVALID")
+    return value
+
+
+def _validate_worker_ids(
+    values: Sequence[int], *, checkpoint_slot_count: int = _CHECKPOINT_SLOT_COUNT
+) -> tuple[int, ...]:
+    slot_count = _validate_checkpoint_slot_count(checkpoint_slot_count)
     if isinstance(values, (str, bytes)):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_WORKERS_INVALID")
     try:
@@ -212,7 +315,7 @@ def _validate_worker_ids(values: Sequence[int]) -> tuple[int, ...]:
     except TypeError as exc:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_WORKERS_INVALID") from exc
     if (
-        len(worker_ids) != _RECOVERY_WORKER_COUNT
+        len(worker_ids) != _SUPPORTED_CHECKPOINT_LAYOUTS[slot_count]
         or any(type(worker_id) is not int or not 0 <= worker_id < _SOURCE_WORKER_COUNT for worker_id in worker_ids)
         or len(set(worker_ids)) != len(worker_ids)
     ):
@@ -373,7 +476,9 @@ def _read_recipe_source_assignments(
     *,
     all_strategy_ids: tuple[str, ...],
     pending_strategy_ids: tuple[str, ...],
+    checkpoint_slot_count: int = _CHECKPOINT_SLOT_COUNT,
 ) -> dict[int, dict[str, object]]:
+    slot_count = _validate_checkpoint_slot_count(checkpoint_slot_count)
     rows: list[dict[str, object]] = []
     for matrix_name in _RECIPE_MATRIX_NAMES:
         matrix = _read_json_object(
@@ -426,14 +531,14 @@ def _read_recipe_source_assignments(
         )
         if set(descriptor) != _DESCRIPTOR_KEYS or descriptor.get("worker_id") != worker_id:
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_DESCRIPTOR_INVALID")
-        if descriptor.get("checkpoint_slot_count") != _CHECKPOINT_SLOT_COUNT:
+        if descriptor.get("checkpoint_slot_count") != slot_count:
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SLOT_PLAN_INVALID")
         raw_artifacts = descriptor.get("checkpoint_slot_artifacts")
         if isinstance(raw_artifacts, (str, bytes)) or not isinstance(raw_artifacts, Sequence):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SLOT_PLAN_INVALID")
         checkpoint_artifacts = tuple(raw_artifacts)
         if (
-            len(checkpoint_artifacts) < _CHECKPOINT_SLOT_COUNT
+            len(checkpoint_artifacts) < slot_count
             or any(
                 not isinstance(artifact, str)
                 or not artifact
@@ -452,7 +557,7 @@ def _read_recipe_source_assignments(
             {
                 "schema_version": "1",
                 "artifacts": checkpoint_artifacts,
-                "slot_count": _CHECKPOINT_SLOT_COUNT,
+                "slot_count": slot_count,
             }
         ) != descriptor_slot_manifest:
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SLOT_PLAN_HASH_INVALID")
@@ -527,7 +632,9 @@ def _validate_checkpoint_policy(
     source_by_worker: dict[int, dict[str, object]],
     expected_bindings: Mapping[str, str],
     expected_science: str,
+    checkpoint_slot_count: int = _CHECKPOINT_SLOT_COUNT,
 ) -> dict[str, object]:
+    slot_count = _validate_checkpoint_slot_count(checkpoint_slot_count)
     policy = _read_json_object(
         sealed_plan / "checkpoint_policy.json",
         error_code="CATALOG_CHECKPOINT_RECOVERY_POLICY_INVALID",
@@ -561,7 +668,7 @@ def _validate_checkpoint_policy(
         if isinstance(artifacts, (str, bytes)) or not isinstance(artifacts, Sequence):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_POLICY_INVALID")
         if (
-            row.get("checkpoint_slot_count") != _CHECKPOINT_SLOT_COUNT
+            row.get("checkpoint_slot_count") != slot_count
             or tuple(artifacts) != source_by_worker.get(worker_id, {}).get("checkpoint_slot_artifacts")
             or row.get("checkpoint_slot_manifest_sha256")
             != source_by_worker.get(worker_id, {}).get("checkpoint_slot_manifest_sha256")
@@ -587,21 +694,27 @@ def _validate_checkpoint_policy(
             type(worker_id) is not int
             or type(slot_index) is not int
             or worker_id not in policy_by_worker
-            or not 1 <= slot_index <= _CHECKPOINT_SLOT_COUNT
+            or not 1 <= slot_index <= slot_count
             or route in routes
             or block_id in block_ids
         ):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_POLICY_INVALID")
         routes.add((worker_id, slot_index))
         block_ids.add(block_id)
-    if len(routes) != _SOURCE_WORKER_COUNT * _CHECKPOINT_SLOT_COUNT:
+    if len(routes) != _SOURCE_WORKER_COUNT * slot_count:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_POLICY_INVALID")
     return policy
 
 
 def _validate_checkpoint_inventory(
-    checkpoint_root: Path, expected_artifacts: tuple[str, ...]
+    checkpoint_root: Path,
+    expected_artifacts: tuple[str, ...],
+    *,
+    checkpoint_slot_count: int = _CHECKPOINT_SLOT_COUNT,
+    expected_worker_count: int = _RECOVERY_WORKER_COUNT,
+    selected_artifact: str | None = None,
 ) -> None:
+    slot_count = _validate_checkpoint_slot_count(checkpoint_slot_count)
     if checkpoint_root.is_symlink() or not checkpoint_root.is_dir():
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_SET_INVALID")
     try:
@@ -609,8 +722,14 @@ def _validate_checkpoint_inventory(
     except OSError as exc:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_SET_INVALID") from exc
     expected = set(expected_artifacts)
-    if len(expected_artifacts) != _RECOVERY_WORKER_COUNT * _CHECKPOINT_SLOT_COUNT or set(entry.name for entry in entries) != expected:
+    if (
+        len(expected_artifacts) != expected_worker_count * slot_count
+        or set(entry.name for entry in entries) != expected
+    ):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_SET_INVALID")
+    allowed_files = _CHECKPOINT_ALLOWED_FILES
+    if slot_count == 2:
+        allowed_files = allowed_files | {_SELECTED_RESULTS_FILE}
     for entry in entries:
         if entry.is_symlink() or not entry.is_dir():
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_SET_INVALID")
@@ -621,10 +740,40 @@ def _validate_checkpoint_inventory(
         if any(child.is_symlink() or child.is_dir() for child in children):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_SET_INVALID")
         names = {child.name for child in children}
-        if not _CHECKPOINT_REQUIRED_FILES.issubset(names) or not names.issubset(_CHECKPOINT_ALLOWED_FILES):
+        if not _CHECKPOINT_REQUIRED_FILES.issubset(names) or not names.issubset(allowed_files):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_SET_INVALID")
         if any(not child.is_file() for child in children):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_SET_INVALID")
+        receipt = _read_checkpoint_json(
+            entry / "receipt.json",
+            error_code="CATALOG_CHECKPOINT_RECOVERY_RECEIPT_INVALID",
+        )
+        selected_count = receipt.get("selected_strategy_count", _MISSING)
+        if selected_count is not _MISSING and (
+            type(selected_count) is not int or selected_count < 0
+        ):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        has_selected_sidecar = _SELECTED_RESULTS_FILE in names
+        if has_selected_sidecar and (
+            slot_count != 2 or selected_artifact is None or entry.name != selected_artifact
+        ):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        if selected_count not in (_MISSING, 0):
+            if slot_count != 2 or selected_artifact is None or entry.name != selected_artifact:
+                raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+            if selected_count != _SELECTED_RESULTS_ROW_COUNT or not has_selected_sidecar:
+                raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+        if has_selected_sidecar:
+            if selected_count != _SELECTED_RESULTS_ROW_COUNT:
+                raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
+            _validate_selected_results_sidecar(entry / _SELECTED_RESULTS_FILE)
+        elif (
+            slot_count == 2
+            and selected_artifact is not None
+            and entry.name == selected_artifact
+            and selected_count == _SELECTED_RESULTS_ROW_COUNT
+        ):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SELECTED_RESULTS_INVALID")
 
 
 def _read_checkpoint_json(path: Path, *, error_code: str) -> dict[str, object]:
@@ -640,6 +789,7 @@ def _validate_checkpoint_slots(
     expected_science: str,
     expected_catalog: str,
     work_manifest_sha256: str,
+    checkpoint_slot_count: int = _CHECKPOINT_SLOT_COUNT,
 ) -> tuple[
     tuple[str, ...],
     tuple[str, ...],
@@ -647,6 +797,7 @@ def _validate_checkpoint_slots(
     tuple[str, ...],
     tuple[str, ...],
 ]:
+    slot_count = _validate_checkpoint_slot_count(checkpoint_slot_count)
     artifact_names: list[str] = []
     receipt_hashes: list[str] = []
     chain_hashes: list[str] = []
@@ -658,11 +809,11 @@ def _validate_checkpoint_slots(
         source_artifacts = cast(tuple[str, ...], source["checkpoint_slot_artifacts"])
         source_assignment_hash = str(source["strategy_manifest_sha256"])
         evidence: list[CheckpointSlotEvidence] = []
-        for slot_index in range(1, _CHECKPOINT_SLOT_COUNT + 1):
+        for slot_index in range(1, slot_count + 1):
             artifact_name = source_artifacts[slot_index - 1]
             artifact_root = checkpoint_root / artifact_name
             expected_ids = source_ids[
-                len(source_ids) * (slot_index - 1) // _CHECKPOINT_SLOT_COUNT : len(source_ids) * slot_index // _CHECKPOINT_SLOT_COUNT
+                len(source_ids) * (slot_index - 1) // slot_count : len(source_ids) * slot_index // slot_count
             ]
             receipt = _read_checkpoint_json(
                 artifact_root / "receipt.json",
@@ -690,20 +841,20 @@ def _validate_checkpoint_slots(
                 or receipt.get("work_manifest_sha256") != work_manifest_sha256
                 or receipt.get("shard_index") != worker_id
                 or receipt.get("checkpoint_slot_index") != slot_index
-                or receipt.get("checkpoint_slot_count") != _CHECKPOINT_SLOT_COUNT
+                or receipt.get("checkpoint_slot_count") != slot_count
                 or receipt.get("strategy_count") != len(expected_ids)
                 or receipt.get("previous_checkpoint_receipt_sha256")
                 != chain.get("previous_receipt_sha256")
                 or attempt.get("worker_id") != worker_id
                 or attempt.get("checkpoint_slot_index") != slot_index
-                or attempt.get("checkpoint_slot_count") != _CHECKPOINT_SLOT_COUNT
+                or attempt.get("checkpoint_slot_count") != slot_count
                 or attempt.get("previous_checkpoint_receipt_sha256")
                 != chain.get("previous_receipt_sha256")
                 or not isinstance(attempt_ids, list)
                 or tuple(attempt_ids) != expected_ids
                 or chain.get("worker_id") != worker_id
                 or chain.get("slot_index") != slot_index
-                or chain.get("slot_count") != _CHECKPOINT_SLOT_COUNT
+                or chain.get("slot_count") != slot_count
                 or not isinstance(completed_ids, list)
                 or tuple(completed_ids) != expected_ids
             ):
@@ -737,7 +888,7 @@ def _validate_checkpoint_slots(
                 CheckpointSlotEvidence(
                     logical_scope_id=f"worker:{worker_id}",
                     slot_index=slot_index,
-                    slot_count=_CHECKPOINT_SLOT_COUNT,
+                    slot_count=slot_count,
                     artifact_name=artifact_name,
                     previous_receipt_sha256=previous_hash,
                     receipt_sha256=current_hash,
@@ -752,12 +903,12 @@ def _validate_checkpoint_slots(
         selection = validate_checkpoint_slot_chain(
             evidence,
             logical_scope_id=f"worker:{worker_id}",
-            expected_slot_count=_CHECKPOINT_SLOT_COUNT,
+            expected_slot_count=slot_count,
         )
         if (
-            selection.completed_slot_count != _CHECKPOINT_SLOT_COUNT
+            selection.completed_slot_count != slot_count
             or selection.next_slot_index is not None
-            or selection.reused_artifacts != source_artifacts[:_CHECKPOINT_SLOT_COUNT]
+            or selection.reused_artifacts != source_artifacts[:slot_count]
         ):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_CHAIN_INVALID")
     if len(set(artifact_names)) != len(artifact_names) or len(set(recovery_block_ids)) != len(recovery_block_ids):
@@ -812,13 +963,16 @@ def verify_checkpoint_recovery_source(
     expected_catalog_manifest_sha256: str,
     expected_strategy_ids: Sequence[str],
     expected_worker_ids: Sequence[int],
+    *,
+    checkpoint_slot_count: int = _CHECKPOINT_SLOT_COUNT,
 ) -> ValidatedCheckpointRecoverySource:
     """Validate the exact authenticated checkpoint source for local recovery.
 
     The source plan remains immutable and the returned evidence is read-only.
     The caller is responsible for external authentication; no GitHub or other
-    provenance is consulted here.  Only thirty complete source workers are
-    accepted, with all four source-plan checkpoint slots for each worker.
+    provenance is consulted here.  Closed source layouts accept thirty
+    selected workers with four slots (the default), or all sixty source
+    workers with two slots.
     """
 
     sealed_root = Path(sealed_plan)
@@ -832,7 +986,10 @@ def verify_checkpoint_recovery_source(
         error_code="CATALOG_CHECKPOINT_RECOVERY_CATALOG_INVALID",
     )
     bindings = _validate_bindings(expected_bindings)
-    worker_ids = _validate_worker_ids(expected_worker_ids)
+    slot_count = _validate_checkpoint_slot_count(checkpoint_slot_count)
+    worker_ids = _validate_worker_ids(
+        expected_worker_ids, checkpoint_slot_count=slot_count
+    )
     strategy_ids = _validate_ids(
         expected_strategy_ids,
         error_code="CATALOG_CHECKPOINT_RECOVERY_STRATEGY_SET_INVALID",
@@ -878,6 +1035,7 @@ def verify_checkpoint_recovery_source(
         sealed_root,
         all_strategy_ids=all_strategy_ids,
         pending_strategy_ids=pending_strategy_ids,
+        checkpoint_slot_count=slot_count,
     )
     selected_source_ids = tuple(
         strategy_id
@@ -891,15 +1049,27 @@ def verify_checkpoint_recovery_source(
         source_by_worker=source_by_worker,
         expected_bindings=bindings,
         expected_science=expected_science,
+        checkpoint_slot_count=slot_count,
     )
     expected_artifacts = tuple(
         artifact
         for worker_id in worker_ids
         for artifact in cast(tuple[str, ...], source_by_worker[worker_id]["checkpoint_slot_artifacts"])[
-            :_CHECKPOINT_SLOT_COUNT
+            :slot_count
         ]
     )
-    _validate_checkpoint_inventory(checkpoints_root, expected_artifacts)
+    selected_artifact = None
+    if slot_count == 2:
+        selected_artifact = cast(
+            tuple[str, ...], source_by_worker[0]["checkpoint_slot_artifacts"]
+        )[0]
+    _validate_checkpoint_inventory(
+        checkpoints_root,
+        expected_artifacts,
+        checkpoint_slot_count=slot_count,
+        expected_worker_count=len(worker_ids),
+        selected_artifact=selected_artifact,
+    )
     (
         checkpoint_artifacts,
         receipt_hashes,
@@ -914,6 +1084,7 @@ def verify_checkpoint_recovery_source(
         expected_science=expected_science,
         expected_catalog=expected_catalog,
         work_manifest_sha256=str(run_plan["work_manifest_sha256"]),
+        checkpoint_slot_count=slot_count,
     )
     resume_index = load_resume_index(
         (checkpoints_root,),

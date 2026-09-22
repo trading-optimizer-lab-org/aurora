@@ -421,6 +421,7 @@ def test_restore_real_source_full_plan_and_120_checkpoint_archives(tmp_path, mon
                      "size_in_bytes": len(raw), "digest": pin.digest})
     profile = SimpleNamespace(
         profile_sha256="a" * 64, source_run_id=17, source_run_attempt=1,
+        target_generation=8,
         source_protected_commit_sha=owner.run["head_sha"],
         source_plan_bindings=fixture["bindings"],
         source_plan_receipt_sha256=fixture["plan_receipt"]["receipt_sha256"],

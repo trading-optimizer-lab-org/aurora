@@ -40,7 +40,7 @@
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
         "reason": "restore authenticated predecessor reduction groups without reevaluation through a current sealed admission, retaining scientific verification and protected terminal publication",
-        "replacement_sha256": "3c8c3eee39d32237c92c52591a36efccccdbe3e54b667588ed2ee6f45fb6afb1"
+        "replacement_sha256": "c764e11a45b7974d1b22edd574c0fe4c14debfbaaf2ba2dde47304876c52ccee"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",
@@ -64,7 +64,7 @@
       "path": ".github/workflows/catalog-recovery-wave.yml",
       "previous_sha256": "3cf909d40daa6f311685d14521c89ab99aa7476691443a84eff4aac2ea66b1b4",
       "reason": "retain immutable caller binding and make the protected source package importable in the dependency-only recovery runtime",
-      "replacement_sha256": "30f82b7ecf2cb38638205c8d4a796d16fe358430486200b883b49d3f2bb2b946"
+      "replacement_sha256": "41638acff6ab860ba33787881e4d95ee7df68cf9f3b21805f0a817c2ace5d5bc"
     },
     {
       "path": ".github/workflows/catalog-request-reconciler.yml",

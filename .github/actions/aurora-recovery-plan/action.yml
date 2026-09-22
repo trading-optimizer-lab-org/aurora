@@ -105,7 +105,7 @@ runs:
             attempts, "catalog-terminal-attempt-*"
         )
         checkpoint_name, checkpoint_pattern = expected_download_selector(
-            checkpoints, "catalog-checkpoint-*"
+            checkpoints, "catalog-checkpoint-*-g*-w*-s*"
         )
         failure_name, failure_pattern = expected_download_selector(
             failures, "catalog-failure-attempt-*"

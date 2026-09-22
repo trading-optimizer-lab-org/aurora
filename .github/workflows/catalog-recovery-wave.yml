@@ -245,6 +245,7 @@ jobs:
           RETRY_A_RESULT: ${{ needs.retry_a.result }}
           RETRY_B_RESULT: ${{ needs.retry_b.result }}
           STATE_ARTIFACT: ${{ needs.reconcile.outputs.state_artifact }}
+          AUTHORITY_ID: ${{ inputs.authority_id }}
         run: |
           set -euo pipefail
           for result in "$RETRY_A_RESULT" "$RETRY_B_RESULT"; do
@@ -273,7 +274,11 @@ jobs:
           )
           attempts = sorted(name for name in names if name.startswith("catalog-terminal-attempt-"))
           failures = sorted(name for name in names if name.startswith("catalog-failure-attempt-"))
-          checkpoints = sorted(name for name in names if name.startswith("catalog-checkpoint-"))
+          checkpoints = sorted(
+              name for name in names
+              if name.startswith("catalog-checkpoint-")
+              and name != f"catalog-checkpoint-recovery-prepared-{os.environ['AUTHORITY_ID']}"
+          )
           status = os.environ["RECONCILED_STATUS"]
           if status == "retry":
               status = "retry"
