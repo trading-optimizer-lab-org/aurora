@@ -268,21 +268,24 @@ def test_workflow_preserves_legacy_route_and_opt_in_uses_normal_resume_root() ->
     assert "reduction_only != 'true'" in str(reduce["if"])
 
 
-def test_full_prepared_transport_is_same_run_and_opt_in() -> None:
+def test_full_prepared_transport_reuses_authenticated_preparation_outside_gate() -> None:
     gate = load_github_yaml(ROOT / ".github/workflows/catalog-fast-controller.yml")["jobs"]["gate"]
-    upload = _step(gate, name="Publish authenticated checkpoint recovery PREPARED bundle")
-    assert "launch_required == 'true'" in upload["if"]
-    assert "checkpoint_recovery_enabled == 'true'" in upload["if"]
-    assert upload["uses"] == "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-    assert upload["with"]["compression-level"] == 6
-    assert upload["with"]["path"] == "${{ runner.temp }}/prepared-bundle"
+    assert not any(step.get("with", {}).get("path") == "${{ runner.temp }}/prepared-bundle"
+                   and "upload-artifact" in step.get("uses", "") for step in gate["steps"])
+    assert "gate_first_step_epoch + 55" in gate["steps"][0]["run"]
     reduce = _workflow()["jobs"]["reduce"]
-    download = _step(reduce, name="Download authenticated checkpoint recovery PREPARED bundle")
+    download = _step(reduce, name="Restore the authenticated original checkpoint PREPARED artifact")
     assert download["if"] == "${{ needs.engine_verify_sealed_plan.outputs.checkpoint_recovery_enabled == 'true' }}"
-    assert download["uses"] == "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-    assert download["with"]["name"] == "catalog-checkpoint-recovery-prepared-${{ inputs.authority_id }}"
-    assert "run-id" not in download["with"]
+    assert "scripts/verify_catalog_prepared_bundle.py" in download["run"]
+    assert "--restore-artifact-on-miss" in download["run"]
+    assert "--campaign-key sp500-optimized-catalog-v1" in download["run"]
+    assert '--bundle "$RUNNER_TEMP/checkpoint-recovery-prepared"' in download["run"]
+    assert download["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert download["env"]["CATALOG_PROTECTED_COMMIT_SHA"] == "${{ github.sha }}"
+    steps = reduce["steps"]
+    assert steps.index(_step(reduce, name="Activate sealed offline runtime")) < steps.index(download)
     restore = _step(reduce, step_id="checkpoint_restore")
+    assert steps.index(download) < steps.index(restore)
     assert "GH_TOKEN" not in restore["env"]
     assert "--prepared-bundle" in restore["run"]
     assert "--output-dir" not in restore["run"]

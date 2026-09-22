@@ -189,6 +189,28 @@ def test_authenticates_failed_writer_without_creating_terminal_or_sourceproof(ca
     assert len(proof.evidence_sha256) == 64
 
 
+@pytest.mark.parametrize('topology', ['original_prepared', 'missing_only', 'renumber_only', 'reserved', 'legacy_artifact'])
+def test_original_prepared_transport_requires_its_exact_failure_topology(case, topology):
+    module, transport, kwargs = case
+    steps = transport.jobs[1][0]['steps']
+    for step in list(steps):
+        if step['number'] == 18 and topology != 'renumber_only':
+            steps.remove(step)
+        elif step['number'] > 18 and topology != 'missing_only':
+            step['number'] -= 1
+    if topology == 'reserved':
+        next(step for step in steps if step['name'] == 'Reserve the campaign atomically and expose QUEUED')['conclusion'] = 'success'
+    if topology != 'legacy_artifact':
+        transport.artifacts = [row for row in transport.artifacts
+                              if not row['name'].startswith('catalog-checkpoint-recovery-prepared-')]
+    if topology == 'original_prepared':
+        proof = module.authenticate_unreserved_checkpoint_recovery(**kwargs)
+        assert proof.failed_run_id == RUN and proof.target_generation == 8
+    else:
+        with pytest.raises(ValueError):
+            module.authenticate_unreserved_checkpoint_recovery(**kwargs)
+
+
 @pytest.mark.parametrize('mutation', ['signature', 'actor', 'unexpired', 'owner', 'active', 'race',
     'missing_step', 'reservation', 'engine', 'finalize', 'unknown_job', 'terminal', 'authority_artifact',
     'total_count', 'cap1000', 'foreign_commit', 'foreign_repo', 'artifact_digest', 'previous_attempt', 'alternative'])

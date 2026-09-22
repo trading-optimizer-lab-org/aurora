@@ -31,11 +31,11 @@ def proof_for(state, prior, source_proof):
     from aurora.infra.sp500_megarun.catalog_unreserved_checkpoint_recovery import UnreservedCheckpointRecoveryProofV1
     return UnreservedCheckpointRecoveryProofV1(
         repository="trading-optimizer-lab-org/aurora", authority_state_sha256=state.state_sha256,
-        campaign_key=prior.request.campaign_key, target_generation=8,
+        campaign_key=prior.request.campaign_key, target_generation=prior.request.launch_generation,
         emission_sha256=canonical_sha256(prior.model_dump(mode="json")),
         failed_request_sha256=prior.request.request_sha256, failed_issue_number=342,
         failed_run_id=35521360637, failed_run_attempt=1, failed_protected_commit_sha="d" * 40,
-        source_owner_issue_number=339, source_owner_run_id=source_proof.source_run_id,
+        source_owner_issue_number=source_proof.source_issue_number, source_owner_run_id=source_proof.source_run_id,
         source_request_sha256=source_proof.source_request_sha256, profile_sha256=source_proof.profile_sha256,
         observed_at=NOW, expires_at=NOW + timedelta(minutes=5),
         request_expired_at=NOW - timedelta(minutes=1),
@@ -64,6 +64,28 @@ def test_replacement_preserves_owner_source_archive_and_generation():
     assert result.unreserved_superseded_intents[0].emission == prior
     assert result.unreserved_superseded_intents[0].successor_request_sha256 == new.request.request_sha256
     assert FastAuthorityStateV1.model_validate_json(result.model_dump_json()) == result
+
+
+def test_terminal_source_unreserved_successor_preserves_completed_history():
+    from tests.test_catalog_checkpoint_terminal_authority import _case as terminal_case
+
+    state, item, source, lineage = terminal_case()
+    staged = state.stage_checkpoint_emission(item, recovery_proof=source, lineage_transition=lineage)
+    published = staged.advance_emission(intent_id=item.intent_id, state="PUBLICACION_INCIERTA",
+        post_run_id=700, post_run_attempt=1).advance_emission(
+            intent_id=item.intent_id, state="PUBLICADO", issue_number=342)
+    request = signed_request(campaign_key=item.request.campaign_key, launch_generation=9,
+        previous_terminal_request_sha256=item.request.previous_terminal_request_sha256,
+        campaign_definition_sha256=item.request.campaign_definition_sha256,
+        request_id="018f47a2-6e91-7c34-8000-000000000010")
+    new = emission(request=request, intent_issue_number=358,
+                   intent_id="e844851d-11dd-4408-96c5-3dd7dd08eaca")
+    result = replace_emission(published, published.emissions[0], new, source, lineage)
+    assert result.campaigns == state.campaigns
+    assert result.completed_intents == staged.completed_intents
+    assert result.recovery_superseded_intents == ()
+    assert result.unreserved_superseded_intents[0].emission == published.emissions[0]
+    assert result.emissions == (new,)
 
 
 def test_archive_persists_full_authenticated_proof_for_future_audit():

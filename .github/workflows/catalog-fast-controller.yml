@@ -295,16 +295,6 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-      - name: Publish authenticated checkpoint recovery PREPARED bundle
-        if: ${{ steps.admit.outputs.launch_required == 'true' && steps.admit.outputs.checkpoint_recovery_enabled == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: catalog-checkpoint-recovery-prepared-${{ steps.admit.outputs.authority_id }}
-          path: ${{ runner.temp }}/prepared-bundle
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 6
-
       - id: write_authority
         name: Write current authority edition
         if: ${{ steps.admit.outputs.launch_required == 'true' }}

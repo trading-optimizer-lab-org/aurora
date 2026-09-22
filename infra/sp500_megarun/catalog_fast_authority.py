@@ -264,6 +264,46 @@ class FastAuthorityStateV1(_AuthorityContent):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARCHIVE_INVALID")
         return row
 
+    def _checkpoint_unreserved_archive(self, request, recovery_proof):
+        from .catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
+        from .catalog_unreserved_checkpoint_recovery import require_terminal_checkpoint_root
+
+        if not isinstance(recovery_proof, CheckpointRecoveryOwnerProofV1):
+            raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
+        if recovery_proof.target_generation == 8:
+            if (recovery_proof.evidence_kind != "failed_owner_without_terminal"
+                    or request.launch_generation != 8
+                    or recovery_proof.campaign_key != request.campaign_key):
+                raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
+            self._checkpoint_archive(request, recovery_proof)
+            return
+        if (recovery_proof.target_generation != 9
+                or recovery_proof.evidence_kind != "failed_owner_with_terminal"
+                or recovery_proof.campaign_key != request.campaign_key):
+            raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
+        require_terminal_checkpoint_root(authority=self, request=request,
+            source_issue_number=recovery_proof.source_issue_number, source_run_id=recovery_proof.source_run_id,
+            source_request_sha256=recovery_proof.source_request_sha256,
+            terminal_receipt_sha256=recovery_proof.source_terminal_receipt_sha256)
+        if any(row.emission.request.request_sha256 == request.request_sha256
+               for row in self.unreserved_superseded_intents):
+            raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_SOURCE_SUPERSEDED")
+        target = request.request_sha256
+        visited = set()
+        while True:
+            links = [row for row in self.unreserved_superseded_intents if row.successor_request_sha256 == target]
+            if not links:
+                return
+            if (len(links) != 1 or target in visited or len(visited) >= 128
+                    or links[0].recovery_profile_sha256 != recovery_proof.profile_sha256
+                    or links[0].recovery_evidence_sha256 != recovery_proof.evidence_sha256
+                    or links[0].emission.request.campaign_key != request.campaign_key
+                    or links[0].emission.request.launch_generation != request.launch_generation
+                    or links[0].emission.request.previous_terminal_request_sha256 != request.previous_terminal_request_sha256):
+                raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_ARCHIVE_INVALID")
+            visited.add(target)
+            target = links[0].emission.request.request_sha256
+
     def _require_unreserved_checkpoint(self, request, *, recovery_proof, unreserved_proof, now):
         """Caller supplies freshly authenticated evidence, never issue labels alone."""
         from .catalog_unreserved_checkpoint_recovery import UnreservedCheckpointRecoveryProofV1
@@ -280,7 +320,8 @@ class FastAuthorityStateV1(_AuthorityContent):
         old = next(
             (row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
         prior = next((row for row in self.emissions if row.request.campaign_key == request.campaign_key), None)
-        if (old is None or old.is_terminal or prior is None or prior.state != "PUBLICADO"
+        if (old is None or prior is None or prior.state != "PUBLICADO"
+                or old.is_terminal != (recovery_proof.evidence_kind == "failed_owner_with_terminal")
                 or old.request == prior.request or prior.request.launch_generation != old.generation + 1
                 or proof.repository != "trading-optimizer-lab-org/aurora"
                 or proof.authority_state_sha256 != self.state_sha256
@@ -296,7 +337,7 @@ class FastAuthorityStateV1(_AuthorityContent):
                 or proof.source_request_sha256 != old.request.request_sha256
                 or proof.profile_sha256 != recovery_proof.profile_sha256):
             raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
-        self._checkpoint_archive(prior.request, recovery_proof)
+        self._checkpoint_unreserved_archive(prior.request, recovery_proof)
         return prior
 
     def replace_unreserved_checkpoint_emission(self, emission: CatalogCloudEmissionV1, *,
@@ -321,7 +362,7 @@ class FastAuthorityStateV1(_AuthorityContent):
                     or len(links) != 1 or links[0].unreserved_evidence_sha256 != proof.evidence_sha256
                     or links[0].authority_state_sha256 != proof.authority_state_sha256):
                 raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_REPLAY_CONFLICT")
-            self._checkpoint_archive(emission.request, recovery_proof)
+            self._checkpoint_unreserved_archive(emission.request, recovery_proof)
             return self
         archived_ids = {row.intent_id for row in self.completed_intents} | {
             row.intent_id for row in (
