@@ -193,7 +193,7 @@ class CatalogGlobalReuseExecutionPlanV1(FrozenModel):
     cache_uploads_per_minute: int = Field(ge=0, le=160)
     cache_downloads_per_minute: int = Field(ge=0, le=1200)
     unique_required_component_bytes: PositiveInt
-    projected_worker_component_download_bytes: PositiveInt
+    projected_worker_component_download_bytes: NonNegativeInt
     component_bundles_per_worker_p50: float = Field(ge=0)
     component_bundles_per_worker_p95: float = Field(ge=0)
     component_download_amplification_p50: float = Field(ge=0)
@@ -208,6 +208,14 @@ class CatalogGlobalReuseExecutionPlanV1(FrozenModel):
     validation_opened: Literal[False] = False
     locked_opened: Literal[False] = False
     plan_sha256: Sha256
+
+    @model_validator(mode="after")
+    def _validate_worker_download_projection(self) -> CatalogGlobalReuseExecutionPlanV1:
+        if self.projected_worker_component_download_bytes == 0 and (
+            self.recipe_assignments or self.component_assignments
+        ):
+            raise ValueError("CATALOG_WORKER_DOWNLOAD_PROJECTION_INVALID")
+        return self
 
 
 def select_qualified_bundle_layout(
