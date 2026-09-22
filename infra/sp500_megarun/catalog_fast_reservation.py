@@ -29,6 +29,13 @@ def _is_expected_workflow_path(path: object, expected: str) -> bool:
     return type(path) is str and type(expected) is str and path == expected
 
 
+def is_fast_controller_issue_run(run: Mapping[str, Any]) -> bool:
+    """Recognize controller provenance without treating it as an execution edge."""
+    return run.get("event") == "issues" and "path" in run and _is_expected_workflow_path(
+        run["path"], ".github/workflows/catalog-fast-controller.yml"
+    )
+
+
 def _terminal_step_end_exclusive(value: datetime) -> datetime:
     """Use the full API second only when the step timestamp has no fraction."""
 

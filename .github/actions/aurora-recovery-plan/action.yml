@@ -669,7 +669,7 @@ runs:
                     key=lambda item: int(item["worker_id"]),
                 )
             )
-            if completed_unit_evidence
+            if completed_unit_evidence or state.logical_unit_count == 0
             else None
         )
         now = datetime.now(UTC)

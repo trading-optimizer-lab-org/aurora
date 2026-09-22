@@ -14,7 +14,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import (
     ConfigDict,
@@ -28,12 +28,14 @@ from pydantic import (
 
 from .catalog_request_contract import FrozenModel, Sha256
 
+if TYPE_CHECKING:
+    from .catalog_reduction_recovery_profile import RecoveryPredecessorBindings
+
 
 CHECKPOINT_RECOVERY_CONFIG_RELATIVE_PATH = "config/catalog_checkpoint_recovery_profiles_v1.json"
 CHECKPOINT_RECOVERY_CAMPAIGN_KEY = "sp500-optimized-catalog-v1"
 CHECKPOINT_RECOVERY_TARGET_GENERATION = 8
 CHECKPOINT_RECOVERY_SOURCE_GENERATION = 7
-CHECKPOINT_RECOVERY_SUPPORTED_TARGET_GENERATIONS = frozenset({8, 9})
 CHECKPOINT_RECOVERY_SOURCE_REQUEST_SHA256 = (
     "db7838f228058a301bb369a02e7133096cc48846cf0be8d6dac79372152ba2e1"
 )
@@ -86,6 +88,23 @@ CHECKPOINT_RECOVERY_SOURCE8_CHECKPOINT_RESULT_COUNT = 18628
 CHECKPOINT_RECOVERY_INHERITED_PROFILE_SHA256 = (
     "fc3aff1e9ccfc0e4608e510a538f8ce839c371669585b8b680a658e54d7e81b7"
 )
+CHECKPOINT_RECOVERY_CONTINUATION_TARGET_GENERATION = 10
+CHECKPOINT_RECOVERY_CONTINUATION_SOURCE_GENERATION = 8
+CHECKPOINT_RECOVERY_CONTINUATION_PREDECESSOR_GENERATION = 9
+CHECKPOINT_RECOVERY_CONTINUATION_REQUEST_SHA256 = (
+    "a0fdcfe2209caf1f03d6ee4db54fcc34b1488198cafb41bc0ef7461332b409bd"
+)
+CHECKPOINT_RECOVERY_CONTINUATION_ISSUE_NUMBER = 360
+CHECKPOINT_RECOVERY_CONTINUATION_RUN_ID = 35756495166
+CHECKPOINT_RECOVERY_CONTINUATION_RUN_ATTEMPT = 1
+CHECKPOINT_RECOVERY_CONTINUATION_PROTECTED_COMMIT_SHA = (
+    "48104e8cb94d9bd1d6aef1d82b2fbeb42e2bf70c"
+)
+CHECKPOINT_RECOVERY_CONTINUATION_TERMINAL_RECEIPT_SHA256 = (
+    "eff7be753ea517597a6ba5ac0b20a17e3e87d02e4faac875259b15b2f9e5825b"
+)
+CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATIONS = frozenset({9, 10})
+CHECKPOINT_RECOVERY_SUPPORTED_TARGET_GENERATIONS = frozenset({8, 9, 10})
 _CONFIG_MAX_BYTES = 256 * 1024
 
 # Keep aliases in the same vocabulary as the older closed recovery profile.
@@ -179,13 +198,13 @@ class CheckpointRecoveryArtifactV1(FrozenModel):
 
 
 class CheckpointRecoveryProfileV1(FrozenModel):
-    """Closed source-bound profiles for target generations 8 and 9."""
+    """Closed source-bound profiles for target generations 8, 9, and 10."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
     schema_version: Literal["1"]
     campaign_key: Literal["sp500-optimized-catalog-v1"]
-    target_generation: Literal[8, 9]
+    target_generation: Literal[8, 9, 10]
     source_generation: Literal[7, 8] = 7
     source_issue_number: int = Field(strict=True, gt=0)
     source_run_id: int = Field(strict=True, gt=0)
@@ -222,27 +241,46 @@ class CheckpointRecoveryProfileV1(FrozenModel):
     def slot_count(self) -> int:
         return (
             CHECKPOINT_RECOVERY_SOURCE8_SLOT_COUNT
-            if self.target_generation == CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATION
+            if self.target_generation in CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATIONS
             else CHECKPOINT_RECOVERY_SLOT_COUNT
         )
 
     @property
     def checkpoint_result_count(self) -> int:
-        if self.target_generation == CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATION:
+        if self.target_generation in CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATIONS:
             return self.expected_result_count - CHECKPOINT_RECOVERY_EXPECTED_RESULT_COUNT
         return self.expected_result_count
 
     @property
     def total_checkpoint_count(self) -> int:
-        if self.target_generation == CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATION:
+        if self.target_generation in CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATIONS:
             return CHECKPOINT_RECOVERY_CHECKPOINT_COUNT * 2
         return CHECKPOINT_RECOVERY_CHECKPOINT_COUNT
 
     @property
     def source_terminal_receipt_sha256(self) -> str | None:
-        if self.target_generation == CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATION:
+        if self.target_generation in CHECKPOINT_RECOVERY_SOURCE8_TARGET_GENERATIONS:
             return CHECKPOINT_RECOVERY_SOURCE8_TERMINAL_RECEIPT_SHA256
         return None
+
+    @property
+    def predecessor_bindings(self) -> RecoveryPredecessorBindings | None:
+        """Return only the closed immediate predecessor for continuation 10."""
+
+        if self.target_generation != CHECKPOINT_RECOVERY_CONTINUATION_TARGET_GENERATION:
+            return None
+        from .catalog_reduction_recovery_profile import RecoveryPredecessorBindings
+
+        return RecoveryPredecessorBindings(
+            generation=CHECKPOINT_RECOVERY_CONTINUATION_PREDECESSOR_GENERATION,
+            request_sha256=CHECKPOINT_RECOVERY_CONTINUATION_REQUEST_SHA256,
+            issue_number=CHECKPOINT_RECOVERY_CONTINUATION_ISSUE_NUMBER,
+            run_id=CHECKPOINT_RECOVERY_CONTINUATION_RUN_ID,
+            run_attempt=CHECKPOINT_RECOVERY_CONTINUATION_RUN_ATTEMPT,
+            protected_commit_sha=CHECKPOINT_RECOVERY_CONTINUATION_PROTECTED_COMMIT_SHA,
+            terminal_receipt_sha256=CHECKPOINT_RECOVERY_CONTINUATION_TERMINAL_RECEIPT_SHA256,
+            decision_sha256=None,
+        )
 
     @field_validator("source_plan_bindings", mode="before")
     @classmethod
@@ -296,7 +334,12 @@ class CheckpointRecoveryProfileV1(FrozenModel):
 
     @model_validator(mode="after")
     def _validate_protected_values(self) -> "CheckpointRecoveryProfileV1":
-        if self.source_generation != self.target_generation - 1:
+        expected_source_generation = (
+            CHECKPOINT_RECOVERY_SOURCE_GENERATION
+            if self.target_generation == CHECKPOINT_RECOVERY_TARGET_GENERATION
+            else CHECKPOINT_RECOVERY_SOURCE8_GENERATION
+        )
+        if self.source_generation != expected_source_generation:
             raise ValueError("checkpoint recovery source and target generations mismatch")
 
         if self.target_generation == CHECKPOINT_RECOVERY_TARGET_GENERATION:
@@ -328,7 +371,7 @@ class CheckpointRecoveryProfileV1(FrozenModel):
             }
             expected_worker_count = CHECKPOINT_RECOVERY_SOURCE8_WORKER_COUNT
             if self.inherited_profile_sha256 != CHECKPOINT_RECOVERY_INHERITED_PROFILE_SHA256:
-                raise ValueError("generation-9 inherited profile binding mismatch")
+                raise ValueError("generation-9/10 inherited profile binding mismatch")
 
         if any(getattr(self, key) != value for key, value in expected.items()):
             raise ValueError("protected checkpoint recovery profile mismatch")
@@ -537,6 +580,15 @@ __all__ = [
     "CHECKPOINT_RECOVERY_CAMPAIGN_KEY",
     "CHECKPOINT_RECOVERY_TARGET_GENERATION",
     "CHECKPOINT_RECOVERY_SUPPORTED_TARGET_GENERATIONS",
+    "CHECKPOINT_RECOVERY_CONTINUATION_TARGET_GENERATION",
+    "CHECKPOINT_RECOVERY_CONTINUATION_SOURCE_GENERATION",
+    "CHECKPOINT_RECOVERY_CONTINUATION_PREDECESSOR_GENERATION",
+    "CHECKPOINT_RECOVERY_CONTINUATION_REQUEST_SHA256",
+    "CHECKPOINT_RECOVERY_CONTINUATION_ISSUE_NUMBER",
+    "CHECKPOINT_RECOVERY_CONTINUATION_RUN_ID",
+    "CHECKPOINT_RECOVERY_CONTINUATION_RUN_ATTEMPT",
+    "CHECKPOINT_RECOVERY_CONTINUATION_PROTECTED_COMMIT_SHA",
+    "CHECKPOINT_RECOVERY_CONTINUATION_TERMINAL_RECEIPT_SHA256",
     "CHECKPOINT_RECOVERY_SOURCE8_TERMINAL_RECEIPT_SHA256",
     "CheckpointRecoveryArtifactV1",
     "CheckpointRecoveryProfileV1",

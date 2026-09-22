@@ -52,7 +52,7 @@ def verify_checkpoint_recovery_transport(
             profile.science_sha256, profile.catalog_manifest_sha256,
             current_ids, profile.worker_ids,
         )
-    if profile.target_generation != 9:
+    if profile.target_generation not in {9, 10}:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_COMPOSITION_INVALID")
     inherited = load_checkpoint_recovery_profile(repo_root, profile.campaign_key, 8)
     if inherited is None or inherited.profile_sha256 != profile.inherited_profile_sha256:

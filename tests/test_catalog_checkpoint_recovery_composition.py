@@ -366,10 +366,12 @@ def _run(
     )
 
 
+@pytest.mark.parametrize("target_generation", [9, 10])
 def test_generation9_composes_real_resume_indexes_from_disjoint_sources(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_generation: int
 ) -> None:
     fixture = _build_fixture(tmp_path)
+    fixture["profile9"] = fixture["profile9"].model_copy(update={"target_generation": target_generation})
 
     result, plan_calls, selected_result_calls = _run(fixture, monkeypatch)
 
@@ -387,6 +389,7 @@ def test_generation9_composes_real_resume_indexes_from_disjoint_sources(
     ]
 
 
+@pytest.mark.parametrize("target_generation", [9, 10])
 @pytest.mark.parametrize(
     ("mutation", "expected_error"),
     [
@@ -403,6 +406,7 @@ def test_generation9_rejects_composition_boundary_mutations(
     monkeypatch: pytest.MonkeyPatch,
     mutation: str,
     expected_error: str,
+    target_generation: int,
 ) -> None:
     inherited_profile: CheckpointRecoveryProfileV1 | None = None
     if mutation == "overlap":
@@ -413,6 +417,7 @@ def test_generation9_rejects_composition_boundary_mutations(
         fixture = _build_fixture(tmp_path, duplicate_physical_result=True)
     else:
         fixture = _build_fixture(tmp_path)
+    fixture["profile9"] = fixture["profile9"].model_copy(update={"target_generation": target_generation})
 
     if mutation == "missing":
         shutil.rmtree(fixture["checkpoint_root"] / "inherited")

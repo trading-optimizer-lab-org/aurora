@@ -14,7 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from cryptography.exceptions import UnsupportedAlgorithm
 
@@ -23,22 +23,46 @@ from .catalog_checkpoint_recovery_owner import (
     verify_checkpoint_failure_owner,
 )
 from .catalog_checkpoint_recovery_profile import (
+    CHECKPOINT_RECOVERY_SOURCE8_EXPECTED_RESULT_COUNT,
     CheckpointRecoveryProfileV1,
     validate_exact_checkpoint_profile,
 )
 from .catalog_fast_reservation import (
     FastGateOwnerEvidence,
+    bind_owner_terminal_receipt,
+    is_fast_controller_issue_run,
     load_fast_gate_owner,
     load_owner_terminal_receipt,
 )
 from .catalog_run_request import parse_catalog_run_request
-from .catalog_fast_path import CatalogTerminalReceipt
+from .catalog_request_contract import CatalogRunRequestV1
+from .catalog_fast_path import (
+    CatalogTerminalReceipt,
+    CatalogTerminalReceiptV1,
+    CatalogTerminalReceiptV2,
+)
+
+if TYPE_CHECKING:
+    from .catalog_reduction_recovery_profile import RecoveryPredecessorBindings
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_CONFIG_BYTES = 256 * 1024
+_RUN_IDENTITY_KEYS = (
+    "id",
+    "run_attempt",
+    "head_sha",
+    "head_branch",
+    "status",
+    "conclusion",
+    "path",
+    "repository",
+)
+_PREDECESSOR_EVALUATION_JOB_NAMES = frozenset(
+    {"engine / evaluate_a", "engine / evaluate_b", "engine / evaluate_c"}
+)
 
 
 class _ReadOnlyClient(Protocol):
@@ -50,12 +74,21 @@ class _ReadOnlyClient(Protocol):
 
 
 @dataclass(frozen=True)
+class CheckpointRecoveryPredecessorAuthenticationV1:
+    """Authenticated target-10 predecessor owner and terminal receipt."""
+
+    owner: FastGateOwnerEvidence
+    terminal: CatalogTerminalReceipt
+
+
+@dataclass(frozen=True)
 class CheckpointRecoveryOwnerAuthenticationV1:
     """Authenticated existing owner, closed failure proof and original terminal."""
 
     owner: FastGateOwnerEvidence
     proof: CheckpointRecoveryOwnerProofV1
     terminal: CatalogTerminalReceipt | None = None
+    predecessor: CheckpointRecoveryPredecessorAuthenticationV1 | None = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -181,7 +214,25 @@ def _read_signed_request(
     root: Path,
     profile: CheckpointRecoveryProfileV1,
 ) -> object:
-    issue_number = _profile_attr(profile, "source_issue_number")
+    return _read_signed_request_for_identity(
+        client=client,
+        root=root,
+        issue_number=_profile_attr(profile, "source_issue_number"),
+        expected_request_sha256=_profile_attr(profile, "source_request_sha256"),
+        expected_campaign_key=_profile_attr(profile, "campaign_key"),
+        expected_generation=_profile_attr(profile, "source_generation"),
+    )
+
+
+def _read_signed_request_for_identity(
+    *,
+    client: _ReadOnlyClient,
+    root: Path,
+    issue_number: object,
+    expected_request_sha256: object,
+    expected_campaign_key: object,
+    expected_generation: object,
+) -> CatalogRunRequestV1:
     if type(issue_number) is not int or issue_number < 1:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PROFILE_INVALID")
     issue_raw, _ = client.get_json(f"/repos/{_REPOSITORY}/issues/{issue_number}")
@@ -202,9 +253,6 @@ def _read_signed_request(
         request_sha256 = request.request_sha256
         campaign_key = request.campaign_key
         launch_generation = request.launch_generation
-        expected_request_sha256 = _profile_attr(profile, "source_request_sha256")
-        expected_campaign_key = _profile_attr(profile, "campaign_key")
-        expected_generation = _profile_attr(profile, "source_generation")
     except AttributeError as exc:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SOURCE_REQUEST_INVALID") from exc
     if request_sha256 != expected_request_sha256 or campaign_key != expected_campaign_key:
@@ -212,6 +260,300 @@ def _read_signed_request(
     if launch_generation != expected_generation:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SOURCE_GENERATION_INVALID")
     return request
+
+
+def _predecessor_bindings(
+    profile: CheckpointRecoveryProfileV1,
+) -> RecoveryPredecessorBindings:
+    if profile.target_generation != 10:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_AUTH_INVALID")
+    predecessor = profile.predecessor_bindings
+    if predecessor is None or profile.target_generation != predecessor.generation + 1:
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_AUTH_INVALID")
+    return predecessor
+
+
+def _validate_predecessor_request(
+    *, profile: CheckpointRecoveryProfileV1, request: CatalogRunRequestV1
+) -> RecoveryPredecessorBindings:
+    code = "CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_AUTH_INVALID"
+    try:
+        predecessor = _predecessor_bindings(profile)
+        if (
+            request.request_sha256 != predecessor.request_sha256
+            or request.campaign_key != profile.campaign_key
+            or request.launch_generation != predecessor.generation
+            or request.previous_terminal_request_sha256 != profile.source_request_sha256
+        ):
+            raise ValueError(code)
+        return predecessor
+    except (AttributeError, TypeError, ValueError) as exc:
+        if str(exc) == code:
+            raise
+        raise ValueError(code) from exc
+
+
+def _validate_predecessor_owner_terminal(
+    *,
+    profile: CheckpointRecoveryProfileV1,
+    owner: FastGateOwnerEvidence,
+    terminal: CatalogTerminalReceipt | None,
+) -> RecoveryPredecessorBindings:
+    code = "CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_AUTH_INVALID"
+    try:
+        predecessor = _predecessor_bindings(profile)
+        if not isinstance(owner, FastGateOwnerEvidence):
+            raise ValueError(code)
+        if terminal is None or not isinstance(
+            terminal, (CatalogTerminalReceiptV1, CatalogTerminalReceiptV2)
+        ):
+            raise ValueError(code)
+        if (
+            owner.unlaunched_terminal
+            or owner.run_id != predecessor.run_id
+            or owner.run.get("id") != predecessor.run_id
+            or owner.run.get("run_attempt") != predecessor.run_attempt
+            or owner.run.get("head_sha") != predecessor.protected_commit_sha
+            or owner.run.get("head_branch") != "main"
+            or owner.run.get("status") != "completed"
+            or owner.run.get("conclusion") != "failure"
+            or not is_fast_controller_issue_run(owner.run)
+            or not isinstance(owner.run.get("repository"), Mapping)
+            or owner.run["repository"].get("full_name") != _REPOSITORY
+            or owner.decision.launch_required is not True
+            or owner.decision.existing_run_id is not None
+            or owner.decision.request_sha256 != predecessor.request_sha256
+            or owner.decision.campaign_key != profile.campaign_key
+            or (
+                predecessor.decision_sha256 is not None
+                and owner.decision.decision_sha256 != predecessor.decision_sha256
+            )
+            or terminal.receipt_sha256 != predecessor.terminal_receipt_sha256
+            or terminal.request_sha256 != predecessor.request_sha256
+            or terminal.campaign_key != profile.campaign_key
+            or terminal.state != "BLOCKED"
+            or terminal.reason_code != "CATALOG_REDUCTION_FAILED"
+            or terminal.expected_recipe_count != CHECKPOINT_RECOVERY_SOURCE8_EXPECTED_RESULT_COUNT
+            or terminal.observed_recipe_count != 0
+            or terminal.result_science_sha256 is not None
+        ):
+            raise ValueError(code)
+        bind_owner_terminal_receipt(owner=owner, receipt=terminal)
+        return predecessor
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        if str(exc) == code:
+            raise
+        raise ValueError(code) from exc
+
+
+def validate_checkpoint_recovery_predecessor_auth(
+    *,
+    profile: CheckpointRecoveryProfileV1,
+    authenticated: CheckpointRecoveryPredecessorAuthenticationV1,
+) -> None:
+    """Validate cached predecessor identity without any remote reads."""
+
+    if not isinstance(authenticated, CheckpointRecoveryPredecessorAuthenticationV1):
+        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_AUTH_INVALID")
+    _validate_predecessor_owner_terminal(
+        profile=profile, owner=authenticated.owner, terminal=authenticated.terminal
+    )
+
+
+def _validate_predecessor_evaluation_jobs(
+    jobs: tuple[Mapping[str, Any], ...], *, error_code: str
+) -> None:
+    """Require the explicit zero-evaluation placeholders in a full inventory.
+
+    The checkpoint-control path intentionally returns only the ``gate`` and
+    ``finalize`` jobs.  It must not claim that evaluation jobs were inspected;
+    callers that request the full Actions inventory get this stricter,
+    positive-presence check instead.
+    """
+
+    observed: dict[str, Mapping[str, Any]] = {}
+    for job in jobs:
+        if not isinstance(job, Mapping):
+            raise ValueError(error_code)
+        name = job.get("name")
+        if name in _PREDECESSOR_EVALUATION_JOB_NAMES:
+            if name in observed:
+                raise ValueError(error_code)
+            observed[name] = job
+    if set(observed) != _PREDECESSOR_EVALUATION_JOB_NAMES:
+        raise ValueError(error_code)
+    if any(
+        job.get("status") != "completed" or job.get("conclusion") != "skipped"
+        for job in observed.values()
+    ):
+        raise ValueError(error_code)
+
+
+def authenticate_checkpoint_recovery_predecessor(
+    *,
+    repo_root: Path,
+    repository: str,
+    protected_commit_sha: str,
+    profile: CheckpointRecoveryProfileV1,
+    fetch_json: _ReadOnlyClient,
+    download_artifact: Callable[[int], bytes],
+    checkpoint_control_jobs: bool = True,
+) -> CheckpointRecoveryPredecessorAuthenticationV1:
+    """Authenticate target-10's immediate terminal owner independently."""
+
+    code = "CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_AUTH_INVALID"
+    try:
+        root = _repository_root(repo_root)
+        if (
+            type(repository) is not str
+            or repository != _REPOSITORY
+            or type(protected_commit_sha) is not str
+            or _COMMIT.fullmatch(protected_commit_sha) is None
+            or getattr(fetch_json, "repository", None) != repository
+            or not callable(getattr(fetch_json, "get_json", None))
+            or not callable(getattr(fetch_json, "stable_paginated", None))
+            or not callable(download_artifact)
+            or type(checkpoint_control_jobs) is not bool
+        ):
+            raise ValueError(code)
+        protected = validate_exact_checkpoint_profile(root, profile)
+        if protected.target_generation != 10:
+            raise ValueError(code)
+        predecessor = _predecessor_bindings(protected)
+        request = _read_signed_request_for_identity(
+            client=fetch_json,
+            root=root,
+            issue_number=predecessor.issue_number,
+            expected_request_sha256=predecessor.request_sha256,
+            expected_campaign_key=protected.campaign_key,
+            expected_generation=predecessor.generation,
+        )
+        _validate_predecessor_request(profile=protected, request=request)
+        owner = load_fast_gate_owner(
+            client=fetch_json,
+            issue_number=predecessor.issue_number,
+            request=request,
+            approved_commits=frozenset({protected_commit_sha}),
+            approve_historical_commit=lambda candidate: (
+                candidate == predecessor.protected_commit_sha
+                and _historical_owner_commit_approved(
+                    fetch_json, candidate, protected_commit_sha
+                )
+            ),
+            download_archive=download_artifact,
+            terminal_owner_run_id=predecessor.run_id,
+            pinned_owner_run_id=predecessor.run_id,
+            checkpoint_control_jobs=checkpoint_control_jobs,
+        )
+        if not isinstance(owner, FastGateOwnerEvidence) or owner.unlaunched_terminal:
+            raise ValueError(code)
+        terminal = load_owner_terminal_receipt(
+            client=fetch_json,
+            owner=owner,
+            issue_number=predecessor.issue_number,
+            download_archive=download_artifact,
+        )
+        if terminal is None:
+            raise ValueError(code)
+        _validate_predecessor_owner_terminal(
+            profile=protected, owner=owner, terminal=terminal
+        )
+        if not checkpoint_control_jobs:
+            _validate_predecessor_evaluation_jobs(owner.jobs, error_code=code)
+        return CheckpointRecoveryPredecessorAuthenticationV1(
+            owner=owner, terminal=terminal
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        if str(exc) == code:
+            raise
+        raise ValueError(code) from exc
+
+
+def revalidate_checkpoint_recovery_predecessor(
+    *,
+    repo_root: Path,
+    repository: str,
+    protected_commit_sha: str,
+    profile: CheckpointRecoveryProfileV1,
+    cached: CheckpointRecoveryPredecessorAuthenticationV1,
+    fetch_json: _ReadOnlyClient,
+    download_artifact: Callable[[int], bytes],
+) -> CheckpointRecoveryPredecessorAuthenticationV1:
+    """Recheck cached predecessor identity without repeating source ownership.
+
+    The admission handoff has already authenticated the predecessor's gate
+    artifact, job inventory, and historical commit.  The handoff consumer only
+    rereads the signed request, the mutable owner run before and after the
+    terminal artifact, and that terminal artifact itself.  This preserves the
+    source authentication boundary while avoiding a second full predecessor
+    authentication in the same gate job.
+    """
+
+    code = "CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_AUTH_INVALID"
+    try:
+        root = _repository_root(repo_root)
+        if (
+            type(repository) is not str
+            or repository != _REPOSITORY
+            or type(protected_commit_sha) is not str
+            or _COMMIT.fullmatch(protected_commit_sha) is None
+            or getattr(fetch_json, "repository", None) != repository
+            or not callable(getattr(fetch_json, "get_json", None))
+            or not callable(getattr(fetch_json, "stable_paginated", None))
+            or not callable(download_artifact)
+        ):
+            raise ValueError(code)
+        protected = validate_exact_checkpoint_profile(root, profile)
+        if protected.target_generation != 10:
+            raise ValueError(code)
+        validate_checkpoint_recovery_predecessor_auth(
+            profile=protected, authenticated=cached
+        )
+        predecessor = _predecessor_bindings(protected)
+        request = _read_signed_request_for_identity(
+            client=fetch_json,
+            root=root,
+            issue_number=predecessor.issue_number,
+            expected_request_sha256=predecessor.request_sha256,
+            expected_campaign_key=protected.campaign_key,
+            expected_generation=predecessor.generation,
+        )
+        _validate_predecessor_request(profile=protected, request=request)
+
+        path = f"/repos/{_REPOSITORY}/actions/runs/{predecessor.run_id}"
+        run, _ = fetch_json.get_json(path)
+        if not isinstance(run, dict) or any(
+            run.get(key) != cached.owner.run.get(key) for key in _RUN_IDENTITY_KEYS
+        ):
+            raise ValueError(code)
+        owner = FastGateOwnerEvidence(
+            cached.owner.run_id, run, cached.owner.decision, cached.owner.jobs
+        )
+        terminal = load_owner_terminal_receipt(
+            client=fetch_json,
+            owner=owner,
+            issue_number=predecessor.issue_number,
+            download_archive=download_artifact,
+        )
+        if terminal is None:
+            raise ValueError(code)
+        if terminal != cached.terminal:
+            raise ValueError(code)
+        _validate_predecessor_owner_terminal(
+            profile=protected, owner=owner, terminal=terminal
+        )
+        after, _ = fetch_json.get_json(path)
+        if not isinstance(after, dict) or any(
+            after.get(key) != run.get(key) for key in _RUN_IDENTITY_KEYS
+        ):
+            raise ValueError(code)
+        return CheckpointRecoveryPredecessorAuthenticationV1(
+            owner=owner, terminal=terminal
+        )
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        if str(exc) == code:
+            raise
+        raise ValueError(code) from exc
 
 
 def _historical_owner_commit_approved(
@@ -293,17 +635,34 @@ def authenticate_checkpoint_recovery_owner(
         issue_number=protected.source_issue_number,
         download_archive=download_artifact,
     )
-    if terminal is not None and protected.target_generation != 9:
+    if terminal is not None and protected.target_generation not in {9, 10}:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_TERMINAL_PRESENT")
     proof = verify_checkpoint_failure_owner(
         profile=protected,
         owner=owner,
         terminal=terminal,
     )
-    return CheckpointRecoveryOwnerAuthenticationV1(owner=owner, proof=proof, terminal=terminal)
+    predecessor = None
+    if protected.target_generation == 10:
+        predecessor = authenticate_checkpoint_recovery_predecessor(
+            repo_root=root,
+            repository=repository,
+            protected_commit_sha=protected_commit_sha,
+            profile=protected,
+            fetch_json=client,
+            download_artifact=download_artifact,
+            checkpoint_control_jobs=checkpoint_control_jobs,
+        )
+    return CheckpointRecoveryOwnerAuthenticationV1(
+        owner=owner, proof=proof, terminal=terminal, predecessor=predecessor
+    )
 
 
 __all__ = [
     "CheckpointRecoveryOwnerAuthenticationV1",
+    "CheckpointRecoveryPredecessorAuthenticationV1",
     "authenticate_checkpoint_recovery_owner",
+    "authenticate_checkpoint_recovery_predecessor",
+    "revalidate_checkpoint_recovery_predecessor",
+    "validate_checkpoint_recovery_predecessor_auth",
 ]
