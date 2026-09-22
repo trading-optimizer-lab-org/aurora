@@ -313,14 +313,15 @@ class FastAuthorityStateV1(_AuthorityContent):
                 raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
             self._checkpoint_archive(request, recovery_proof)
             return
-        if (recovery_proof.target_generation != 9
+        if (recovery_proof.target_generation not in {9, 10}
                 or recovery_proof.evidence_kind != "failed_owner_with_terminal"
                 or recovery_proof.campaign_key != request.campaign_key):
             raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
         require_terminal_checkpoint_root(authority=self, request=request,
             source_issue_number=recovery_proof.source_issue_number, source_run_id=recovery_proof.source_run_id,
             source_request_sha256=recovery_proof.source_request_sha256,
-            terminal_receipt_sha256=recovery_proof.source_terminal_receipt_sha256)
+            terminal_receipt_sha256=recovery_proof.source_terminal_receipt_sha256,
+            predecessor=recovery_proof.predecessor_bindings if recovery_proof.target_generation == 10 else None)
         if any(row.emission.request.request_sha256 == request.request_sha256
                for row in self.unreserved_superseded_intents):
             raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_SOURCE_SUPERSEDED")
