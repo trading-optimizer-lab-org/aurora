@@ -7,9 +7,11 @@ reader, accepts only an archive no larger than :data:`MAX_ARCHIVE_BYTES` after
 the GET, verifies the real bundle contracts, and publishes only into an absent
 destination.
 
-The accepted archive limit is intentionally 64 MiB compressed with 256 MiB
-total uncompressed content.  That is bounded above the known ~45.5 MiB
-producer bundle while remaining distinct from the 2 MiB qualification helper
+The accepted archive limit is intentionally 96 MiB compressed with 256 MiB
+total uncompressed content.  The composed recovery carrier with both preserved
+sources measured ~78 MiB; the old 64 MiB bound rejected it before download.
+Member, extraction and integrity bounds remain unchanged.  This accepted
+capacity remains distinct from the 2 MiB qualification helper
 limit.  The ``gh`` subprocess writes to a temporary file before the size is
 checked, so this is an accepted-archive bound rather than a transfer-stream
 cap.  Every GET, extraction checkpoint, verifier checkpoint, and archive
@@ -57,7 +59,7 @@ PRODUCER_BRANCH = "main"
 PREFLIGHT_PHASE = "preflight"
 FINALIZE_PHASE = "finalize"
 PUBLISH_STEP_NAME = "Publish the PREPARED receipt and bundle as durable evidence"
-MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 96 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_MEMBER_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 4096

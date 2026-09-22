@@ -12,9 +12,10 @@ plan.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import re
@@ -43,6 +44,7 @@ from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import (
     CheckpointRecoveryArtifactV1,
     CheckpointRecoveryProfileV1,
     canonical_cached_strategy_ids_sha256,
+    load_checkpoint_recovery_profile,
     validate_exact_checkpoint_profile,
 )
 from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_source import (
@@ -265,15 +267,18 @@ def _derive_expected_pending_ids(
     )
     assignments = _read_recipe_source_assignments(
         source_plan_root, all_strategy_ids=all_ids, pending_strategy_ids=pending_ids,
+        **({"checkpoint_slot_count": 2} if getattr(profile, "target_generation", 8) == 9 else {}),
     )
     cached_ids = tuple(
         strategy_id for worker_id in profile.worker_ids
         for strategy_id in assignments[worker_id]["strategy_ids"]
     )
+    composed = getattr(profile, "target_generation", 8) == 9
     if (
         len(all_ids) != profile.expected_total_count
-        or len(cached_ids) != profile.expected_result_count
-        or canonical_cached_strategy_ids_sha256(cached_ids)
+        or len(cached_ids) != (profile.checkpoint_result_count if composed else profile.expected_result_count)
+        or (composed and set(cached_ids) != set(pending_ids))
+        or canonical_cached_strategy_ids_sha256(all_ids if composed else cached_ids)
         != profile.cached_strategy_ids_sha256
     ):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PARTITION_INVALID")
@@ -353,7 +358,7 @@ def _profile_artifacts(
         len(plans) != 1
         or len(checkpoints) != CHECKPOINT_RECOVERY_CHECKPOINT_COUNT
         or len(artifacts) != CHECKPOINT_RECOVERY_CHECKPOINT_COUNT + 1
-        or len(worker_ids) != CHECKPOINT_RECOVERY_WORKER_COUNT
+        or len(worker_ids) != (60 if profile.target_generation == 9 else CHECKPOINT_RECOVERY_WORKER_COUNT)
         or len(set(worker_ids)) != len(worker_ids)
     ):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PROFILE_ARTIFACTS_INVALID")
@@ -397,7 +402,7 @@ def _profile_artifacts(
                 type(worker_id) is not int
                 or worker_id not in worker_ids
                 or type(slot_index) is not int
-                or not 1 <= slot_index <= CHECKPOINT_RECOVERY_SLOT_COUNT
+                or not 1 <= slot_index <= (2 if profile.target_generation == 9 else CHECKPOINT_RECOVERY_SLOT_COUNT)
             ):
                 raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PROFILE_ARTIFACT_PIN_INVALID")
             coordinates.append((worker_id, slot_index))
@@ -409,7 +414,7 @@ def _profile_artifacts(
     expected_coordinates = {
         (worker_id, slot_index)
         for worker_id in worker_ids
-        for slot_index in range(1, CHECKPOINT_RECOVERY_SLOT_COUNT + 1)
+        for slot_index in range(1, (2 if profile.target_generation == 9 else CHECKPOINT_RECOVERY_SLOT_COUNT) + 1)
     }
     if (
         len(set(ids)) != len(ids)
@@ -491,7 +496,7 @@ def restore_catalog_checkpoint_recovery(
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_ARTIFACT_READER_INVALID")
     source = _resolve_source(repository, fetch_json)
     protected_profile = validate_exact_checkpoint_profile(root, profile)
-    if len(protected_profile.worker_ids) != CHECKPOINT_RECOVERY_WORKER_COUNT:
+    if len(protected_profile.worker_ids) != (60 if protected_profile.target_generation == 9 else CHECKPOINT_RECOVERY_WORKER_COUNT):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PROFILE_INVALID")
     plans, checkpoints = _profile_artifacts(protected_profile)
 
@@ -568,10 +573,14 @@ def restore_catalog_checkpoint_recovery(
         _preflight_zip(downloaded[plans[0].artifact_name])
         _safe_extract_archive(downloaded[plans[0].artifact_name], source_plan_root)
         checkpoint_root.mkdir()
+        current_checkpoint_root = checkpoint_root
+        if protected_profile.target_generation == 9:
+            current_checkpoint_root = checkpoint_root / "current"
+            current_checkpoint_root.mkdir()
         for artifact in checkpoints:
             raw = downloaded[artifact.artifact_name]
             _preflight_zip(raw)
-            _safe_extract_archive(raw, checkpoint_root / artifact.artifact_name)
+            _safe_extract_archive(raw, current_checkpoint_root / artifact.artifact_name)
 
         receipt = verify_sealed_global_reuse_execution_plan(
             source_plan_root, expected_bindings=protected_profile.source_plan_bindings,
@@ -581,15 +590,40 @@ def restore_catalog_checkpoint_recovery(
         expected_strategy_ids = _derive_expected_pending_ids(source_plan_root, protected_profile)
         source_validation = verify_checkpoint_recovery_source(
             source_plan_root,
-            checkpoint_root,
+            current_checkpoint_root,
             dict(protected_profile.source_plan_bindings),
             protected_profile.science_sha256,
             protected_profile.catalog_manifest_sha256,
             expected_strategy_ids,
             tuple(protected_profile.worker_ids),
+            **({"checkpoint_slot_count": 2} if protected_profile.target_generation == 9 else {}),
         )
         if source_validation.plan_receipt_sha256 != protected_profile.source_plan_receipt_sha256:
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PLAN_RECEIPT_MISMATCH")
+
+        if protected_profile.target_generation == 9:
+            inherited_profile = load_checkpoint_recovery_profile(root, protected_profile.campaign_key, 8)
+            if inherited_profile is None or inherited_profile.profile_sha256 != protected_profile.inherited_profile_sha256:
+                raise ValueError("CATALOG_CHECKPOINT_RECOVERY_INHERITED_PROFILE_INVALID")
+            inherited_root = staging / "inherited"
+            inherited = restore_catalog_checkpoint_recovery(
+                repo_root=root, repository=repository, protected_commit_sha=protected_commit_sha,
+                profile=inherited_profile, output_dir=inherited_root,
+                fetch_json=source, download_artifact=download_artifact,
+            )
+            os.replace(inherited.source_plan_root, staging / "inherited-source-plan")
+            os.replace(inherited.checkpoint_root, checkpoint_root / "inherited")
+            (staging / "inherited-owner-proof.json").write_text(
+                json.dumps(asdict(inherited.proof), sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            inherited_root.rmdir()
+            from .catalog_checkpoint_recovery_composition import verify_checkpoint_recovery_transport
+
+            source_validation = verify_checkpoint_recovery_transport(
+                repo_root=root, source_plan_root=source_plan_root,
+                checkpoint_root=checkpoint_root, profile=protected_profile,
+            )
 
         if target.exists() or target.is_symlink():
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_OUTPUT_EXISTS")

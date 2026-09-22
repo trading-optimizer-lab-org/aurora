@@ -904,8 +904,15 @@ jobs:
               or any(not is_sha256(candidate.get(key)) for key in required if key.endswith("sha256"))
               or type(candidate.get("cached_recipe_count")) is not int
               or type(candidate.get("total_recipe_count")) is not int
-              or candidate.get("cached_recipe_count") != 18630
+              or candidate.get("cached_recipe_count") not in (18630, 37258)
               or candidate.get("total_recipe_count") != 37258
+          ):
+              raise SystemExit("CATALOG_CHECKPOINT_RECOVERY_BINDING_INVALID")
+          run_plan = read_json(sealed_plan / "run_plan.json")
+          if (
+              not isinstance(run_plan, dict)
+              or type(run_plan.get("cached_recipe_count")) is not int
+              or run_plan["cached_recipe_count"] != candidate["cached_recipe_count"]
           ):
               raise SystemExit("CATALOG_CHECKPOINT_RECOVERY_BINDING_INVALID")
           emit("true")
@@ -2140,7 +2147,9 @@ jobs:
       needs.engine_verify_sealed_plan.result == 'success' &&
       needs.engine_verify_sealed_plan.outputs.reduction_only != 'true' &&
       needs.verify_component_store.result == 'success' &&
-      needs.evaluate_a.result != 'skipped' &&
+      (needs.evaluate_a.result != 'skipped' ||
+      (needs.engine_verify_sealed_plan.outputs.recipe_matrix_a_count == '0' &&
+      needs.evaluate_a.result == 'skipped')) &&
       (needs.evaluate_b.result != 'skipped' ||
       (needs.engine_verify_sealed_plan.outputs.recipe_matrix_b_count == '0' &&
       needs.evaluate_b.result == 'skipped')) &&
@@ -2270,7 +2279,9 @@ jobs:
               name for name in names if name.startswith("catalog-failure-attempt-")
           )
           checkpoints = sorted(
-              name for name in names if name.startswith("catalog-checkpoint-")
+              name for name in names
+              if name.startswith("catalog-checkpoint-")
+              and name != f"catalog-checkpoint-recovery-prepared-{os.environ['AUTHORITY_ID']}"
           )
           expected_workers = int(os.environ["ACTIVE_RECIPE_WORKERS"])
           all_workers_green = all(
@@ -2717,8 +2728,19 @@ jobs:
           if (
               type(payload["cached_recipe_count"]) is not int
               or type(payload["total_recipe_count"]) is not int
-              or payload["cached_recipe_count"] != 18630
+              or payload["cached_recipe_count"] not in (18630, 37258)
               or payload["total_recipe_count"] != 37258
+          ):
+              raise SystemExit("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
+          sealed_plan = Path(__import__("os").environ["RUNNER_TEMP"]) / "sealed-plan"
+          controller = json.loads((sealed_plan / "controller_binding.json").read_text("utf-8"))
+          binding = controller.get("binding", {}).get("checkpoint_recovery")
+          common = {
+              "profile_sha256", "owner_proof_sha256", "source_plan_receipt_sha256",
+              "cached_strategy_ids_sha256", "cached_recipe_count", "total_recipe_count",
+          }
+          if not isinstance(binding, dict) or any(
+              binding.get(key) != payload[key] for key in common
           ):
               raise SystemExit("CATALOG_CHECKPOINT_RECOVERY_RESULT_INVALID")
           with Path(__import__("os").environ["GITHUB_OUTPUT"]).open(

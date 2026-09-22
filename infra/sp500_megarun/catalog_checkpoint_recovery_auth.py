@@ -2,7 +2,7 @@
 
 This is a read-only controller boundary.  It authenticates the protected
 profile, the signed source issue, the historical source commit, the existing
-fast-gate publication, and the absence of a terminal receipt.  It deliberately
+fast-gate publication, and the profile's exact terminal state.  It deliberately
 does not import the recovery source or any scientific/runtime module.
 """
 
@@ -32,6 +32,7 @@ from .catalog_fast_reservation import (
     load_owner_terminal_receipt,
 )
 from .catalog_run_request import parse_catalog_run_request
+from .catalog_fast_path import CatalogTerminalReceipt
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
@@ -50,10 +51,11 @@ class _ReadOnlyClient(Protocol):
 
 @dataclass(frozen=True)
 class CheckpointRecoveryOwnerAuthenticationV1:
-    """Authenticated existing owner and proof of the missing terminal only."""
+    """Authenticated existing owner, closed failure proof and original terminal."""
 
     owner: FastGateOwnerEvidence
     proof: CheckpointRecoveryOwnerProofV1
+    terminal: CatalogTerminalReceipt | None = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -291,14 +293,14 @@ def authenticate_checkpoint_recovery_owner(
         issue_number=protected.source_issue_number,
         download_archive=download_artifact,
     )
-    if terminal is not None:
+    if terminal is not None and protected.target_generation != 9:
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_TERMINAL_PRESENT")
     proof = verify_checkpoint_failure_owner(
         profile=protected,
         owner=owner,
         terminal=terminal,
     )
-    return CheckpointRecoveryOwnerAuthenticationV1(owner=owner, proof=proof)
+    return CheckpointRecoveryOwnerAuthenticationV1(owner=owner, proof=proof, terminal=terminal)
 
 
 __all__ = [

@@ -275,7 +275,7 @@ def required_prepared_cache_keys(
 
 
 def _load_checkpoint_recovery_seed(root, seed, campaign_key, seed_context):
-    profile = load_checkpoint_recovery_profile(root, campaign_key, 8)
+    profile = load_checkpoint_recovery_profile(root, campaign_key, 9) or load_checkpoint_recovery_profile(root, campaign_key, 8)
     document = seed_context.get('checkpoint_recovery')
     if profile is None:
         if document is not None:
@@ -306,10 +306,18 @@ def _load_checkpoint_recovery_seed(root, seed, campaign_key, seed_context):
     cached = document.get('cached_strategy_ids')
     if not isinstance(cached, list):
         raise ValueError('CATALOG_CHECKPOINT_RECOVERY_SEED_INVALID')
-    source = verify_checkpoint_recovery_source(
-        paths[0], paths[1], dict(profile.source_plan_bindings), profile.science_sha256,
-        profile.catalog_manifest_sha256, tuple(cached), profile.worker_ids,
-    )
+    if profile.target_generation == 9:
+        from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_composition import verify_checkpoint_recovery_transport
+        source = verify_checkpoint_recovery_transport(
+            repo_root=root, source_plan_root=paths[0], checkpoint_root=paths[1], profile=profile,
+        )
+        if tuple(sorted(cached)) != tuple(sorted(source.strategy_ids)):
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_SEED_INVALID')
+    else:
+        source = verify_checkpoint_recovery_source(
+            paths[0], paths[1], dict(profile.source_plan_bindings), profile.science_sha256,
+            profile.catalog_manifest_sha256, tuple(cached), profile.worker_ids,
+        )
     state = _checkpoint_recovery_state(repo_root=root, profile=profile, restore_root=transport,
         restore=lambda: SimpleNamespace(profile=profile, proof=proof, source_validation=source,
                                         source_plan_root=paths[0], checkpoint_root=paths[1]))

@@ -205,6 +205,8 @@ def authenticate_unreserved_checkpoint_recovery(
                 or not isinstance(now, datetime) or now.utcoffset() != timedelta(0)):
             raise ValueError(_ERROR)
         protected = validate_exact_checkpoint_profile(root, profile)
+        if protected.target_generation != 8:
+            raise ValueError(_ERROR)
         # Revalidate the hash and shape even when a caller used model_copy.
         current = FastAuthorityStateV1.model_validate_json(authority.model_dump_json())
         owners = [row for row in current.campaigns if row.request.campaign_key == protected.campaign_key]

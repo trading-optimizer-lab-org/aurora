@@ -131,6 +131,13 @@
       "next_generation": 8,
       "target_definition_sha256": "a0faab0dec41d44b6183903b0165406d0e82af71be0bdbb9b43c14db41893b81",
       "target_prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3"
+    },
+    {
+      "campaign_key": "sp500-optimized-catalog-v1",
+      "previous_request_sha256": "f337320f4ebb3c863581b632e18e15eeba364621363310ed31fc120677f84fe0",
+      "next_generation": 9,
+      "target_definition_sha256": "11afcc9ed072461436c296558af50eca440eb81935748e2ab1169eedb6a6b42d",
+      "target_prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3"
     }
   ]
 }

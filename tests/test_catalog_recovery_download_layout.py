@@ -43,7 +43,7 @@ INVENTORIES = {
         "selector_pattern": "expected_checkpoint_pattern",
         "step": "download_checkpoints",
         "prefix": "catalog-checkpoint-",
-        "pattern": "catalog-checkpoint-*",
+        "pattern": "catalog-checkpoint-*-g*-w*-s*",
     },
     "failures": {
         "expected": "EXPECTED_FAILURES",
@@ -118,6 +118,9 @@ def _run_expected(
 
 def _names(kind: str, count: int) -> tuple[str, ...]:
     prefix = INVENTORIES[kind]["prefix"]
+    if kind == "checkpoints":
+        return tuple(f"{prefix}0123456789abcdef-g00-w{index:03d}-s01"
+                     for index in range(1, count + 1))
     return tuple(f"{prefix}{index:03d}" for index in range(1, count + 1))
 
 
@@ -210,7 +213,8 @@ def test_actual_expected_python_selects_pinned_download_layout(
         selected = _select_action_artifacts(
             name=outputs[metadata["name"]],
             pattern=outputs[metadata["selector_pattern"]],
-            available=names,
+            available=(names + ("catalog-checkpoint-recovery-prepared-authority",)
+                       if kind == "checkpoints" else names),
         )
         _materialize_pinned_download(destination, selected)
         observed = _observed_names(root)

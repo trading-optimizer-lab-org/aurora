@@ -26,7 +26,7 @@ from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import (
 )
 from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1
 from aurora.infra.sp500_megarun.catalog_fast_authority_github import _edition, _LOCATOR
-from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1
+from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1, parse_catalog_terminal_receipt
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateOwnerEvidence, load_owner_terminal_receipt,
 )
@@ -149,7 +149,7 @@ def stage_admission(*, anchor: Mapping[str, Any], commit: str,
     recovery = None
     if profile is not None:
         if authenticated is None or verify_checkpoint_failure_owner(
-                profile=profile, owner=authenticated.owner, terminal=None) != authenticated.proof:
+                profile=profile, owner=authenticated.owner, terminal=authenticated.terminal) != authenticated.proof:
             raise ValueError(_ERROR)
         owner = authenticated.owner
         recovery = {"profile_sha256": profile.profile_sha256,
@@ -157,6 +157,8 @@ def stage_admission(*, anchor: Mapping[str, Any], commit: str,
                 "run_id": owner.run_id, "run": dict(owner.run),
                 "decision": owner.decision.model_dump(mode="json"),
                 "jobs": [job for job in owner.jobs if job.get("id") == authenticated.proof.source_finalizer_job_id]}}
+        if authenticated.terminal is not None:
+            recovery["terminal"] = authenticated.terminal.model_dump(mode="json")
     elif authenticated is not None:
         raise ValueError(_ERROR)
     _write("admission.json", {"schema_version": "1", "execution": _execution(commit),
@@ -200,7 +202,8 @@ def consume_admission(*, root: Path, anchor: Mapping[str, Any], commit: str,
         cached = recovery["owner"]
         cached_owner = FastGateOwnerEvidence(cached["run_id"], cached["run"],
             CatalogFastLaunchDecisionV1.model_validate(cached["decision"]), tuple(cached["jobs"]))
-        if verify_checkpoint_failure_owner(profile=profile, owner=cached_owner, terminal=None) != proof:
+        cached_terminal = parse_catalog_terminal_receipt(recovery["terminal"]) if "terminal" in recovery else None
+        if verify_checkpoint_failure_owner(profile=profile, owner=cached_owner, terminal=cached_terminal) != proof:
             raise ValueError(_ERROR)
         # Recheck the signed source and mutable state; reuse historical job provenance.
         _read_signed_request(client, root, profile)
@@ -214,7 +217,7 @@ def consume_admission(*, root: Path, anchor: Mapping[str, Any], commit: str,
         owner = FastGateOwnerEvidence(cached_owner.run_id, run, cached_owner.decision, cached_owner.jobs)
         terminal = load_owner_terminal_receipt(client=client, owner=owner,
             issue_number=profile.source_issue_number, download_archive=download_archive)
-        if terminal is not None or verify_checkpoint_failure_owner(
+        if terminal != cached_terminal or verify_checkpoint_failure_owner(
                 profile=profile, owner=owner, terminal=terminal) != proof:
             raise ValueError(_ERROR)
         after, _ = client.get_json(path)

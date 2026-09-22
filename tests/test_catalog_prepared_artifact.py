@@ -470,3 +470,40 @@ def test_download_timeout_has_sanitized_transport_code(monkeypatch):
         )
     assert error.value.code == "CATALOG_PREPARED_ARTIFACT_DOWNLOAD_TIMEOUT"
     assert observed["timeout"] == 35.0
+
+
+def test_composed_recovery_prepared_metadata_fits_bounded_capacity(tmp_path):
+    identity = _identity(campaign_key="sp500-optimized-catalog-v1")
+    archive = _bundle_archive(tmp_path, identity)
+    client = _FakeGitHubClient(archive, identity=identity)
+    # Measured carrier with both preserved sources; no scientific evaluation.
+    client.artifact["size_in_bytes"] = 81_730_797
+    prepared_artifact_module._validate_artifact(
+        client.artifact, expected_identity=identity, run_id=RUN_ID,
+        run_attempt=1, observed_at=OBSERVED_AT,
+    )
+
+
+def test_prepared_capacity_remains_bounded_before_download(tmp_path):
+    identity = _identity()
+    archive = _bundle_archive(tmp_path, identity)
+    client = _FakeGitHubClient(archive, identity=identity)
+    client.artifact["size_in_bytes"] = prepared_artifact_module.MAX_ARCHIVE_BYTES + 1
+    downloads: list[int] = []
+
+    def must_not_download(artifact_id: int) -> bytes:
+        downloads.append(artifact_id)
+        raise AssertionError("oversized metadata must be rejected before download")
+
+    with pytest.raises(PreparedArtifactRestoreError) as error:
+        restore_prepared_artifact(
+            client=client, expected_identity=identity, destination=tmp_path / "restored",
+            download_archive=must_not_download,
+        )
+    assert error.value.code == "CATALOG_PREPARED_ARTIFACT_METADATA_INVALID"
+    assert downloads == []
+    assert not (tmp_path / "restored").exists()
+    assert prepared_artifact_module.MAX_TOTAL_UNCOMPRESSED_BYTES == 256 * 1024 * 1024
+    assert prepared_artifact_module.MAX_MEMBER_BYTES == 64 * 1024 * 1024
+    assert prepared_artifact_module.MAX_ARCHIVE_MEMBERS == 4096
+    assert prepared_artifact_module.MAX_COMPRESSION_RATIO == 100

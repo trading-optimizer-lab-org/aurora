@@ -85,7 +85,7 @@ def test_canary_does_not_restore(tmp_path):
         restore_root=tmp_path, restore=lambda: pytest.fail('unexpected restore')) is None
 
 
-def test_durable_prepared_transport_compresses_without_increasing_reader_limits():
+def test_durable_prepared_transport_compresses_with_bounded_composed_capacity():
     from pathlib import Path
     from aurora.infra.github_performance.preflight import load_github_yaml
     from aurora.infra.sp500_megarun.catalog_prepared_artifact import MAX_ARCHIVE_BYTES
@@ -95,7 +95,7 @@ def test_durable_prepared_transport_compresses_without_increasing_reader_limits(
                   if step.get('name') == 'Publish the PREPARED receipt and bundle as durable evidence']
     assert len(publishers) == 1
     assert publishers[0]['with']['compression-level'] == 6
-    assert MAX_ARCHIVE_BYTES == 64 * 1024 * 1024
+    assert MAX_ARCHIVE_BYTES == 96 * 1024 * 1024
 
 
 def test_seed_transports_recovery_source_and_verified_plan_to_finalize():

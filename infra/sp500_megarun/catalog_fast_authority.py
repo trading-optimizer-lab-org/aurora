@@ -205,8 +205,12 @@ class FastAuthorityStateV1(_AuthorityContent):
         old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
         if (
             not isinstance(recovery_proof, CheckpointRecoveryOwnerProofV1)
-            or recovery_proof.evidence_kind != "failed_owner_without_terminal"
-            or old is None or old.is_terminal
+            or recovery_proof.evidence_kind not in {"failed_owner_without_terminal", "failed_owner_with_terminal"}
+            or old is None
+            or (recovery_proof.evidence_kind == "failed_owner_without_terminal" and old.is_terminal)
+            or (recovery_proof.evidence_kind == "failed_owner_with_terminal" and (
+                not old.is_terminal or recovery_proof.source_terminal_receipt_sha256 is None
+                or old.terminal_receipt_sha256 != recovery_proof.source_terminal_receipt_sha256))
             or old.owner_issue_number != recovery_proof.source_issue_number
             or old.owner_run_id != recovery_proof.source_run_id
             or old.request.request_sha256 != recovery_proof.source_request_sha256
@@ -354,6 +358,9 @@ class FastAuthorityStateV1(_AuthorityContent):
         The caller must authenticate this proof afresh and load the profile from
         protected code. The serialized writer independently repeats this transition.
         """
+        if recovery_proof.evidence_kind == "failed_owner_with_terminal":
+            self._checkpoint_predecessor(emission.request, recovery_proof, lineage_transition)
+            return self.stage_emission(emission, lineage_transition=lineage_transition)
         if emission.state != "SIGNED":
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_EMISSION_INVALID")
         matching = next((row for row in self.emissions if row.intent_id == emission.intent_id), None)
@@ -397,6 +404,12 @@ class FastAuthorityStateV1(_AuthorityContent):
                                     recovery_proof: "CheckpointRecoveryOwnerProofV1",
                                     lineage_transition: CatalogLineageTransitionV1 | None = None) -> "FastAuthorityStateV1":
         """Reserve only the published successor already bound to the source proof."""
+        if recovery_proof.evidence_kind == "failed_owner_with_terminal":
+            old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
+            if old is None or old.request != request:
+                self._checkpoint_predecessor(request, recovery_proof, lineage_transition)
+            return self.reserve(request=request, issue_number=issue_number, run_id=run_id,
+                                lineage_transition=lineage_transition)
         self._checkpoint_archive(request, recovery_proof)
         emission = next((row for row in self.emissions if row.request.campaign_key == request.campaign_key), None)
         if (emission is None or emission.request != request or emission.state != "PUBLICADO"
