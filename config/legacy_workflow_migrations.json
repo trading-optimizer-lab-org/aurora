@@ -34,13 +34,13 @@
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
       "reason": "retain protected admission and exact PREPARED recovery while requiring verified terminal authority before closing expired unlaunched cloud requests",
-      "replacement_sha256": "d975ab5e36a17d977e8f1ce8f05b1396e88c641b52cc6b020c15c3323b5024ea"
+      "replacement_sha256": "bf1dbfb68a51dfb15f9e66d01942ef4cdbc6041f4b287b6728d93088c6b0c936"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
       "previous_sha256": "432157510dde46c1c278ba82b0d7d6c77ca54083544fed97cc5688f455b019ff",
         "reason": "restore authenticated predecessor reduction groups without reevaluation through a current sealed admission, retaining scientific verification and protected terminal publication",
-        "replacement_sha256": "c764e11a45b7974d1b22edd574c0fe4c14debfbaaf2ba2dde47304876c52ccee"
+        "replacement_sha256": "df1d43bb527f55ea041fc6f9815a5de5192071303dce1f624a84c0695a49d3b6"
     },
     {
       "path": ".github/workflows/catalog-optimized-worker.yml",

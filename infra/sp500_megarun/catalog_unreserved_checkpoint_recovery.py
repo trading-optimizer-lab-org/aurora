@@ -51,7 +51,7 @@ class UnreservedCheckpointRecoveryProofV1(FrozenModel):
     evidence_kind: Literal['expired_unreserved_checkpoint_successor'] = 'expired_unreserved_checkpoint_successor'
     repository: Literal['trading-optimizer-lab-org/aurora'] = _REPOSITORY
     campaign_key: Literal['sp500-optimized-catalog-v1']
-    target_generation: Literal[8]
+    target_generation: Literal[8, 9]
     authority_state_sha256: Sha256
     emission_sha256: Sha256
     failed_request_sha256: Sha256
@@ -91,6 +91,30 @@ def _object(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(_ERROR)
     return value
+
+
+def require_terminal_checkpoint_root(*, authority: "FastAuthorityStateV1", request,
+                                    source_issue_number: int, source_run_id: int,
+                                    source_request_sha256: str,
+                                    terminal_receipt_sha256: str | None) -> None:
+    """Bind the gen9 transport to its completed gen8 owner, not a new terminal."""
+    owners = [row for row in authority.campaigns if row.request.campaign_key == request.campaign_key]
+    if len(owners) != 1 or terminal_receipt_sha256 is None:
+        raise ValueError(_ERROR)
+    owner = owners[0]
+    if (request.launch_generation != 9 or owner.generation != 8
+            or owner.owner_issue_number != source_issue_number or owner.owner_run_id != source_run_id
+            or owner.request.request_sha256 != source_request_sha256
+            or request.previous_terminal_request_sha256 != source_request_sha256
+            or owner.terminal_receipt_sha256 != terminal_receipt_sha256
+            or owner.legacy_closure_evidence_sha256 is not None):
+        raise ValueError(_ERROR)
+    roots = [row for row in authority.completed_intents
+             if row.campaign_key == request.campaign_key and row.request_sha256 == source_request_sha256]
+    if (len(roots) != 1 or roots[0].request_id != owner.request.request_id
+            or roots[0].issue_number != source_issue_number
+            or roots[0].terminal_receipt_sha256 != terminal_receipt_sha256):
+        raise ValueError(_ERROR)
 
 
 def _time(value: object) -> datetime:
@@ -205,7 +229,7 @@ def authenticate_unreserved_checkpoint_recovery(
                 or not isinstance(now, datetime) or now.utcoffset() != timedelta(0)):
             raise ValueError(_ERROR)
         protected = validate_exact_checkpoint_profile(root, profile)
-        if protected.target_generation != 8:
+        if protected.target_generation not in {8, 9}:
             raise ValueError(_ERROR)
         # Revalidate the hash and shape even when a caller used model_copy.
         current = FastAuthorityStateV1.model_validate_json(authority.model_dump_json())
@@ -215,7 +239,8 @@ def authenticate_unreserved_checkpoint_recovery(
             raise ValueError(_ERROR)
         owner, emission = owners[0], emissions[0]
         request = emission.request
-        if (owner.is_terminal or owner.generation != protected.source_generation
+        if ((protected.target_generation == 8 and owner.is_terminal)
+                or owner.generation != protected.source_generation
                 or owner.owner_issue_number != protected.source_issue_number
                 or owner.owner_run_id != protected.source_run_id
                 or owner.request.request_sha256 != protected.source_request_sha256
@@ -244,14 +269,24 @@ def authenticate_unreserved_checkpoint_recovery(
             visited.add(target)
             recovery_hashes.add(link.recovery_evidence_sha256)
             target = linked_request.request_sha256
-        archives = [row for row in current.recovery_superseded_intents
-                    if row.successor_request_sha256 == target]
-        if (len(archives) != 1 or archives[0].emission.request != owner.request
-                or archives[0].source_owner_issue_number != owner.owner_issue_number
-                or archives[0].source_owner_run_id != owner.owner_run_id
-                or archives[0].recovery_profile_sha256 != protected.profile_sha256
-                or recovery_hashes - {archives[0].recovery_evidence_sha256}):
-            raise ValueError(_ERROR)
+        if protected.target_generation == 9:
+            require_terminal_checkpoint_root(authority=current, request=request,
+                source_issue_number=protected.source_issue_number, source_run_id=protected.source_run_id,
+                source_request_sha256=protected.source_request_sha256,
+                terminal_receipt_sha256=protected.source_terminal_receipt_sha256)
+            # These are source-owner proof hashes, not unreserved observation hashes.
+            # The writer binds every link to its freshly authenticated owner proof.
+            if len(recovery_hashes) > 1:
+                raise ValueError(_ERROR)
+        else:
+            archives = [row for row in current.recovery_superseded_intents
+                        if row.successor_request_sha256 == target]
+            if (len(archives) != 1 or archives[0].emission.request != owner.request
+                    or archives[0].source_owner_issue_number != owner.owner_issue_number
+                    or archives[0].source_owner_run_id != owner.owner_run_id
+                    or archives[0].recovery_profile_sha256 != protected.profile_sha256
+                    or recovery_hashes - {archives[0].recovery_evidence_sha256}):
+                raise ValueError(_ERROR)
         prefix = f'/repos/{repository}'
         issue_path = f'{prefix}/issues/{emission.issue_number}'
         issue_raw, _ = fetch_json.get_json(issue_path)

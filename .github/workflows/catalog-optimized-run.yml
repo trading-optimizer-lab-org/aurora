@@ -2673,12 +2673,18 @@ jobs:
           expected-source-sha: ${{ github.sha }}
           expected-numeric-profile-sha256: ${{ needs.engine_verify_sealed_plan.outputs.numeric_profile_sha256 }}
 
-      - name: Download authenticated checkpoint recovery PREPARED bundle
+      - name: Restore the authenticated original checkpoint PREPARED artifact
         if: ${{ needs.engine_verify_sealed_plan.outputs.checkpoint_recovery_enabled == 'true' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: catalog-checkpoint-recovery-prepared-${{ inputs.authority_id }}
-          path: ${{ runner.temp }}/checkpoint-recovery-prepared
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_PROTECTED_COMMIT_SHA: ${{ github.sha }}
+        shell: bash
+        run: >-
+          python scripts/verify_catalog_prepared_bundle.py
+          --campaign-key sp500-optimized-catalog-v1
+          --repo-root .
+          --bundle "$RUNNER_TEMP/checkpoint-recovery-prepared"
+          --restore-artifact-on-miss
 
       - name: Restore opt-in checkpoint recovery source
         id: checkpoint_restore
