@@ -189,7 +189,17 @@ def _replacement(case: Gen9Case, unreserved_proof):
     )
 
 
-def test_gen9_expired_failed_writer_is_get_only_and_roots_in_completed_intents(gen9_case: Gen9Case):
+@pytest.mark.parametrize('original_prepared', [False, True])
+def test_gen9_expired_failed_writer_is_get_only_and_roots_in_completed_intents(gen9_case: Gen9Case, original_prepared):
+    if original_prepared:
+        steps = gen9_case.transport.jobs[1][0]['steps']
+        for step in list(steps):
+            if step['number'] == 18:
+                steps.remove(step)
+            elif step['number'] > 18:
+                step['number'] -= 1
+        gen9_case.transport.artifacts = [row for row in gen9_case.transport.artifacts
+                                       if not row['name'].startswith('catalog-checkpoint-recovery-prepared-')]
     before = gen9_case.authority.model_dump_json()
 
     proof = _authenticate(gen9_case)
