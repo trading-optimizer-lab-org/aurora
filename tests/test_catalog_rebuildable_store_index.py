@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -219,6 +220,132 @@ def test_real_workflow_capture_and_index_accept_access_time_and_unrelated_cache_
         cwd=tmp_path, capture_output=True, text=True, timeout=30,
     )
     assert capture.returncode == 0, capture.stderr
+    (tmp_path / "runtime-prepared-seal").mkdir()
+    seal.rename(tmp_path / "runtime-prepared-seal/runtime-prepared-seal.json")
+    runtime.rename(tmp_path / "runtime-transport")
+    components.rename(tmp_path / "component-transports")
+    monkeypatch.chdir(tmp_path)
+    argv = shlex.split(steps["store_index"]["run"])
+    monkeypatch.setattr(sys, "argv", [arg.replace("$RUNNER_TEMP", ".") for arg in argv[1:]])
+    assert builder.main() == 0
+    output = tmp_path / "catalog-rebuildable-store-index-v1.json"
+    index = CatalogRebuildableStoreIndexV1.model_validate_json(output.read_text())
+    assert {row.cache_key for row in index.candidates} == expected_keys
+
+
+def test_real_workflow_cache_inventory_is_stable_when_access_time_changes_between_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seal, runtime, components, _, expected_keys = _fixture(tmp_path)
+    created_origin = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    access_origin = datetime(2026, 9, 13, 23, 59, tzinfo=timezone.utc)
+    mutated_access = (access_origin + timedelta(minutes=1)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    live_keys = sorted(expected_keys)
+    rows = []
+    for cache_id in range(1, 208):
+        rows.append(
+            {
+                "id": cache_id,
+                "key": (
+                    live_keys[cache_id - 1]
+                    if cache_id <= len(live_keys)
+                    else f"unrelated-cache-{cache_id}"
+                ),
+                "ref": "refs/heads/main",
+                "version": "v1",
+                "size_in_bytes": 100,
+                "created_at": (created_origin + timedelta(minutes=cache_id))
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "last_accessed_at": (access_origin - timedelta(minutes=cache_id))
+                .isoformat()
+                .replace("+00:00", "Z"),
+            }
+        )
+
+    def pages_before_and_after(before_rows, after_rows):
+        return [
+            {
+                "total_count": len(rows),
+                "actions_caches": before_rows[:100],
+            },
+            {
+                "total_count": len(rows),
+                "actions_caches": after_rows[100:200],
+            },
+            {
+                "total_count": len(rows),
+                "actions_caches": after_rows[200:300],
+            }
+        ]
+
+    mutated_rows = [dict(row) for row in rows]
+    mutated_rows[200]["last_accessed_at"] = mutated_access
+
+    # GitHub's default ordering is last_accessed_at DESC. The initial dataset
+    # is rows 1..207 in that order. After page 1, row 201 moves to the front;
+    # recomputing page 2 then starts at row 100 (a duplicate), while row 201 is
+    # absent from the later pages. The validator must reject that inventory.
+    access_before = sorted(
+        rows, key=lambda row: row["last_accessed_at"], reverse=True
+    )
+    access_after = sorted(
+        mutated_rows, key=lambda row: row["last_accessed_at"], reverse=True
+    )
+    unstable_pages = pages_before_and_after(access_before, access_after)
+    assert access_before[:100][-1]["id"] == 100
+    assert access_after[0]["id"] == 201
+    assert access_after[100]["id"] == 100
+    assert 201 not in [row["id"] for row in access_after[100:]]
+    _write_json(tmp_path / "unstable-pages.json", unstable_pages)
+
+    # Sorting by immutable creation time keeps all three page memberships
+    # unchanged even though row 201's access time changes between pages.
+    created_before = sorted(rows, key=lambda row: row["created_at"])
+    created_after = sorted(mutated_rows, key=lambda row: row["created_at"])
+    stable_pages = pages_before_and_after(created_before, created_after)
+    assert [row["id"] for row in created_before] == [
+        row["id"] for row in created_after
+    ]
+    _write_json(tmp_path / "stable-pages.json", stable_pages)
+
+    steps = _workflow_steps()
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    if bash is None or not Path(bash).is_file():
+        pytest.skip("Bash required for the actual workflow capture script")
+    _set_builder_context(monkeypatch)
+    monkeypatch.setenv("RUNNER_TEMP", ".")
+    capture = subprocess.run(
+        [
+            bash,
+            "-c",
+            """gh() {
+  local url="${4:-}"
+  printf '%s\\n' "$url" >> gh-requests.log
+  if [[ "$url" == *"sort=created_at"* && "$url" == *"direction=asc"* ]]; then
+    cat stable-pages.json
+  else
+    cat unstable-pages.json
+  fi
+}
+"""
+            + steps["cache_inventory"]["run"],
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert capture.returncode == 0, capture.stderr
+    requests = (tmp_path / "gh-requests.log").read_text(encoding="utf-8").splitlines()
+    assert len(requests) == 2
+    assert all(
+        "actions/caches?ref=refs/heads/main&per_page=100" in request
+        for request in requests
+    )
+
     (tmp_path / "runtime-prepared-seal").mkdir()
     seal.rename(tmp_path / "runtime-prepared-seal/runtime-prepared-seal.json")
     runtime.rename(tmp_path / "runtime-transport")

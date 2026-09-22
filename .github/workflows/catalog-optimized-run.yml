@@ -1974,8 +1974,9 @@ jobs:
         run: |
           set -euo pipefail
           for snapshot in 1 2; do
+            # Restores change last_accessed_at and can shift offset-page boundaries.
             gh api --paginate --slurp \
-              "repos/$GITHUB_REPOSITORY/actions/caches?ref=refs/heads/main&per_page=100" \
+              "repos/$GITHUB_REPOSITORY/actions/caches?ref=refs/heads/main&per_page=100&sort=created_at&direction=asc" \
               > "$RUNNER_TEMP/catalog-main-caches-$snapshot.json"
           done
 
