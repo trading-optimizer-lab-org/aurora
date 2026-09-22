@@ -68,7 +68,7 @@ def test_consumed_sp500_generation_seven_keeps_its_historical_release_boundary(
         assert (installed_definition, prompt_hash) not in contexts
 
 
-def test_sp500_generation_nine_targets_current_manifest_after_request_353():
+def test_sp500_generation_ten_targets_current_manifest_after_request_360():
     from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
     from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
 
@@ -77,16 +77,36 @@ def test_sp500_generation_nine_targets_current_manifest_after_request_353():
         (root / "config/catalog_campaign_definitions/sp500-optimized-catalog-v1.manifest.json").read_bytes()
     )
     ticket = CatalogLaunchTicketV1(
-        schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000009",
-        campaign_key="sp500-optimized-catalog-v1", launch_generation=9,
-        previous_terminal_request_sha256="f337320f4ebb3c863581b632e18e15eeba364621363310ed31fc120677f84fe0",
+        schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000010",
+        campaign_key="sp500-optimized-catalog-v1", launch_generation=10,
+        previous_terminal_request_sha256="a0fdcfe2209caf1f03d6ee4db54fcc34b1488198cafb41bc0ef7461332b409bd",
         campaign_definition_sha256=definition.campaign_definition_sha256,
         prompt_sha256=hashlib.sha256(
             (root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").read_bytes()
         ).hexdigest(),
     )
     approval = load_lineage_transition(root, ticket)
-    assert approval is not None, "SP500 gen9 requires its own protected transition after #353"
+    assert approval is not None, "SP500 gen10 requires its own protected transition after #360"
+    assert approval.next_generation == 10
+    assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
+    assert approval.target_definition_sha256 == ticket.campaign_definition_sha256
+    assert approval.target_prompt_sha256 == ticket.prompt_sha256
+    assert approval.source_ticket_contexts == ()
+
+
+def test_consumed_sp500_generation_nine_keeps_its_historical_release_boundary():
+    from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
+
+    root = Path(__file__).resolve().parents[1]
+    ticket = CatalogLaunchTicketV1(
+        schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000009",
+        campaign_key="sp500-optimized-catalog-v1", launch_generation=9,
+        previous_terminal_request_sha256="f337320f4ebb3c863581b632e18e15eeba364621363310ed31fc120677f84fe0",
+        campaign_definition_sha256="3d18b6610f19be4331f3da6ca25b98dbf1115bbea912b9c2a0a099d2e20edcb2",
+        prompt_sha256="c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3",
+    )
+    approval = load_lineage_transition(root, ticket)
+    assert approval is not None
     assert approval.next_generation == 9
     assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
     assert approval.target_definition_sha256 == ticket.campaign_definition_sha256

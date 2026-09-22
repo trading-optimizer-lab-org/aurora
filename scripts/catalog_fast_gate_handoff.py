@@ -16,7 +16,10 @@ from typing import Any, Callable, Mapping
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import (
-    CheckpointRecoveryOwnerAuthenticationV1, _read_signed_request,
+    CheckpointRecoveryOwnerAuthenticationV1,
+    CheckpointRecoveryPredecessorAuthenticationV1,
+    _read_signed_request,
+    validate_checkpoint_recovery_predecessor_auth,
 )
 from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_owner import (
     CheckpointRecoveryOwnerProofV1, verify_checkpoint_failure_owner,
@@ -132,6 +135,54 @@ def _authority(*, anchor: Mapping[str, Any], commit: str):
     return document, state, tuple(edition)
 
 
+def _serialize_predecessor_authentication(
+    authenticated: CheckpointRecoveryPredecessorAuthenticationV1,
+) -> dict[str, Any]:
+    owner = authenticated.owner
+    return {
+        "owner": {
+            "run_id": owner.run_id,
+            "run": dict(owner.run),
+            "decision": owner.decision.model_dump(mode="json"),
+            "jobs": [dict(job) for job in owner.jobs],
+        },
+        "terminal": authenticated.terminal.model_dump(mode="json"),
+    }
+
+
+def _parse_predecessor_authentication(
+    value: object,
+) -> CheckpointRecoveryPredecessorAuthenticationV1:
+    try:
+        if not isinstance(value, Mapping) or set(value) != {"owner", "terminal"}:
+            raise ValueError(_ERROR)
+        raw_owner = value["owner"]
+        if not isinstance(raw_owner, Mapping) or set(raw_owner) != {
+            "run_id", "run", "decision", "jobs"
+        }:
+            raise ValueError(_ERROR)
+        raw_run = raw_owner["run"]
+        raw_jobs = raw_owner["jobs"]
+        if (
+            not isinstance(raw_run, Mapping)
+            or not isinstance(raw_jobs, list)
+            or any(not isinstance(job, Mapping) for job in raw_jobs)
+        ):
+            raise ValueError(_ERROR)
+        owner = FastGateOwnerEvidence(
+            raw_owner["run_id"],
+            dict(raw_run),
+            CatalogFastLaunchDecisionV1.model_validate(raw_owner["decision"]),
+            tuple(dict(job) for job in raw_jobs),
+        )
+        terminal = parse_catalog_terminal_receipt(value["terminal"])
+        return CheckpointRecoveryPredecessorAuthenticationV1(owner, terminal)
+    except (KeyError, TypeError, ValueError) as exc:
+        if str(exc) == _ERROR:
+            raise
+        raise ValueError(_ERROR) from exc
+
+
 def stage_admission(*, anchor: Mapping[str, Any], commit: str,
                     authority: FastAuthorityStateV1, context: Mapping[str, Any],
                     decision: CatalogFastLaunchDecisionV1,
@@ -151,6 +202,17 @@ def stage_admission(*, anchor: Mapping[str, Any], commit: str,
         if authenticated is None or verify_checkpoint_failure_owner(
                 profile=profile, owner=authenticated.owner, terminal=authenticated.terminal) != authenticated.proof:
             raise ValueError(_ERROR)
+        if profile.target_generation == 10:
+            if authenticated.predecessor is None:
+                raise ValueError(_ERROR)
+            try:
+                validate_checkpoint_recovery_predecessor_auth(
+                    profile=profile, authenticated=authenticated.predecessor
+                )
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(_ERROR) from exc
+        elif authenticated.predecessor is not None:
+            raise ValueError(_ERROR)
         owner = authenticated.owner
         recovery = {"profile_sha256": profile.profile_sha256,
             "proof": asdict(authenticated.proof), "owner": {
@@ -159,6 +221,10 @@ def stage_admission(*, anchor: Mapping[str, Any], commit: str,
                 "jobs": [job for job in owner.jobs if job.get("id") == authenticated.proof.source_finalizer_job_id]}}
         if authenticated.terminal is not None:
             recovery["terminal"] = authenticated.terminal.model_dump(mode="json")
+        if authenticated.predecessor is not None:
+            recovery["predecessor"] = _serialize_predecessor_authentication(
+                authenticated.predecessor
+            )
     elif authenticated is not None:
         raise ValueError(_ERROR)
     _write("admission.json", {"schema_version": "1", "execution": _execution(commit),
@@ -223,5 +289,17 @@ def consume_admission(*, root: Path, anchor: Mapping[str, Any], commit: str,
         after, _ = client.get_json(path)
         if not isinstance(after, dict) or any(after.get(key) != run.get(key) for key in (
                 "id", "run_attempt", "head_sha", "head_branch", "status", "conclusion", "path", "repository")):
+            raise ValueError(_ERROR)
+        if profile.target_generation == 10:
+            cached_predecessor = _parse_predecessor_authentication(
+                recovery.get("predecessor")
+            )
+            from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_auth import revalidate_checkpoint_recovery_predecessor
+            revalidate_checkpoint_recovery_predecessor(
+                repo_root=root, repository=client.repository, protected_commit_sha=commit,
+                profile=profile, cached=cached_predecessor, fetch_json=client,
+                download_artifact=download_archive,
+            )
+        elif "predecessor" in recovery:
             raise ValueError(_ERROR)
     return current, edition[1], proof

@@ -16,6 +16,7 @@ from .catalog_fast_path import CatalogTerminalReceiptV1, CatalogTerminalReceiptV
 
 if TYPE_CHECKING:
     from .catalog_checkpoint_recovery_profile import CheckpointRecoveryProfileV1
+    from .catalog_reduction_recovery_profile import RecoveryPredecessorBindings
 
 
 @dataclass(frozen=True)
@@ -32,12 +33,69 @@ class CheckpointRecoveryOwnerProofV1:
     source_finalizer_job_id: int
     evidence_kind: Literal['failed_owner_without_terminal', 'failed_owner_with_terminal'] = 'failed_owner_without_terminal'
 
+    def __post_init__(self) -> None:
+        if self.target_generation != 10:
+            return
+        from .catalog_checkpoint_recovery_profile import (
+            CHECKPOINT_RECOVERY_CAMPAIGN_KEY,
+            CHECKPOINT_RECOVERY_CONTINUATION_PROTECTED_COMMIT_SHA,
+            CHECKPOINT_RECOVERY_CONTINUATION_REQUEST_SHA256,
+            CHECKPOINT_RECOVERY_SOURCE8_ISSUE_NUMBER,
+            CHECKPOINT_RECOVERY_SOURCE8_PROTECTED_COMMIT_SHA,
+            CHECKPOINT_RECOVERY_SOURCE8_REQUEST_SHA256,
+            CHECKPOINT_RECOVERY_SOURCE8_RUN_ATTEMPT,
+            CHECKPOINT_RECOVERY_SOURCE8_RUN_ID,
+        )
+
+        if (
+            self.campaign_key != CHECKPOINT_RECOVERY_CAMPAIGN_KEY
+            or self.evidence_kind != 'failed_owner_with_terminal'
+            or self.source_request_sha256 != CHECKPOINT_RECOVERY_SOURCE8_REQUEST_SHA256
+            or self.source_issue_number != CHECKPOINT_RECOVERY_SOURCE8_ISSUE_NUMBER
+            or self.source_run_id != CHECKPOINT_RECOVERY_SOURCE8_RUN_ID
+            or self.source_run_attempt != CHECKPOINT_RECOVERY_SOURCE8_RUN_ATTEMPT
+            or self.source_protected_commit_sha != CHECKPOINT_RECOVERY_SOURCE8_PROTECTED_COMMIT_SHA
+        ):
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_SOURCE_IDENTITY_INVALID')
+        if CHECKPOINT_RECOVERY_CONTINUATION_REQUEST_SHA256 == self.source_request_sha256:
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_SOURCE_COLLISION')
+        if CHECKPOINT_RECOVERY_CONTINUATION_PROTECTED_COMMIT_SHA == self.source_protected_commit_sha:
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_SOURCE_COLLISION')
+
     @property
     def source_terminal_receipt_sha256(self) -> str | None:
-        if self.evidence_kind == 'failed_owner_with_terminal' and self.target_generation == 9:
+        if self.evidence_kind == 'failed_owner_with_terminal' and self.target_generation in {9, 10}:
             from .catalog_checkpoint_recovery_profile import CHECKPOINT_RECOVERY_SOURCE8_TERMINAL_RECEIPT_SHA256
             return CHECKPOINT_RECOVERY_SOURCE8_TERMINAL_RECEIPT_SHA256
         return None
+
+    @property
+    def predecessor_bindings(self) -> RecoveryPredecessorBindings | None:
+        """Return the separately authenticated immediate predecessor for target 10."""
+
+        if self.target_generation != 10:
+            return None
+        from .catalog_checkpoint_recovery_profile import (
+            CHECKPOINT_RECOVERY_CONTINUATION_ISSUE_NUMBER,
+            CHECKPOINT_RECOVERY_CONTINUATION_PREDECESSOR_GENERATION,
+            CHECKPOINT_RECOVERY_CONTINUATION_PROTECTED_COMMIT_SHA,
+            CHECKPOINT_RECOVERY_CONTINUATION_REQUEST_SHA256,
+            CHECKPOINT_RECOVERY_CONTINUATION_RUN_ATTEMPT,
+            CHECKPOINT_RECOVERY_CONTINUATION_RUN_ID,
+            CHECKPOINT_RECOVERY_CONTINUATION_TERMINAL_RECEIPT_SHA256,
+        )
+        from .catalog_reduction_recovery_profile import RecoveryPredecessorBindings
+
+        return RecoveryPredecessorBindings(
+            generation=CHECKPOINT_RECOVERY_CONTINUATION_PREDECESSOR_GENERATION,
+            request_sha256=CHECKPOINT_RECOVERY_CONTINUATION_REQUEST_SHA256,
+            issue_number=CHECKPOINT_RECOVERY_CONTINUATION_ISSUE_NUMBER,
+            run_id=CHECKPOINT_RECOVERY_CONTINUATION_RUN_ID,
+            run_attempt=CHECKPOINT_RECOVERY_CONTINUATION_RUN_ATTEMPT,
+            protected_commit_sha=CHECKPOINT_RECOVERY_CONTINUATION_PROTECTED_COMMIT_SHA,
+            terminal_receipt_sha256=CHECKPOINT_RECOVERY_CONTINUATION_TERMINAL_RECEIPT_SHA256,
+            decision_sha256=None,
+        )
 
     @property
     def evidence_sha256(self) -> str:
@@ -57,7 +115,7 @@ def verify_checkpoint_failure_owner(
     """
     code = 'CATALOG_CHECKPOINT_RECOVERY_OWNER_INVALID'
     try:
-        terminal_recovery = profile.target_generation == 9
+        terminal_recovery = profile.target_generation in {9, 10}
         if (
             not isinstance(owner, FastGateOwnerEvidence)
             or owner.unlaunched_terminal

@@ -61,7 +61,7 @@ def _load_checkpoint_recovery_seed(root, seed, campaign_key, context, *, sealed_
         or proof.source_run_attempt != profile.source_run_attempt
         or proof.source_protected_commit_sha != profile.source_protected_commit_sha
         or proof.source_decision_sha256 != profile.source_plan_bindings["decision_sha256"]
-        or proof.evidence_kind != ("failed_owner_with_terminal" if profile.target_generation == 9 else "failed_owner_without_terminal")
+        or proof.evidence_kind != ("failed_owner_with_terminal" if profile.target_generation in {9, 10} else "failed_owner_without_terminal")
         or type(proof.source_finalizer_job_id) is not int or proof.source_finalizer_job_id <= 0
     ):
         raise ValueError("CATALOG_CHECKPOINT_RECOVERY_OWNER_PROOF_INVALID")
@@ -75,7 +75,7 @@ def _load_checkpoint_recovery_seed(root, seed, campaign_key, context, *, sealed_
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID")
         paths.append(path)
     verify_checkpoint_recovery_plan(sealed_plan, profile, proof)
-    if profile.target_generation == 9:
+    if profile.target_generation in {9, 10}:
         from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_composition import verify_checkpoint_recovery_transport
         source = verify_checkpoint_recovery_transport(
             repo_root=root, source_plan_root=paths[0], checkpoint_root=paths[1], profile=profile,
@@ -89,7 +89,7 @@ def _load_checkpoint_recovery_seed(root, seed, campaign_key, context, *, sealed_
         )
     if (
         source.plan_receipt_sha256 != profile.source_plan_receipt_sha256
-        or source.checkpoint_count != (240 if profile.target_generation == 9 else 120)
+        or source.checkpoint_count != (240 if profile.target_generation in {9, 10} else 120)
         or source.resume_index.physical_result_count != profile.expected_result_count
         or source.resume_index.duplicate_result_count != 0
         or tuple(sorted(source.resume_index.strategy_ids)) != tuple(sorted(expected_ids))
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         if checked_out != protected_commit_sha:
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_COMMIT_MISMATCH")
 
-        profile = load_checkpoint_recovery_profile(REPOSITORY_ROOT, CHECKPOINT_RECOVERY_CAMPAIGN_KEY, 9) or load_checkpoint_recovery_profile(
+        profile = load_checkpoint_recovery_profile(REPOSITORY_ROOT, CHECKPOINT_RECOVERY_CAMPAIGN_KEY, 10) or load_checkpoint_recovery_profile(REPOSITORY_ROOT, CHECKPOINT_RECOVERY_CAMPAIGN_KEY, 9) or load_checkpoint_recovery_profile(
             REPOSITORY_ROOT,
             CHECKPOINT_RECOVERY_CAMPAIGN_KEY,
             CHECKPOINT_RECOVERY_TARGET_GENERATION,

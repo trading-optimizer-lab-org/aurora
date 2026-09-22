@@ -202,6 +202,8 @@ class FastAuthorityStateV1(_AuthorityContent):
                                lineage_transition: CatalogLineageTransitionV1 | None) -> FastAuthorityCampaignV1:
         from .catalog_checkpoint_recovery_owner import CheckpointRecoveryOwnerProofV1
 
+        if isinstance(recovery_proof, CheckpointRecoveryOwnerProofV1) and recovery_proof.target_generation == 10:
+            return self._checkpoint_continuation_predecessor(request, recovery_proof, lineage_transition)
         old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
         if (
             not isinstance(recovery_proof, CheckpointRecoveryOwnerProofV1)
@@ -222,6 +224,40 @@ class FastAuthorityStateV1(_AuthorityContent):
             or lineage_transition is None
             or not lineage_transition.authorizes(old.request, request)
         ):
+            raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_INVALID")
+        return old
+
+    def _checkpoint_continuation_predecessor(
+        self,
+        request: CatalogRunRequestV1 | CatalogLaunchTicketV1,
+        recovery_proof: CheckpointRecoveryOwnerProofV1,
+        lineage_transition: CatalogLineageTransitionV1 | None,
+    ) -> FastAuthorityCampaignV1:
+        """Keep the physical source distinct from the exact terminal predecessor."""
+        predecessor = recovery_proof.predecessor_bindings
+        old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
+        roots = [row for row in self.completed_intents
+                 if row.request_sha256 == recovery_proof.source_request_sha256]
+        if (predecessor is None or old is None or len(roots) != 1
+                or recovery_proof.evidence_kind != "failed_owner_with_terminal"
+                or recovery_proof.source_terminal_receipt_sha256 is None
+                or roots[0].campaign_key != request.campaign_key
+                or roots[0].issue_number != recovery_proof.source_issue_number
+                or roots[0].terminal_receipt_sha256 != recovery_proof.source_terminal_receipt_sha256
+                or not old.is_terminal
+                or old.generation != predecessor.generation
+                or old.owner_issue_number != predecessor.issue_number
+                or old.owner_run_id != predecessor.run_id
+                or old.request.request_sha256 != predecessor.request_sha256
+                or old.terminal_receipt_sha256 != predecessor.terminal_receipt_sha256
+                or old.request.previous_terminal_request_sha256 != recovery_proof.source_request_sha256
+                or request.campaign_key != recovery_proof.campaign_key
+                or request.launch_generation != recovery_proof.target_generation
+                or request.launch_generation != old.generation + 1
+                or request.previous_terminal_request_sha256 != predecessor.request_sha256
+                or request.request_id == old.request.request_id
+                or lineage_transition is None
+                or not lineage_transition.authorizes(old.request, request)):
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_PREDECESSOR_INVALID")
         return old
 
@@ -277,14 +313,15 @@ class FastAuthorityStateV1(_AuthorityContent):
                 raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
             self._checkpoint_archive(request, recovery_proof)
             return
-        if (recovery_proof.target_generation != 9
+        if (recovery_proof.target_generation not in {9, 10}
                 or recovery_proof.evidence_kind != "failed_owner_with_terminal"
                 or recovery_proof.campaign_key != request.campaign_key):
             raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_PROOF_INVALID")
         require_terminal_checkpoint_root(authority=self, request=request,
             source_issue_number=recovery_proof.source_issue_number, source_run_id=recovery_proof.source_run_id,
             source_request_sha256=recovery_proof.source_request_sha256,
-            terminal_receipt_sha256=recovery_proof.source_terminal_receipt_sha256)
+            terminal_receipt_sha256=recovery_proof.source_terminal_receipt_sha256,
+            predecessor=recovery_proof.predecessor_bindings if recovery_proof.target_generation == 10 else None)
         if any(row.emission.request.request_sha256 == request.request_sha256
                for row in self.unreserved_superseded_intents):
             raise ValueError("CATALOG_UNRESERVED_CHECKPOINT_SOURCE_SUPERSEDED")
