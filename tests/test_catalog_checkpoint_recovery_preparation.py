@@ -127,7 +127,9 @@ def test_partial_sealed_plan_preserves_recovery_binding(tmp_path, monkeypatch):
         kwargs['controller_binding']['checkpoint_recovery'] = build_checkpoint_recovery_binding(profile, proof)
         return writer(**kwargs)
     monkeypatch.setattr(planner, 'write_sealed_global_reuse_execution_plan', write)
-    test_partial_recipe_plan_seals_and_verifies_coherent_work_inputs(tmp_path)
+    test_partial_recipe_plan_seals_and_verifies_coherent_work_inputs(
+        tmp_path, warm_components=False, fully_cached=False,
+    )
     verify_checkpoint_recovery_plan(tmp_path / 'sealed', profile, proof)
 
 
