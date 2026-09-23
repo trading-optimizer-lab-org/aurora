@@ -58,6 +58,7 @@ jobs:
       selected_workers: ${{ steps.admit.outputs.selected_workers }}
       authority_id: ${{ steps.admit.outputs.authority_id }}
       campaign_id: ${{ steps.admit.outputs.campaign_id }}
+      engine_id: ${{ steps.inspect.outputs.engine_id }}
       science_sha256: ${{ steps.admit.outputs.science_sha256 }}
       execution_plan_sha256: ${{ steps.admit.outputs.execution_plan_sha256 }}
       execution_protocol_sha256: ${{ steps.admit.outputs.execution_protocol_sha256 }}
@@ -494,7 +495,7 @@ jobs:
 
   engine:
     needs: gate
-    if: ${{ needs.gate.outputs.launch_required == 'true' }}
+    if: ${{ needs.gate.outputs.launch_required == 'true' && needs.gate.outputs.engine_id == 'optimized_catalog_v1' }}
     permissions:
       actions: read
       contents: read
@@ -512,8 +513,29 @@ jobs:
       execution_mode: run
       canary_gate_artifact: ${{ needs.gate.outputs.canary_gate_artifact }}
 
+  engine_atlas:
+    needs: gate
+    if: ${{ needs.gate.outputs.launch_required == 'true' && needs.gate.outputs.engine_id == 'atlas_static_v1' }}
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+    uses: ./.github/workflows/sp500-atlas-run.yml
+    with:
+      run_mode: full
+      commit_sha: ${{ github.sha }}
+      request_sha256: ${{ needs.gate.outputs.request_sha256 }}
+      authority_id: ${{ needs.gate.outputs.authority_id }}
+      campaign_id: ${{ needs.gate.outputs.campaign_id }}
+      science_sha256: ${{ needs.gate.outputs.science_sha256 }}
+      execution_plan_sha256: ${{ needs.gate.outputs.execution_plan_sha256 }}
+      execution_protocol_sha256: ${{ needs.gate.outputs.execution_protocol_sha256 }}
+      protected_commit_sha: ${{ github.sha }}
+      decision_sha256: ${{ needs.gate.outputs.decision_sha256 }}
+      prepared_receipt_sha256: ${{ needs.gate.outputs.prepared_receipt_sha256 }}
+
   finalize:
-    needs: [gate, engine]
+    needs: [gate, engine, engine_atlas]
     if: ${{ always() && (needs.gate.result == 'success' || needs.gate.outputs.authority_reserved == 'true') && needs.gate.outputs.valid_request == 'true' && needs.gate.outputs.admission_completed == 'true' && needs.gate.outputs.existing_run_id == '' && needs.gate.outputs.preserve_issue != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -550,7 +572,7 @@ jobs:
           path: ${{ runner.temp }}/catalog-fast-terminal
 
       - name: Download the unique engine outcome
-        if: ${{ needs.gate.outputs.launch_required == 'true' }}
+        if: ${{ needs.gate.outputs.launch_required == 'true' && needs.gate.outputs.engine_id == 'optimized_catalog_v1' }}
         # A missing outcome must reach the fail-closed terminal producer.
         # This does not make missing or invalid science eligible for SUCCESS.
         continue-on-error: true
@@ -560,12 +582,28 @@ jobs:
           path: ${{ runner.temp }}/catalog-fast-terminal/engine
 
       - name: Download terminal science only for a successful engine candidate
-        if: ${{ needs.engine.outputs.campaign_state == 'TERMINAL_CANDIDATE' }}
+        if: ${{ needs.gate.outputs.engine_id == 'optimized_catalog_v1' && needs.engine.outputs.campaign_state == 'TERMINAL_CANDIDATE' }}
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: ${{ needs.engine.outputs.science_evidence_artifact }}
           path: ${{ runner.temp }}/catalog-fast-terminal/science
+
+      - name: Download Atlas preflight for terminal verification
+        if: ${{ needs.gate.outputs.engine_id == 'atlas_static_v1' && needs.engine_atlas.result == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-preflight
+          path: ${{ runner.temp }}/catalog-fast-terminal/atlas-preflight
+
+      - name: Download Atlas final results for terminal verification
+        if: ${{ needs.gate.outputs.engine_id == 'atlas_static_v1' && needs.engine_atlas.result == 'success' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-final-results
+          path: ${{ runner.temp }}/catalog-fast-terminal/atlas-final
 
       - name: Fetch one bounded timing snapshot
         env:
@@ -581,6 +619,7 @@ jobs:
 
       - id: terminal
         name: Create exactly one terminal receipt
+        if: ${{ needs.gate.outputs.engine_id == 'optimized_catalog_v1' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -603,9 +642,31 @@ jobs:
             --github-output "$GITHUB_OUTPUT" \
             "${optional[@]}"
 
+      - id: terminal_atlas
+        name: Verify Atlas reduction and create its terminal receipt
+        if: ${{ needs.gate.outputs.engine_id == 'atlas_static_v1' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/finalize_catalog_atlas_fast_run.py \
+            --repo-root . \
+            --request-context "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-request-context.json" \
+            --decision "$RUNNER_TEMP/catalog-fast-terminal/catalog-fast-decision-v1.json" \
+            --run "$RUNNER_TEMP/catalog-fast-terminal/run.json" \
+            --jobs "$RUNNER_TEMP/catalog-fast-terminal/jobs.json" \
+            --preflight-root "$RUNNER_TEMP/catalog-fast-terminal/atlas-preflight" \
+            --final-root "$RUNNER_TEMP/catalog-fast-terminal/atlas-final" \
+            --plan-sha256 "${{ needs.engine_atlas.outputs.plan_sha256 }}" \
+            --final-results-artifact sp500-atlas-final-results \
+            --gate-result "${{ needs.gate.result }}" \
+            --output "$RUNNER_TEMP/catalog-fast-terminal/catalog-terminal-receipt-v1.json" \
+            --comment-output "$RUNNER_TEMP/catalog-fast-terminal/terminal-comment.json" \
+            --github-output "$GITHUB_OUTPUT"
+
       - id: publish_receipt
         name: Publish the terminal receipt before changing the issue
-        if: ${{ steps.terminal.outcome == 'success' }}
+        if: ${{ steps.terminal.outcome == 'success' || steps.terminal_atlas.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: catalog-terminal-receipt-${{ needs.gate.outputs.request_sha256 }}
@@ -616,7 +677,7 @@ jobs:
 
       - id: write_authority
         name: Write current authority edition
-        if: ${{ steps.terminal.outcome == 'success' && steps.publish_receipt.outcome == 'success' }}
+        if: ${{ (steps.terminal.outcome == 'success' || steps.terminal_atlas.outcome == 'success') && steps.publish_receipt.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           CATALOG_PROTECTED_COMMIT_SHA: ${{ needs.gate.outputs.protected_commit_sha }}
@@ -687,7 +748,7 @@ jobs:
 
       - id: publish_terminal
         name: Publish the terminal state and release the reservation
-        if: ${{ steps.terminal.outcome == 'success' && steps.verify_authority.outcome == 'success' }}
+        if: ${{ (steps.terminal.outcome == 'success' || steps.terminal_atlas.outcome == 'success') && steps.verify_authority.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ needs.gate.outputs.issue_number }}
@@ -724,7 +785,7 @@ jobs:
       - name: Fail closed once and release a stuck reservation
         if: >-
           ${{ always() && steps.verify_authority.outcome == 'success' &&
-          (steps.terminal.outcome != 'success' ||
+          ((steps.terminal.outcome != 'success' && steps.terminal_atlas.outcome != 'success') ||
           steps.publish_receipt.outcome != 'success' ||
           steps.publish_terminal.outcome != 'success') }}
         env:

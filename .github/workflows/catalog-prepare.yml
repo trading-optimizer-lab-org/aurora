@@ -23,6 +23,9 @@ jobs:
     timeout-minutes: 10
     outputs:
       matrix: ${{ steps.targets.outputs.matrix }}
+      atlas_matrix: ${{ steps.targets.outputs.atlas_matrix }}
+      optimized_count: ${{ steps.targets.outputs.optimized_count }}
+      atlas_count: ${{ steps.targets.outputs.atlas_count }}
       target_count: ${{ steps.targets.outputs.target_count }}
     steps:
       - name: Check out the protected branch
@@ -53,6 +56,7 @@ jobs:
 
   prepare:
     needs: discover
+    if: ${{ needs.discover.outputs.optimized_count != '0' }}
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -62,5 +66,19 @@ jobs:
       contents: read
       issues: read
     uses: ./.github/workflows/catalog-prepare-one.yml
+    with:
+      campaign_key: ${{ matrix.campaign_key }}
+
+  prepare_atlas:
+    needs: discover
+    if: ${{ needs.discover.outputs.atlas_count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover.outputs.atlas_matrix) }}
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/catalog-atlas-prepare-one.yml
     with:
       campaign_key: ${{ matrix.campaign_key }}

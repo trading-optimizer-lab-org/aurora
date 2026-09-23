@@ -1237,10 +1237,11 @@ def test_engine_reduces_sealed_checkpoint_groups_before_final_merge() -> None:
     assert "--reduction-plan" in final_text
 
 
-def test_every_active_registry_engine_uses_the_common_efficient_path() -> None:
+def test_active_registry_engines_match_engine_specific_topology() -> None:
     from aurora.infra.github_performance.preflight import (
         CATALOG_ACTIVE_ENGINE_WORKFLOWS,
         load_github_yaml,
+        _validate_catalog_atlas_engine_topology,
         validate_catalog_workflow_topology,
     )
     from aurora.infra.sp500_megarun.catalog_campaign_registry import (
@@ -1253,6 +1254,16 @@ def test_every_active_registry_engine_uses_the_common_efficient_path() -> None:
     )
     active = [campaign for campaign in registry.campaigns if campaign.active]
     assert active
+    atlas_campaign = next(
+        campaign for campaign in active if campaign.engine_id == "atlas_static_v1"
+    )
+    assert atlas_campaign.campaign_key == "sp500-atlas-v1"
+    assert (
+        atlas_campaign.definition_manifest_path
+        == "config/catalog_campaign_definitions/sp500-atlas-v1.manifest.json"
+    )
+    atlas_freeze = json.loads(Path(atlas_campaign.freeze_manifest_path).read_text("utf-8"))
+    assert atlas_freeze["catalog_id"] == "sp500-atlas-1"
     assert {campaign.engine_id for campaign in active} <= set(
         CATALOG_ACTIVE_ENGINE_WORKFLOWS
     )
@@ -1260,24 +1271,200 @@ def test_every_active_registry_engine_uses_the_common_efficient_path() -> None:
         repo_root=root,
         registry=registry,
     )
-    assert receipt.status == "ready"
-    assert receipt.violations == ()
+    active_engine_paths = {
+        CATALOG_ACTIVE_ENGINE_WORKFLOWS[campaign.engine_id] for campaign in active
+    }
+    assert not any(
+        violation.path in active_engine_paths for violation in receipt.violations
+    ), receipt.violations
+    assert all(
+        violation.code == "CATALOG_LOCAL_WORKFLOW_MISSING"
+        and violation.path == ".github/workflows/catalog-prepare.yml"
+        and ".github/workflows/catalog-atlas-prepare-one.yml" in violation.message
+        for violation in receipt.violations
+    ), receipt.violations
 
     for campaign in active:
         path = Path(CATALOG_ACTIVE_ENGINE_WORKFLOWS[campaign.engine_id])
         workflow = load_github_yaml(path)
         assert set(workflow["on"]) == {"workflow_call"}
-        jobs = workflow["jobs"]
-        recipe_jobs = [
-            job
-            for job in jobs.values()
-            if job.get("uses")
-            == "./.github/workflows/catalog-optimized-worker.yml"
-        ]
-        assert recipe_jobs
-        assert all("verify_component_store" in job["needs"] for job in recipe_jobs)
-        assert jobs["reduce_groups"]["strategy"]["max-parallel"] <= 15
-        assert "reduce_groups" in jobs["reduce"]["needs"]
+        if campaign.engine_id == "optimized_catalog_v1":
+            jobs = workflow["jobs"]
+            recipe_jobs = [
+                job
+                for job in jobs.values()
+                if job.get("uses")
+                == "./.github/workflows/catalog-optimized-worker.yml"
+            ]
+            assert recipe_jobs
+            assert all("verify_component_store" in job["needs"] for job in recipe_jobs)
+            assert jobs["reduce_groups"]["strategy"]["max-parallel"] <= 15
+            assert "reduce_groups" in jobs["reduce"]["needs"]
+        elif campaign.engine_id == "atlas_static_v1":
+            assert _validate_catalog_atlas_engine_topology(
+                engine_path=path.as_posix(), workflow=workflow, repo_root=root
+            ) == []
+        else:
+            raise AssertionError(f"no test contract for engine {campaign.engine_id}")
+
+
+def test_atlas_static_engine_topology_is_fixed_and_fail_closed() -> None:
+    from copy import deepcopy
+
+    from aurora.infra.github_performance.preflight import (
+        CATALOG_ACTIVE_ENGINE_WORKFLOWS,
+        CATALOG_LEGACY_INACTIVE_WORKFLOWS,
+        _validate_catalog_atlas_engine_topology,
+        load_github_yaml,
+    )
+
+    path = ".github/workflows/sp500-atlas-run.yml"
+    assert CATALOG_ACTIVE_ENGINE_WORKFLOWS["atlas_static_v1"] == path
+    assert path not in CATALOG_LEGACY_INACTIVE_WORKFLOWS
+    workflow = load_github_yaml(Path(path))
+
+    def codes(candidate: dict[str, object]) -> set[str]:
+        return {
+            violation.code
+            for violation in _validate_catalog_atlas_engine_topology(
+                engine_path=path, workflow=candidate, repo_root=Path(".")
+            )
+        }
+
+    assert codes(workflow) == set()
+    preflight_steps = workflow["jobs"]["preflight"]["steps"]
+    downloads = [
+        step
+        for step in preflight_steps
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    ]
+    assert len(downloads) == 1
+    gate_download = downloads[0]
+    assert (
+        gate_download["with"]["name"]
+        == "catalog-sealed-execution-plan-${{ inputs.authority_id }}"
+    )
+    assert "run-id" not in gate_download["with"]
+    call_inputs = workflow["on"]["workflow_call"]["inputs"]
+    assert "prepared_artifact_name" not in call_inputs
+    assert "prepared_artifact_run_id" not in call_inputs
+
+    gate_step = next(
+        step
+        for step in preflight_steps
+        if "atlas_sealed_envelope.json" in str(step.get("run", ""))
+    )
+    assert "atlas_campaign_selection.json" in gate_step["run"]
+    assert 'shutil.copy2(selection_path, cloud_root / "atlas_campaign_selection.json")' in gate_step["run"]
+
+    public_trigger = deepcopy(workflow)
+    public_trigger["on"]["pull_request"] = {}
+    assert "CATALOG_ATLAS_WORKFLOW_CALL_INVALID" in codes(public_trigger)
+
+    unprotected_checkout = deepcopy(workflow)
+    unprotected_checkout["jobs"]["evaluate_a"]["steps"][0]["with"]["ref"] = (
+        "${{ inputs.commit_sha }}"
+    )
+    assert "CATALOG_ATLAS_CHECKOUT_COMMIT_INVALID" in codes(unprotected_checkout)
+
+    extra_prepared_input = deepcopy(workflow)
+    extra_prepared_input["on"]["workflow_call"]["inputs"]["prepared_artifact_name"] = {
+        "type": "string",
+        "required": False,
+        "default": "",
+    }
+    assert "CATALOG_ATLAS_GATE_ARTIFACT_INVALID" in codes(extra_prepared_input)
+
+    duplicate_gate_download = deepcopy(workflow)
+    duplicate_gate_download["jobs"]["preflight"]["steps"].append(deepcopy(gate_download))
+    assert "CATALOG_ATLAS_GATE_ARTIFACT_INVALID" in codes(duplicate_gate_download)
+
+    missing_selection = deepcopy(workflow)
+    selection_step = next(
+        step
+        for step in missing_selection["jobs"]["preflight"]["steps"]
+        if "atlas_campaign_selection.json" in str(step.get("run", ""))
+    )
+    selection_step["run"] = selection_step["run"].replace(
+        '"atlas_campaign_selection.json",', '"atlas_selection_missing.json",', 1
+    )
+    assert "CATALOG_ATLAS_PREPARED_INTERFACE_INVALID" in codes(missing_selection)
+
+    bad_envelope_hash = deepcopy(workflow)
+    envelope_step = next(
+        step
+        for step in bad_envelope_hash["jobs"]["preflight"]["steps"]
+        if "atlas_sealed_envelope.json" in str(step.get("run", ""))
+    )
+    envelope_step["run"] = envelope_step["run"].replace(
+        "canonical_sha256(envelope_identity)",
+        "canonical_sha256({})",
+        1,
+    )
+    assert "CATALOG_ATLAS_PREPARED_INTERFACE_INVALID" in codes(bad_envelope_hash)
+
+    wrong_prepared_bound = deepcopy(workflow)
+    bounds_step = next(
+        step
+        for step in wrong_prepared_bound["jobs"]["preflight"]["steps"]
+        if "plan.requested_recipe_count != 209906" in str(step.get("run", ""))
+    )
+    bounds_step["run"] = bounds_step["run"].replace(
+        "plan.total_shards != 360", "plan.total_shards != 361", 1
+    )
+    assert "CATALOG_ATLAS_PREPARED_BOUNDS_INVALID" in codes(wrong_prepared_bound)
+
+    non_train_plan = deepcopy(workflow)
+    recovery_plan_step = next(
+        step
+        for step in non_train_plan["jobs"]["recover_chunks"]["steps"]
+        if 'assert plan.train_end == "2010-12-31"' in str(step.get("run", ""))
+    )
+    recovery_plan_step["run"] = recovery_plan_step["run"].replace(
+        'plan.train_end == "2010-12-31"',
+        'plan.train_end == "2011-12-31"',
+        1,
+    )
+    assert "CATALOG_ATLAS_TRAIN_BOUNDARY_INVALID" in codes(non_train_plan)
+
+    wrong_evaluator = deepcopy(workflow)
+    evaluator_step = next(
+        step
+        for step in wrong_evaluator["jobs"]["evaluate_a"]["steps"]
+        if "scripts/run_sp500_atlas_worker.py" in str(step.get("run", ""))
+    )
+    evaluator_step["run"] = evaluator_step["run"].replace(
+        "scripts/run_sp500_atlas_worker.py", "scripts/other_worker.py", 1
+    )
+    assert "CATALOG_ATLAS_EXECUTION_PATHS_INVALID" in codes(wrong_evaluator)
+
+    wrong_reducer = deepcopy(workflow)
+    reducer_step = next(
+        step
+        for step in wrong_reducer["jobs"]["reduce"]["steps"]
+        if "scripts/reduce_sp500_atlas_run.py" in str(step.get("run", ""))
+    )
+    reducer_step["run"] = reducer_step["run"].replace(
+        "scripts/reduce_sp500_atlas_run.py", "scripts/other_reducer.py", 1
+    )
+    assert "CATALOG_ATLAS_EXECUTION_PATHS_INVALID" in codes(wrong_reducer)
+
+    over_parallel = deepcopy(workflow)
+    over_parallel["jobs"]["evaluate_a"]["strategy"]["max-parallel"] = 8
+    assert "CATALOG_ATLAS_CONCURRENCY_INVALID" in codes(over_parallel)
+
+    pilot_legacy_limit = deepcopy(workflow)
+    pilot_legacy_limit["jobs"]["pilot_evaluate"]["strategy"]["max-parallel"] = 120
+    assert codes(pilot_legacy_limit) == set()
+
+    optimized_reuse_verifier = deepcopy(workflow)
+    envelope_step = next(
+        step
+        for step in optimized_reuse_verifier["jobs"]["preflight"]["steps"]
+        if "atlas_sealed_envelope.json" in str(step.get("run", ""))
+    )
+    envelope_step["run"] += "\nverify_sealed_global_reuse_execution_plan"
+    assert "CATALOG_ATLAS_PREPARED_INTERFACE_INVALID" in codes(optimized_reuse_verifier)
 
 
 def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:

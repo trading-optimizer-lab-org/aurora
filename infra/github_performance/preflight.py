@@ -570,7 +570,11 @@ CATALOG_LIVE_AUDIT_CREDENTIAL_NAMES = frozenset(
 )
 CATALOG_ACTIVE_ENGINE_WORKFLOWS = {
     "optimized_catalog_v1": ".github/workflows/catalog-optimized-run.yml",
+    "atlas_static_v1": ".github/workflows/sp500-atlas-run.yml",
 }
+CATALOG_ATLAS_EXPECTED_RECIPE_COUNT = 209906
+CATALOG_ATLAS_EXPECTED_TOTAL_SHARDS = 360
+CATALOG_ATLAS_TRAIN_END = "2010-12-31"
 CATALOG_PRODUCTION_WORKER_WORKFLOWS = frozenset(
     {
         ".github/workflows/catalog-component-worker.yml",
@@ -584,7 +588,6 @@ CATALOG_LEGACY_INACTIVE_WORKFLOWS = frozenset(
         ".github/workflows/sp500-atlas-controller.yml",
         ".github/workflows/sp500-atlas-pilot.yml",
         ".github/workflows/sp500-atlas-postrun.yml",
-        ".github/workflows/sp500-atlas-run.yml",
         ".github/workflows/sp500-atlas-segment.yml",
         ".github/workflows/sp500-catalog-optimization-qualification.yml",
         ".github/workflows/sp500-strategy-catalog-overnight.yml",
@@ -1000,6 +1003,332 @@ def _validate_catalog_live_audit_topology(
     return violations
 
 
+def _validate_catalog_atlas_engine_topology(
+    *, engine_path: str, workflow: Mapping[str, Any], repo_root: Path
+) -> list[Violation]:
+    """Validate Atlas's sealed gate and execution topology, not optimized workers."""
+
+    violations: list[Violation] = []
+
+    def reject(code: str, message: str) -> None:
+        violations.append(_catalog_violation(code, engine_path, message))
+
+    if set(_catalog_workflow_triggers(workflow)) != {"workflow_call"}:
+        reject(
+            "CATALOG_ATLAS_WORKFLOW_CALL_INVALID",
+            "Atlas compute must be reusable-only, with no untrusted public trigger",
+        )
+
+    events = workflow.get("on")
+    call = events.get("workflow_call") if isinstance(events, Mapping) else None
+    inputs = call.get("inputs") if isinstance(call, Mapping) else None
+    required_inputs = {
+        "commit_sha",
+        "authority_id",
+        "request_sha256",
+        "decision_sha256",
+        "prepared_receipt_sha256",
+    }
+    obsolete_inputs = {"prepared_artifact_name", "prepared_artifact_run_id"}
+    if not isinstance(inputs, Mapping) or not required_inputs <= set(inputs):
+        reject(
+            "CATALOG_ATLAS_INPUTS_INVALID",
+            "Atlas must receive the protected commit and sealed authority identifiers",
+        )
+    elif obsolete_inputs & set(inputs):
+        reject(
+            "CATALOG_ATLAS_GATE_ARTIFACT_INVALID",
+            "Atlas must consume the authority-scoped gate artifact without a second PREPARED interface",
+        )
+
+    if workflow.get("permissions") != {
+        "actions": "read",
+        "contents": "read",
+    }:
+        reject(
+            "CATALOG_ATLAS_PERMISSIONS_INVALID",
+            "Atlas compute permissions must be exactly read-only",
+        )
+
+    jobs = workflow.get("jobs")
+    required_jobs = {
+        "preflight",
+        "pilot_evaluate",
+        "recover_chunks",
+        "recover_merge",
+        "evaluate_a",
+        "evaluate_b",
+        "evaluate_c",
+        "smoke_serial",
+        "reduce",
+    }
+    if not isinstance(jobs, Mapping) or not required_jobs <= set(jobs):
+        reject(
+            "CATALOG_ATLAS_JOB_TOPOLOGY_INVALID",
+            "Atlas must retain its preflight, evaluator, recovery, smoke, and reduction paths",
+        )
+        jobs = jobs if isinstance(jobs, Mapping) else {}
+    for job_id, job in jobs.items():
+        if isinstance(job, Mapping) and "runs-on" in job and (
+            job.get("runs-on") != "ubuntu-24.04"
+            or job.get("environment") != "catalog-production"
+        ):
+            reject(
+                "CATALOG_ATLAS_JOB_PROTECTION_INVALID",
+                f"Atlas job {job_id} must use the protected free Linux environment",
+            )
+
+    def steps_for(job_id: str) -> list[Mapping[str, Any]]:
+        job = jobs.get(job_id)
+        steps = job.get("steps", ()) if isinstance(job, Mapping) else ()
+        if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
+            return []
+        return [step for step in steps if isinstance(step, Mapping)]
+
+    def run_text(job_id: str) -> str:
+        return "\n".join(str(step.get("run", "")) for step in steps_for(job_id))
+
+    def needs_for(job_id: str) -> set[str]:
+        job = jobs.get(job_id)
+        return _catalog_job_needs(job) if isinstance(job, Mapping) else set()
+
+    preflight_steps = steps_for("preflight")
+    downloads = [
+        step
+        for step in preflight_steps
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    ]
+    gate_name = "catalog-sealed-execution-plan-${{ inputs.authority_id }}"
+    gate_downloads = [
+        step
+        for step in downloads
+        if isinstance(step.get("with"), Mapping)
+        and step["with"].get("name") == gate_name
+    ]
+    gate_run = run_text("preflight")
+    gate_ok = (
+        len(downloads) == 1
+        and len(gate_downloads) == 1
+        and "inputs.prepared_receipt_sha256" in str(gate_downloads[0].get("if", ""))
+        and FULL_SHA_RE.fullmatch(
+            str(gate_downloads[0].get("uses", "")).rpartition("@")[2]
+        )
+        and gate_downloads[0]["with"].get("path")
+        == "${{ runner.temp }}/atlas-controller-plan"
+        and "run-id" not in gate_downloads[0]["with"]
+    )
+    if not gate_ok:
+        reject(
+            "CATALOG_ATLAS_GATE_ARTIFACT_INVALID",
+            "preflight must download exactly one pinned authority-scoped execution-plan artifact",
+        )
+
+    gate_files = (
+        "atlas_prepared_receipt.json",
+        "atlas_run_plan.json",
+        "atlas_campaign_selection.json",
+        "atlas_manifest.json",
+        "atlas_sealed_envelope.json",
+    )
+    envelope_fields = (
+        "envelope_sha256",
+        "authority_id",
+        "campaign_id",
+        "request_sha256",
+        "decision_sha256",
+        "prepared_receipt_sha256",
+        "plan_sha256",
+        "science_sha256",
+        "execution_protocol_sha256",
+        "protected_commit_sha",
+        "selection_sha256",
+        "target_end_iso",
+    )
+    expected_files_block = gate_run.partition("expected_files = {")[2].partition("}")[0]
+    envelope_fields_block = gate_run.partition("envelope_fields = {")[2].partition("}")[0]
+    sealed_gate_ok = (
+        "expected_files" in gate_run
+        and "if entries != expected_files" in gate_run
+        and "if set(envelope) != envelope_fields" in gate_run
+        and all(f'"{name}"' in expected_files_block for name in gate_files)
+        and all(f'"{name}"' in envelope_fields_block for name in envelope_fields)
+        and "canonical_sha256(envelope_identity)" in gate_run
+        and 'envelope["envelope_sha256"]' in gate_run
+        and "AtlasPreparedReceiptV1.model_validate" in gate_run
+        and 'receipt.status != "PREPARED"' in gate_run
+        and "canonical_sha256(selection_identity)" in gate_run
+        and "selection_path" in gate_run
+        and 'selection["selection_sha256"]' in gate_run
+        and 'shutil.copy2(selection_path, cloud_root / "atlas_campaign_selection.json")'
+        in gate_run
+        and "plan.requested_recipe_count != 209906 or plan.total_shards != 360"
+        in gate_run
+        and "plan.validation_opened or plan.locked_opened" in gate_run
+        and 'envelope["protected_commit_sha"] != os.environ["GITHUB_SHA"]'
+        in gate_run
+        and "verify_sealed_global_reuse_execution_plan" not in json.dumps(
+            workflow, sort_keys=True
+        )
+    )
+    if not sealed_gate_ok:
+        reject(
+            "CATALOG_ATLAS_PREPARED_INTERFACE_INVALID",
+            "the single gate must bind the five-file Atlas receipt, plan, selection, manifest, and sealed envelope",
+        )
+
+    workflow_env = workflow.get("env")
+    required_bindings = {
+        "ATLAS_AUTHORITY_ID": "${{ inputs.authority_id }}",
+        "ATLAS_REQUEST_SHA256": "${{ inputs.request_sha256 }}",
+        "ATLAS_DECISION_SHA256": "${{ inputs.decision_sha256 }}",
+        "ATLAS_CLOUD_PREPARED_RECEIPT_SHA256": "${{ inputs.prepared_receipt_sha256 }}",
+    }
+    if not isinstance(workflow_env, Mapping) or any(
+        workflow_env.get(name) != value for name, value in required_bindings.items()
+    ):
+        reject(
+            "CATALOG_ATLAS_INPUT_BINDING_INVALID",
+            "sealed authority and receipt identities must flow from typed workflow inputs",
+        )
+
+    requested_commit_guard = any(
+        isinstance(step.get("env"), Mapping)
+        and step["env"].get("WORKFLOW_COMMIT_SHA") == "${{ github.sha }}"
+        and 'test "$ATLAS_REQUESTED_COMMIT_SHA" = "$WORKFLOW_COMMIT_SHA"' in str(step.get("run", ""))
+        and 'test "$(git rev-parse HEAD)" = "$WORKFLOW_COMMIT_SHA"' in str(step.get("run", ""))
+        for step in steps_for("preflight")
+    )
+    recovery_commit_guard = (
+        'test "${{ inputs.commit_sha }}" = "$GITHUB_SHA"' in run_text("recover_chunks")
+        and 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in run_text("recover_chunks")
+    )
+    if not requested_commit_guard or not recovery_commit_guard:
+        reject(
+            "CATALOG_ATLAS_PROTECTED_COMMIT_GUARD_MISSING",
+            "normal and recovery execution must bind their checkout to github.sha",
+        )
+
+    checkout_invalid = False
+    for job_id, job in jobs.items():
+        if not isinstance(job, Mapping) or job.get("runs-on") != "ubuntu-24.04":
+            checkout_invalid = True
+            continue
+        checkouts = [
+            step
+            for step in steps_for(str(job_id))
+            if isinstance(step.get("uses"), str)
+            and step["uses"].startswith("actions/checkout@")
+        ]
+        if not checkouts:
+            checkout_invalid = True
+            continue
+        for checkout in checkouts:
+            options = checkout.get("with")
+            if (
+                not FULL_SHA_RE.fullmatch(str(checkout.get("uses", "")).rpartition("@")[2])
+                or not isinstance(options, Mapping)
+                or options.get("ref") != "${{ github.sha }}"
+                or options.get("persist-credentials") is not False
+            ):
+                checkout_invalid = True
+    if checkout_invalid:
+        reject(
+            "CATALOG_ATLAS_CHECKOUT_COMMIT_INVALID",
+            "every Atlas job must use a pinned checkout of github.sha without persisted credentials",
+        )
+
+    freeze_path = Path(repo_root) / "config/sp500_atlas_1/freeze_manifest_v1.json"
+    try:
+        freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        freeze = None
+    recovery_text = run_text("recover_chunks")
+
+    finite_plan_ok = (
+        isinstance(freeze, Mapping)
+        and freeze.get("requested_recipe_count") == CATALOG_ATLAS_EXPECTED_RECIPE_COUNT
+        and freeze.get("total_shards") == CATALOG_ATLAS_EXPECTED_TOTAL_SHARDS
+        and "plan.requested_recipe_count != 209906 or plan.total_shards != 360" in gate_run
+        and "assert plan.requested_recipe_count == 209906" in recovery_text
+        and "assert plan.total_shards == 360" in recovery_text
+    )
+    if not finite_plan_ok:
+        reject(
+            "CATALOG_ATLAS_PREPARED_BOUNDS_INVALID",
+            "the sealed PREPARED plan and frozen catalog must bind 209906 recipes and 360 shards",
+        )
+
+    train_only_ok = (
+        isinstance(freeze, Mapping)
+        and freeze.get("train_end") == CATALOG_ATLAS_TRAIN_END
+        and freeze.get("validation_opened") is False
+        and freeze.get("locked_opened") is False
+        and f'assert plan.train_end == "{CATALOG_ATLAS_TRAIN_END}"' in recovery_text
+        and "plan.validation_opened or plan.locked_opened" in gate_run
+        and "assert plan.validation_opened is False" in recovery_text
+        and "assert plan.locked_opened is False" in recovery_text
+    )
+    if not train_only_ok:
+        reject(
+            "CATALOG_ATLAS_TRAIN_BOUNDARY_INVALID",
+            "Atlas PREPARED and frozen plans must remain train-only",
+        )
+
+    expected_parallel = {"evaluate_a": 6, "evaluate_b": 7, "evaluate_c": 7}
+    cloud_limits: list[int] = []
+    concurrency_ok = True
+    for job_id, expected_limit in expected_parallel.items():
+        job = jobs.get(job_id)
+        strategy = job.get("strategy") if isinstance(job, Mapping) else None
+        value = strategy.get("max-parallel") if isinstance(strategy, Mapping) else None
+        if isinstance(value, int) and not isinstance(value, bool):
+            cloud_limit = value
+        elif isinstance(value, str):
+            match = re.fullmatch(
+                r"\$\{\{\s*inputs\.prepared_receipt_sha256\s*!=\s*''\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}",
+                value.strip(),
+            )
+            if match is None or int(match.group(2)) != 120:
+                concurrency_ok = False
+                continue
+            cloud_limit = int(match.group(1))
+        else:
+            concurrency_ok = False
+            continue
+        cloud_limits.append(cloud_limit)
+        if cloud_limit != expected_limit:
+            concurrency_ok = False
+    if not concurrency_ok or tuple(cloud_limits) != (6, 7, 7) or sum(cloud_limits) != 20:
+        reject(
+            "CATALOG_ATLAS_CONCURRENCY_INVALID",
+            "cloud full-run caps must be 6/7/7 (20 total); a preserved legacy branch must remain 120",
+        )
+
+    evaluators = ("evaluate_a", "evaluate_b", "evaluate_c")
+    execution_paths_ok = all(
+        "scripts/run_sp500_atlas_worker.py" in run_text(job_id)
+        and "preflight" in needs_for(job_id)
+        for job_id in ("pilot_evaluate", *evaluators)
+    )
+    execution_paths_ok = (
+        execution_paths_ok
+        and "scripts/run_sp500_atlas_worker.py" in run_text("smoke_serial")
+        and "scripts/reduce_sp500_atlas_run.py" in run_text("smoke_serial")
+        and "preflight" in needs_for("smoke_serial")
+        and "scripts/reduce_sp500_atlas_run.py" in run_text("reduce")
+        and {"preflight", *evaluators} <= needs_for("reduce")
+        and "scripts/recover_sp500_atlas_reference.py" in recovery_text
+        and "scripts/merge_sp500_atlas_reference.py" in run_text("recover_merge")
+    )
+    if not execution_paths_ok:
+        reject(
+            "CATALOG_ATLAS_EXECUTION_PATHS_INVALID",
+            "Atlas evaluators, recovery paths, and reducers must use their fixed scripts and dependencies",
+        )
+
+    return violations
+
+
 def validate_catalog_workflow_topology(
     *, repo_root: Path, registry: CatalogCampaignRegistryV1
 ) -> CatalogWorkflowTopologyReceiptV1:
@@ -1128,7 +1457,15 @@ def validate_catalog_workflow_topology(
                     f"heavy catalog workflow has public triggers {sorted(public)}",
                 )
             )
-        if item.role in {"active_engine", "production_worker"}:
+        if item.role == "active_engine" and item.engine_id == "atlas_static_v1":
+            violations.extend(
+                _validate_catalog_atlas_engine_topology(
+                    engine_path=item.path,
+                    workflow=workflow,
+                    repo_root=root,
+                )
+            )
+        elif item.role in {"active_engine", "production_worker"}:
             if set(item.triggers) != {"workflow_call"}:
                 violations.append(
                     _catalog_violation(
@@ -1487,6 +1824,17 @@ def validate_catalog_workflow_topology(
                     f"engine callers are {sorted(actual_callers)}",
                 )
             )
+        if engine_id == "atlas_static_v1":
+            continue
+        if engine_id != "optimized_catalog_v1":
+            violations.append(
+                _catalog_violation(
+                    "CATALOG_ENGINE_TOPOLOGY_UNSUPPORTED",
+                    engine_id,
+                    "active engine has no engine-specific topology contract",
+                )
+            )
+            continue
         engine = documents[engine_path]
         engine_jobs = engine.get("jobs", {})
         engine_text = json.dumps(
@@ -2049,6 +2397,13 @@ def validate_workflow_policy(
         and relative not in FRAMEWORK_INTERNAL_WORKFLOW_PATHS
         and _is_heavy_workflow(workflow, path)
         and not _calls_future_framework(workflow)
+        and not (
+            relative == ".github/workflows/catalog-atlas-prepare-one.yml"
+            and set(_catalog_workflow_triggers(workflow)) == {"workflow_call"}
+            and workflow.get("permissions") == {"actions": "read", "contents": "read"}
+            and _get(workflow, ("jobs", "calibrate", "uses"))
+            == "./.github/workflows/sp500-atlas-calibration.yml"
+        )
     ):
         violations.append(
             _violation(

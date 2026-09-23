@@ -872,5 +872,10 @@ def test_preparation_target_selection_includes_only_active_registered_catalogs(
 
     selected = select_targets(repo_root=root, campaign_key="", github_output=output)
 
-    assert selected == ("catalog-fast-canary-v1", "sp500-optimized-catalog-v1")
-    assert "target_count=2" in output.read_text("utf-8")
+    assert selected == (
+        "catalog-fast-canary-v1", "sp500-atlas-v1", "sp500-optimized-catalog-v1"
+    )
+    rendered = output.read_text("utf-8")
+    assert "target_count=3" in rendered
+    assert "optimized_count=2" in rendered
+    assert "atlas_count=1" in rendered

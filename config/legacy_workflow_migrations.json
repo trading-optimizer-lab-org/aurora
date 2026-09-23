@@ -33,8 +33,8 @@
     {
       "path": ".github/workflows/catalog-fast-controller.yml",
       "previous_sha256": "65f654f23f2ee72f6805e8dcb655ad83f52656715847544d1c03949ac932249e",
-      "reason": "retain protected admission and exact PREPARED recovery while requiring verified terminal authority before closing expired unlaunched cloud requests",
-      "replacement_sha256": "bf1dbfb68a51dfb15f9e66d01942ef4cdbc6041f4b287b6728d93088c6b0c936"
+      "reason": "route registered Atlas through the protected controller and verify its exact train-only terminal receipt",
+      "replacement_sha256": "47da64dac50f8fe72209fbdb41ebe10f884d83469135cf96d4c2c741edf49798"
     },
     {
       "path": ".github/workflows/catalog-optimized-run.yml",
@@ -57,8 +57,8 @@
     {
       "path": ".github/workflows/catalog-prepare.yml",
       "previous_sha256": "3e5cb02e4fabfa74ed3340bbb4272d5747a7090646505221f65ca8fff880ab90",
-      "reason": "remove the manually selectable code reference and make the repository package importable during automatic preparation",
-      "replacement_sha256": "cd03c3f59ca0f8fec223ced6bcf1c190a4984f6fcba9c716735ec1486e0affbd"
+      "reason": "prepare Atlas independently from the same protected registry without changing optimized preparation",
+      "replacement_sha256": "cbc15aaaaabca691067e3b8677279b48e0f369fe6b6233fe3d719c3dab77402d"
     },
     {
       "path": ".github/workflows/catalog-recovery-wave.yml",
@@ -95,6 +95,18 @@
       "previous_sha256": "1adfa87e7b08fcb7b13c1a0a701a2559d3c1daaf8b280caeddc6d2c657687696",
       "reason": "repair Bandit exclusions without weakening the security gate",
       "replacement_sha256": "b490c2bc55f699c0ad464d6fc84945ad3b8516a4eb62fcb782fdb681aa868875"
+    },
+    {
+      "path": ".github/workflows/sp500-atlas-calibration.yml",
+      "previous_sha256": "6030d23f95b247af3889bfd218f56175f7bf0c4a07b3e6462e8df2441e5e72ce",
+      "reason": "calibrate a future Atlas run while reconstructing exactly the frozen scientific catalog",
+      "replacement_sha256": "b002b4071e8c00d8a9d6b7e528c474c830e77eb8f26fbffda44b58a6968f5ddf"
+    },
+    {
+      "path": ".github/workflows/sp500-atlas-run.yml",
+      "previous_sha256": "aa50a5e345803e918929af7bd8a775d9434fdf92e44bb443b4464012912f2dcb",
+      "reason": "make the frozen train-only Atlas engine reusable through the sealed protected controller",
+      "replacement_sha256": "7b10d4a878bfbb43eb8db51ad630ba84c3ba382b51c4279b3b2ebf2285b2f6eb"
     },
     {
       "path": ".github/workflows/tests.yml",

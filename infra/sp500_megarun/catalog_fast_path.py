@@ -10,7 +10,8 @@ from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from .catalog_campaign_registry import CatalogCampaignEntryV1, CatalogEngineId
+from .catalog_campaign_registry import CatalogAtlasCampaignEntryV1, CatalogCampaignEntryV1
+from .catalog_atlas_cloud_identity import AtlasPreparationIdentityV1, AtlasPreparedReceiptV1
 from .catalog_request_contract import (
     CAMPAIGN_KEY_PATTERN,
     CatalogRunRequestV1,
@@ -68,7 +69,7 @@ class CatalogPreparationIdentityV1(FrozenModel):
 
     schema_version: Literal["1"]
     campaign_key: str = Field(pattern=CAMPAIGN_KEY_PATTERN)
-    engine_id: CatalogEngineId
+    engine_id: Literal["optimized_catalog_v1"]
     protected_commit_sha: CommitSha
     campaign_definition_sha256: Sha256
     scientific_contract_sha256: Sha256
@@ -87,10 +88,19 @@ class CatalogPreparationIdentityV1(FrozenModel):
 def build_catalog_preparation_identity(
     *,
     repo_root: Path,
-    registry_entry: CatalogCampaignEntryV1,
+    registry_entry: CatalogCampaignEntryV1 | CatalogAtlasCampaignEntryV1,
     protected_commit_sha: str,
-) -> CatalogPreparationIdentityV1:
+) -> CatalogPreparationIdentityV1 | AtlasPreparationIdentityV1:
     """Verify the registered closure and derive one exact preparation key."""
+
+    if isinstance(registry_entry, CatalogAtlasCampaignEntryV1):
+        from .catalog_atlas_cloud_identity import build_atlas_preparation_identity
+
+        return build_atlas_preparation_identity(
+            repo_root=repo_root,
+            registry_entry=registry_entry,
+            protected_commit_sha=protected_commit_sha,
+        )
 
     from .catalog_campaign_definition_builder import (
         verify_catalog_campaign_definition,
@@ -361,9 +371,9 @@ def _blocked_decision(
 def decide_fast_catalog_launch(
     *,
     request: CatalogRunRequestV1,
-    registry_entry: CatalogCampaignEntryV1,
-    prepared_receipt: CatalogPreparedReceiptV1,
-    expected_preparation_identity: CatalogPreparationIdentityV1,
+    registry_entry: CatalogCampaignEntryV1 | CatalogAtlasCampaignEntryV1,
+    prepared_receipt: CatalogPreparedReceiptV1 | AtlasPreparedReceiptV1,
+    expected_preparation_identity: CatalogPreparationIdentityV1 | AtlasPreparationIdentityV1,
     snapshot: CatalogFastGateSnapshotV1,
     issue_created_at: datetime,
 ) -> CatalogFastLaunchDecisionV1:

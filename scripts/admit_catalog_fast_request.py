@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,15 +26,24 @@ from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_gate_budget import gate_timeout
 from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1, load_lineage_transition
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+    CatalogAtlasCampaignEntryV1,
     load_catalog_campaign_registry,
     resolve_catalog_campaign,
 )
 from aurora.infra.sp500_megarun.catalog_fast_path import (
+    AtlasPreparationIdentityV1,
     CatalogFastGateSnapshotV1,
     CatalogFastLaunchDecisionV1,
     CatalogPreparationIdentityV1,
     CatalogTerminalReceipt,
     decide_fast_catalog_launch,
+)
+from aurora.infra.sp500_megarun.catalog_controller import (
+    catalog_authority_id,
+    catalog_campaign_id,
+)
+from aurora.infra.sp500_megarun.catalog_execution_protocol import (
+    execution_protocol_sha256,
 )
 from aurora.infra.sp500_megarun.catalog_github_snapshot import (
     CatalogGitHubReadOnlyClient,
@@ -58,6 +69,7 @@ from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_req
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateAliasEvidence, FastGateOwnerEvidence, load_fast_gate_owner, load_owner_terminal_receipt,
 )
+from scripts.verify_catalog_prepared_bundle import verify_atlas_prepared_bundle
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
@@ -208,6 +220,89 @@ def _write_replay_decision(
     with github_output.open("a", encoding="utf-8", newline="\n") as stream:
         for key, value in outputs.items():
             stream.write(f"{key}={value}\n")
+
+
+def _materialize_atlas_prepared_plan(
+    *,
+    bundle_dir: Path,
+    expected_identity: AtlasPreparationIdentityV1,
+    registry_entry: CatalogAtlasCampaignEntryV1,
+    request_sha256: str,
+    decision_sha256: str,
+    repo_root: Path,
+    output_dir: Path,
+) -> Mapping[str, object]:
+    """Create the request-bound Atlas envelope without optimized payloads."""
+
+    receipt, verified_manifest = verify_atlas_prepared_bundle(
+        bundle_dir=bundle_dir,
+        expected_identity=expected_identity,
+        repo_root=repo_root,
+    )
+    target = Path(output_dir).resolve(strict=False)
+    if output_dir.exists() or output_dir.is_symlink():
+        raise ValueError("CATALOG_ATLAS_SEALED_PLAN_OUTPUT_EXISTS")
+    target.mkdir(parents=False, exist_ok=False)
+    source = Path(bundle_dir).resolve(strict=True)
+    shutil.copy2(source / "atlas_prepared_receipt.json", target / "atlas_prepared_receipt.json")
+    shutil.copy2(source / "plan/atlas_run_plan.json", target / "atlas_run_plan.json")
+    shutil.copy2(
+        source / "plan/atlas_campaign_selection.json",
+        target / "atlas_campaign_selection.json",
+    )
+    shutil.copy2(source / "atlas/manifest.json", target / "atlas_manifest.json")
+    definition_manifest_input = repo_root / registry_entry.definition_manifest_path
+    if (
+        definition_manifest_input.is_symlink()
+        or not definition_manifest_input.is_file()
+        or not definition_manifest_input.resolve(strict=True).is_relative_to(
+            repo_root.resolve(strict=True)
+        )
+    ):
+        raise ValueError("CATALOG_ATLAS_DEFINITION_MANIFEST_INVALID")
+    definition_manifest_sha256 = hashlib.sha256(
+        definition_manifest_input.read_bytes()
+    ).hexdigest()
+    campaign_id = catalog_campaign_id(
+        campaign_key=registry_entry.campaign_key,
+        scientific_contract_sha256=registry_entry.scientific_contract_sha256,
+    )
+    authority_id = str(
+        catalog_authority_id(request_sha256=request_sha256, campaign_id=campaign_id)
+    )
+    protocol_sha256 = execution_protocol_sha256(
+        root=repo_root,
+        entry=registry_entry,
+        manifest_sha256=definition_manifest_sha256,
+    )
+    envelope_identity: dict[str, object] = {
+        "schema_version": "1",
+        "document_type": "atlas_sealed_envelope_v1",
+        "engine_id": "atlas_static_v1",
+        "request_sha256": request_sha256,
+        "decision_sha256": decision_sha256,
+        "prepared_receipt_sha256": receipt.receipt_sha256,
+        "plan_sha256": receipt.plan_sha256,
+        "authority_id": authority_id,
+        "campaign_id": campaign_id,
+        "science_sha256": expected_identity.scientific_contract_sha256,
+        "execution_plan_sha256": receipt.plan_sha256,
+        "execution_protocol_sha256": protocol_sha256,
+        "protected_commit_sha": expected_identity.protected_commit_sha,
+        "selection_sha256": receipt.selection_sha256,
+        "target_end_iso": receipt.target_end_iso,
+        "runtime_input_run_id": expected_identity.runtime_input_run_id,
+        "catalog_manifest_sha256": verified_manifest["catalog_manifest_sha256"],
+    }
+    envelope = {
+        **envelope_identity,
+        "envelope_sha256": canonical_sha256(envelope_identity),
+    }
+    (target / "atlas_sealed_envelope.json").write_text(
+        json.dumps(envelope, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return envelope
 
 
 def _reserve_new_fast_request(*, root, authority, request, issue_number, run_id,
@@ -622,9 +717,20 @@ def admit_request(
         _write_replay_decision(replay, output_dir=output_dir, github_output=github_output,
             terminal_receipt=terminal_receipt, recover_unlaunched_terminal=recover_unlaunched_terminal)
         return replay
-    identity = CatalogPreparationIdentityV1.model_validate(context.get("identity"))
+    identity_payload = context.get("identity")
+    if (
+        isinstance(identity_payload, Mapping)
+        and identity_payload.get("engine_id") == "atlas_static_v1"
+    ):
+        identity = AtlasPreparationIdentityV1.model_validate(identity_payload)
+    else:
+        identity = CatalogPreparationIdentityV1.model_validate(identity_payload)
     registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
     entry = resolve_catalog_campaign(registry, request.campaign_key, root)
+    if entry.engine_id == "atlas_static_v1" and (
+        checkpoint_profile is not None or reduction_recovery is not None
+    ):
+        raise ValueError("CATALOG_ATLAS_RECOVERY_PROFILE_UNSUPPORTED")
     safe_capacity_raw = os.environ.get("CATALOG_SAFE_FREE_CAPACITY", "")
     try:
         safe_capacity = int(safe_capacity_raw)
@@ -661,79 +767,55 @@ def admit_request(
         )
     else:
         try:
-            prepared, _ = verify_prepared_catalog_bundle(
-                bundle_dir=bundle,
-                expected_identity=identity,
-            )
-            if checkpoint_profile is not None:
-                verify_checkpoint_recovery_plan(
-                    bundle / f"templates/workers-{prepared.qualified_worker_ceiling:03d}",
-                    checkpoint_profile, checkpoint_proof,
+            if entry.engine_id == "atlas_static_v1":
+                prepared, _ = verify_atlas_prepared_bundle(
+                    bundle_dir=bundle,
+                    expected_identity=identity,
+                    repo_root=root,
+                    now=snapshot.observed_at,
                 )
             else:
-                template = bundle / f"templates/workers-{prepared.qualified_worker_ceiling:03d}"
-                controller = _mapping(_strict_json(template / "controller_binding.json"),
-                                      "CATALOG_FAST_CONTROLLER_BINDING_INVALID")
-                binding = _mapping(controller.get("binding"), "CATALOG_FAST_CONTROLLER_BINDING_INVALID")
-                if "checkpoint_recovery" in binding:
-                    raise ValueError("CATALOG_CHECKPOINT_RECOVERY_AUTHORITY_REQUIRED")
-            store_index = CatalogRebuildableStoreIndexV1.model_validate(
-                _strict_json(
-                    bundle / "evidence/catalog-rebuildable-store-index-v1.json"
+                prepared, _ = verify_prepared_catalog_bundle(
+                    bundle_dir=bundle,
+                    expected_identity=identity,
                 )
-            )
-            if store_index.index_sha256 != prepared.component_store_manifest_sha256:
-                raise ValueError("CATALOG_PREPARATION_STORE_INDEX_MISMATCH")
-        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+                if checkpoint_profile is not None:
+                    verify_checkpoint_recovery_plan(
+                        bundle / f"templates/workers-{prepared.qualified_worker_ceiling:03d}",
+                        checkpoint_profile, checkpoint_proof,
+                    )
+                else:
+                    template = bundle / f"templates/workers-{prepared.qualified_worker_ceiling:03d}"
+                    controller = _mapping(_strict_json(template / "controller_binding.json"),
+                                          "CATALOG_FAST_CONTROLLER_BINDING_INVALID")
+                    binding = _mapping(controller.get("binding"), "CATALOG_FAST_CONTROLLER_BINDING_INVALID")
+                    if "checkpoint_recovery" in binding:
+                        raise ValueError("CATALOG_CHECKPOINT_RECOVERY_AUTHORITY_REQUIRED")
+                store_index = CatalogRebuildableStoreIndexV1.model_validate(
+                    _strict_json(
+                        bundle / "evidence/catalog-rebuildable-store-index-v1.json"
+                    )
+                )
+                if store_index.index_sha256 != prepared.component_store_manifest_sha256:
+                    raise ValueError("CATALOG_PREPARATION_STORE_INDEX_MISMATCH")
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            failure_code = str(exc).split(":", 1)[0]
+            if entry.engine_id == "atlas_static_v1" and failure_code in {
+                "CATALOG_ATLAS_PREPARED_TARGET_EXPIRED",
+                "CATALOG_ATLAS_PREPARED_WINDOW_INSUFFICIENT",
+            }:
+                preparation_reason = failure_code
+            else:
+                preparation_reason = "CATALOG_PREPARATION_INVALID"
             decision = _blocked(
                 request=request,
                 prepared_receipt_sha256=None,
                 now=snapshot.observed_at,
                 expires_at=expires_at,
-                reason_code="CATALOG_PREPARATION_INVALID",
+                reason_code=preparation_reason,
             )
         else:
-            cache_inventory = client.stable_paginated(
-                f"/repos/{repository}/actions/caches?ref=refs/heads/main",
-                root="actions_caches",
-            )
-            caches = cache_inventory.collection
-            live_cache_keys = {
-                str(row.get("key"))
-                for row in caches.rows
-                if row.get("ref") == "refs/heads/main"
-            }
-            indexed_cache_keys = {
-                candidate.cache_key
-                for candidate in store_index.candidates
-                if candidate.cache_key is not None
-            }
-            required_cache_keys = set(prepared.required_cache_keys)
-            if cache_inventory.stable is not True or caches.complete is not True:
-                decision = _blocked(
-                    request=request,
-                    prepared_receipt_sha256=prepared.receipt_sha256,
-                    now=snapshot.observed_at,
-                    expires_at=expires_at,
-                    reason_code="CATALOG_PREPARATION_CACHE_INVENTORY_INCOMPLETE",
-                )
-            elif indexed_cache_keys != required_cache_keys:
-                decision = _blocked(
-                    request=request,
-                    prepared_receipt_sha256=prepared.receipt_sha256,
-                    now=snapshot.observed_at,
-                    expires_at=expires_at,
-                    reason_code="CATALOG_PREPARATION_INVALID",
-                )
-            elif not required_cache_keys.issubset(live_cache_keys):
-                decision = _blocked(
-                    request=request,
-                    prepared_receipt_sha256=prepared.receipt_sha256,
-                    now=snapshot.observed_at,
-                    expires_at=expires_at,
-                    reason_code="CATALOG_PREPARATION_CACHE_MISSING",
-                )
-            else:
+            if entry.engine_id == "atlas_static_v1":
                 decision = decide_fast_catalog_launch(
                     request=request,
                     registry_entry=entry,
@@ -752,6 +834,68 @@ def admit_request(
                         expires_at=expires_at,
                         reason_code="CATALOG_FAST_CONFIGURATION_UNAVAILABLE",
                     )
+                # Atlas has no optimized component-store/cache dependency.
+                # Its calibration and sealed plan were authenticated above.
+            else:
+                cache_inventory = client.stable_paginated(
+                    f"/repos/{repository}/actions/caches?ref=refs/heads/main",
+                    root="actions_caches",
+                )
+                caches = cache_inventory.collection
+                live_cache_keys = {
+                    str(row.get("key"))
+                    for row in caches.rows
+                    if row.get("ref") == "refs/heads/main"
+                }
+                indexed_cache_keys = {
+                    candidate.cache_key
+                    for candidate in store_index.candidates
+                    if candidate.cache_key is not None
+                }
+                required_cache_keys = set(prepared.required_cache_keys)
+                if cache_inventory.stable is not True or caches.complete is not True:
+                    decision = _blocked(
+                        request=request,
+                        prepared_receipt_sha256=prepared.receipt_sha256,
+                        now=snapshot.observed_at,
+                        expires_at=expires_at,
+                        reason_code="CATALOG_PREPARATION_CACHE_INVENTORY_INCOMPLETE",
+                    )
+                elif indexed_cache_keys != required_cache_keys:
+                    decision = _blocked(
+                        request=request,
+                        prepared_receipt_sha256=prepared.receipt_sha256,
+                        now=snapshot.observed_at,
+                        expires_at=expires_at,
+                        reason_code="CATALOG_PREPARATION_INVALID",
+                    )
+                elif not required_cache_keys.issubset(live_cache_keys):
+                    decision = _blocked(
+                        request=request,
+                        prepared_receipt_sha256=prepared.receipt_sha256,
+                        now=snapshot.observed_at,
+                        expires_at=expires_at,
+                        reason_code="CATALOG_PREPARATION_CACHE_MISSING",
+                    )
+                else:
+                    decision = decide_fast_catalog_launch(
+                        request=request,
+                        registry_entry=entry,
+                        prepared_receipt=prepared,
+                        expected_preparation_identity=identity,
+                        snapshot=snapshot,
+                        issue_created_at=issue_created_at,
+                    )
+                    if decision.launch_required and (
+                        decision.selected_workers != prepared.qualified_worker_ceiling
+                    ):
+                        decision = _blocked(
+                            request=request,
+                            prepared_receipt_sha256=prepared.receipt_sha256,
+                            now=snapshot.observed_at,
+                            expires_at=expires_at,
+                            reason_code="CATALOG_FAST_CONFIGURATION_UNAVAILABLE",
+                        )
 
     output_dir.mkdir(parents=False, exist_ok=False)
     decision_path = output_dir / "catalog-fast-decision-v1.json"
@@ -766,14 +910,25 @@ def admit_request(
     )
     sealed_receipt: Mapping[str, Any] | None = None
     if decision.launch_required:
-        sealed_receipt = materialize_prepared_catalog_plan(
-            bundle_dir=bundle,
-            expected_identity=identity,
-            request_sha256=request.request_sha256,
-            decision_sha256=decision.decision_sha256,
-            output_dir=output_dir / "sealed-plan",
-            reduction_recovery=reduction_recovery,
-        )
+        if entry.engine_id == "atlas_static_v1":
+            sealed_receipt = _materialize_atlas_prepared_plan(
+                bundle_dir=bundle,
+                expected_identity=identity,
+                registry_entry=entry,
+                request_sha256=request.request_sha256,
+                decision_sha256=decision.decision_sha256,
+                repo_root=root,
+                output_dir=output_dir / "sealed-plan",
+            )
+        else:
+            sealed_receipt = materialize_prepared_catalog_plan(
+                bundle_dir=bundle,
+                expected_identity=identity,
+                request_sha256=request.request_sha256,
+                decision_sha256=decision.decision_sha256,
+                output_dir=output_dir / "sealed-plan",
+                reduction_recovery=reduction_recovery,
+            )
         if gate_handoff:
             from scripts.catalog_fast_gate_handoff import stage_admission
             if checkpoint_profile is not None and len(checkpoint_authentication) != 1:
@@ -806,6 +961,19 @@ def admit_request(
         "execution_protocol_sha256": str(sealed_receipt.get("execution_protocol_sha256", "")) if sealed_receipt else "",
         "protected_commit_sha": expected_commit,
     }
+    if entry.engine_id == "atlas_static_v1":
+        outputs.update(
+            {
+                "plan_sha256": str(sealed_receipt.get("plan_sha256", ""))
+                if sealed_receipt
+                else "",
+                "sealed_envelope_sha256": str(
+                    sealed_receipt.get("envelope_sha256", "")
+                )
+                if sealed_receipt
+                else "",
+            }
+        )
     with github_output.open("a", encoding="utf-8", newline="\n") as stream:
         for key, value in outputs.items():
             if "\n" in value:

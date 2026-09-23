@@ -139,6 +139,7 @@ SEALED_IDENTIFIERS = {
 }
 PRODUCTION_HEAVY_WORKFLOWS = {
     ".github/workflows/catalog-optimized-run.yml",
+    ".github/workflows/sp500-atlas-run.yml",
     ".github/workflows/catalog-component-worker.yml",
     ".github/workflows/catalog-optimized-worker.yml",
 }
@@ -147,7 +148,6 @@ LEGACY_CATALOG_WORKFLOWS = {
     ".github/workflows/sp500-atlas-controller.yml",
     ".github/workflows/sp500-atlas-pilot.yml",
     ".github/workflows/sp500-atlas-postrun.yml",
-    ".github/workflows/sp500-atlas-run.yml",
     ".github/workflows/sp500-atlas-segment.yml",
     ".github/workflows/sp500-catalog-optimization-qualification.yml",
     ".github/workflows/sp500-strategy-catalog-overnight.yml",
@@ -919,7 +919,7 @@ def test_fast_controller_is_the_only_public_request_lifecycle() -> None:
         "cancel-in-progress": False,
         "queue": "max",
     }
-    assert list(workflow["jobs"]) == ["gate", "engine", "finalize"]
+    assert list(workflow["jobs"]) == ["gate", "engine", "engine_atlas", "finalize"]
     expected_writers = {"gate", "finalize"}
     writers = {
         job
@@ -945,6 +945,24 @@ def test_fast_controller_is_the_only_public_request_lifecycle() -> None:
         "./.github/workflows/catalog-optimized-run.yml"
     )
     assert workflow["jobs"]["engine"]["with"]["execution_mode"] == "run"
+    assert workflow["jobs"]["engine_atlas"]["uses"] == (
+        "./.github/workflows/sp500-atlas-run.yml"
+    )
+    assert "needs.gate.outputs.engine_id == 'atlas_static_v1'" in workflow["jobs"]["engine_atlas"]["if"]
+    assert workflow["jobs"]["engine_atlas"]["with"]["protected_commit_sha"] == "${{ github.sha }}"
+
+
+def test_atlas_fast_controller_uses_its_own_verified_terminal() -> None:
+    jobs = _workflow(WORKFLOWS / "catalog-fast-controller.yml")["jobs"]
+    assert "needs.gate.outputs.engine_id == 'optimized_catalog_v1'" in jobs["engine"]["if"]
+    assert "needs.gate.outputs.engine_id == 'atlas_static_v1'" in jobs["engine_atlas"]["if"]
+    assert jobs["finalize"]["needs"] == ["gate", "engine", "engine_atlas"]
+    steps = {step.get("id"): step for step in jobs["finalize"]["steps"]}
+    assert "finalize_catalog_fast_run.py" in steps["terminal"]["run"]
+    assert "finalize_catalog_atlas_fast_run.py" in steps["terminal_atlas"]["run"]
+    assert "atlas-preflight" in steps["terminal_atlas"]["run"]
+    assert "atlas-final" in steps["terminal_atlas"]["run"]
+    assert "steps.terminal_atlas.outcome == 'success'" in steps["publish_receipt"]["if"]
 
 
 def test_disabled_controller_uses_one_exact_fail_closed_reason() -> None:
@@ -1769,6 +1787,13 @@ def test_preparation_runs_outside_the_request_path_and_reuses_prepared_cache() -
     assert public["jobs"]["prepare"]["uses"] == (
         "./.github/workflows/catalog-prepare-one.yml"
     )
+    assert public["jobs"]["prepare_atlas"]["uses"] == (
+        "./.github/workflows/catalog-atlas-prepare-one.yml"
+    )
+    assert public["jobs"]["prepare_atlas"]["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
     assert set(one["on"]) == {"workflow_call"}
     assert list(one["jobs"]) == [
         "preflight",

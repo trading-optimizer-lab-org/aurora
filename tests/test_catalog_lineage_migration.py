@@ -68,7 +68,7 @@ def test_consumed_sp500_generation_seven_keeps_its_historical_release_boundary(
         assert (installed_definition, prompt_hash) not in contexts
 
 
-def test_sp500_generation_ten_targets_current_manifest_after_request_360():
+def test_sp500_generation_ten_keeps_its_approved_definition_after_request_360():
     from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
     from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
 
@@ -80,7 +80,7 @@ def test_sp500_generation_ten_targets_current_manifest_after_request_360():
         schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000010",
         campaign_key="sp500-optimized-catalog-v1", launch_generation=10,
         previous_terminal_request_sha256="a0fdcfe2209caf1f03d6ee4db54fcc34b1488198cafb41bc0ef7461332b409bd",
-        campaign_definition_sha256=definition.campaign_definition_sha256,
+        campaign_definition_sha256="9d13146fa009f894e25b92a3d106329a12105f839b62407f7f09bae08b7bd4eb",
         prompt_sha256=hashlib.sha256(
             (root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").read_bytes()
         ).hexdigest(),
@@ -90,6 +90,7 @@ def test_sp500_generation_ten_targets_current_manifest_after_request_360():
     assert approval.next_generation == 10
     assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
     assert approval.target_definition_sha256 == ticket.campaign_definition_sha256
+    assert definition.campaign_definition_sha256 != ticket.campaign_definition_sha256
     assert approval.target_prompt_sha256 == ticket.prompt_sha256
     assert approval.source_ticket_contexts == ()
 
@@ -133,7 +134,7 @@ def test_consumed_sp500_generation_eight_keeps_its_historical_release_boundary()
     assert approval.source_ticket_contexts == ()
 
 
-def test_ordinary_canary_generation_twelve_uses_verified_predecessor():
+def test_ordinary_canary_generation_twelve_keeps_its_approved_definition():
     from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
     from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
 
@@ -145,7 +146,7 @@ def test_ordinary_canary_generation_twelve_uses_verified_predecessor():
         schema_version='1', request_id='018f47a2-6e91-7c34-8000-000000000012',
         campaign_key='catalog-fast-canary-v1', launch_generation=12,
         previous_terminal_request_sha256='d46799a897dd2d8f4d51837e6783e4c03e84b9773c3da243225a016ab9e5ed6d',
-        campaign_definition_sha256=definition.campaign_definition_sha256,
+        campaign_definition_sha256="9eb2313d6d6abfdc31ed5b84d33705827994ea7fb650eb78dce534adb86f02aa",
         prompt_sha256=hashlib.sha256((root / 'docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md').read_bytes()).hexdigest(),
     )
     approval = load_lineage_transition(root, ticket)
@@ -153,6 +154,7 @@ def test_ordinary_canary_generation_twelve_uses_verified_predecessor():
     assert approval.next_generation == 12
     assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
     assert approval.target_definition_sha256 == ticket.campaign_definition_sha256
+    assert definition.campaign_definition_sha256 != ticket.campaign_definition_sha256
     assert approval.target_prompt_sha256 == ticket.prompt_sha256
     assert approval.source_ticket_contexts == ()
 
