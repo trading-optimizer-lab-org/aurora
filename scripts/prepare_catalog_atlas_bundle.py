@@ -14,7 +14,7 @@ import shutil
 import sys
 from typing import Mapping, NoReturn
 
-from aurora.infra.sp500_megarun.atlas_execution_contract import AtlasRunPlanV1
+from aurora.infra.sp500_megarun.atlas_execution_contract import AtlasRunPlanV1, load_plan
 from aurora.infra.sp500_megarun.catalog_atlas_cloud_identity import (
     AtlasPreparationIdentityV1,
     create_atlas_prepared_receipt,
@@ -300,9 +300,7 @@ def _verify_plan_and_selection(
     ):
         _fail("SELECTION_MISMATCH")
     try:
-        plan = AtlasRunPlanV1.model_validate(
-            _read_object(bundle / "plan/atlas_run_plan.json", "PLAN_UNREADABLE")
-        )
+        plan = load_plan(bundle / "plan/atlas_run_plan.json")
     except Exception as exc:
         raise ValueError("ATLAS_PREPARE_PLAN_INVALID") from exc
     expected_plan = {
