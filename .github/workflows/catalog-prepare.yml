@@ -79,7 +79,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-      issues: read
     uses: ./.github/workflows/catalog-atlas-prepare-one.yml
     with:
       campaign_key: ${{ matrix.campaign_key }}

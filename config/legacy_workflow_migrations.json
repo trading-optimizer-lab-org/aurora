@@ -58,7 +58,7 @@
       "path": ".github/workflows/catalog-prepare.yml",
       "previous_sha256": "3e5cb02e4fabfa74ed3340bbb4272d5747a7090646505221f65ca8fff880ab90",
       "reason": "prepare Atlas independently from the same protected registry without changing optimized preparation",
-      "replacement_sha256": "7c71476f9b6150e9934ed3e4fc0da3f9ff9d48e02ffda071afbced477123172e"
+      "replacement_sha256": "cbc15aaaaabca691067e3b8677279b48e0f369fe6b6233fe3d719c3dab77402d"
     },
     {
       "path": ".github/workflows/catalog-recovery-wave.yml",

@@ -1787,6 +1787,13 @@ def test_preparation_runs_outside_the_request_path_and_reuses_prepared_cache() -
     assert public["jobs"]["prepare"]["uses"] == (
         "./.github/workflows/catalog-prepare-one.yml"
     )
+    assert public["jobs"]["prepare_atlas"]["uses"] == (
+        "./.github/workflows/catalog-atlas-prepare-one.yml"
+    )
+    assert public["jobs"]["prepare_atlas"]["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
     assert set(one["on"]) == {"workflow_call"}
     assert list(one["jobs"]) == [
         "preflight",
