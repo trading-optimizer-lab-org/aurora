@@ -63,6 +63,8 @@ def test_cloud_gate_verifies_controller_authority_binding_and_five_file_atlas_en
     assert 'shutil.copy2(selection_path, cloud_root / "atlas_campaign_selection.json")' in text
     assert 'controller_root / "atlas_campaign_selection.json"' in text
     assert '"outputs/plan/atlas_campaign_selection.json",' in text
+    assert 'controller_root / "atlas_prepared_receipt.json"' in text
+    assert '"outputs/plan/atlas_prepared_receipt.json",' in text
     assert 'Path("outputs/plan/atlas_campaign_selection.json").write_text' not in text
     assert 'envelope["prepared_receipt_sha256"] != receipt.receipt_sha256' in text
     assert 'envelope["decision_sha256"] != os.environ["ATLAS_DECISION_SHA256"]' in text

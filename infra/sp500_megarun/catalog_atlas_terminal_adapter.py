@@ -40,6 +40,16 @@ from typing import Any, Literal, Mapping, Sequence
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.atlas_execution_contract import load_plan
+from aurora.infra.sp500_megarun.catalog_atlas_cloud_identity import (
+    AtlasPreparationIdentityV1,
+    AtlasPreparedReceiptV1,
+    build_atlas_preparation_identity,
+)
+from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+    CatalogAtlasCampaignEntryV1,
+    load_catalog_campaign_registry,
+    resolve_catalog_campaign,
+)
 from aurora.infra.sp500_megarun.catalog_fast_path import (
     CatalogFastLaunchDecisionV1,
     CatalogTerminalReceiptV2,
@@ -368,7 +378,7 @@ def _validate_request_and_decision(
     return context, request, decision, EXPECTED_RECIPE_COUNT
 
 
-def _validate_freeze(repo_root: Path, plan: Any) -> None:
+def _validate_freeze(repo_root: Path, plan: Any, prepared: AtlasPreparedReceiptV1) -> None:
     freeze_path = repo_root / "config" / "sp500_atlas_1" / "freeze_manifest_v1.json"
     freeze = _mapping(read_json(freeze_path, "ATLAS_TERMINAL_FREEZE_INVALID"), "ATLAS_TERMINAL_FREEZE_INVALID")
     expected = {
@@ -395,13 +405,14 @@ def _validate_freeze(repo_root: Path, plan: Any) -> None:
     _false_boundaries(freeze, "ATLAS_TERMINAL_BOUNDARY_OPEN")
     if (
         plan.catalog_id != CATALOG_ID
-        or plan.plan_sha256 != EXPECTED_PLAN_SHA256
         or plan.catalog_manifest_sha256 != EXPECTED_CATALOG_MANIFEST_SHA256
         or plan.catalog_space_sha256 != EXPECTED_CATALOG_SPACE_SHA256
-        or plan.calibration_receipt_sha256 != EXPECTED_CALIBRATION_RECEIPT_SHA256
+        or plan.plan_sha256 != prepared.plan_sha256
+        or plan.calibration_receipt_sha256 != prepared.calibration_receipt_sha256
         or plan.implementation_commit_sha != EXPECTED_IMPLEMENTATION_COMMIT_SHA
         or plan.train_end != EXPECTED_TRAIN_END
-        or plan.target_end_iso != EXPECTED_TARGET_END_ISO
+        or plan.target_end_iso != prepared.target_end_iso
+        or plan.target_end_iso == EXPECTED_TARGET_END_ISO
         or plan.requested_recipe_count != EXPECTED_RECIPE_COUNT
         or plan.total_shards != EXPECTED_SHARD_COUNT
         or plan.selection_seed != EXPECTED_SELECTION_SEED
@@ -409,7 +420,39 @@ def _validate_freeze(repo_root: Path, plan: Any) -> None:
     ):
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PLAN_BINDING_INVALID")
     _false_boundaries(plan.model_dump(mode="json"), "ATLAS_TERMINAL_BOUNDARY_OPEN")
-def _validate_preflight(preflight_root: Path, repo_root: Path) -> tuple[Any, str]:
+
+
+def _load_bound_prepared_receipt(
+    preflight_root: Path,
+    *,
+    expected_receipt_sha256: str,
+    expected_identity: AtlasPreparationIdentityV1,
+) -> AtlasPreparedReceiptV1:
+    path = _relative(
+        preflight_root / "plan",
+        "atlas_prepared_receipt.json",
+        "ATLAS_TERMINAL_PREPARED_RECEIPT_INVALID",
+    )
+    try:
+        prepared = AtlasPreparedReceiptV1.model_validate(
+            read_json(path, "ATLAS_TERMINAL_PREPARED_RECEIPT_INVALID")
+        )
+    except (ValueError, TypeError) as exc:
+        raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PREPARED_RECEIPT_INVALID") from exc
+    if (
+        prepared.receipt_sha256 != expected_receipt_sha256
+        or prepared.identity != expected_identity
+    ):
+        raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PREPARED_BINDING_INVALID")
+    return prepared
+
+
+def _validate_preflight(
+    preflight_root: Path,
+    repo_root: Path,
+    decision: CatalogFastLaunchDecisionV1,
+    protected_commit_sha: str,
+) -> tuple[Any, str]:
     if preflight_root.is_symlink() or not preflight_root.is_dir():
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PREFLIGHT_MISSING")
     plan_path = preflight_root / "plan" / "atlas_run_plan.json"
@@ -417,7 +460,26 @@ def _validate_preflight(preflight_root: Path, repo_root: Path) -> tuple[Any, str
         plan = load_plan(plan_path)
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PLAN_INVALID") from exc
-    _validate_freeze(repo_root, plan)
+    try:
+        registry = load_catalog_campaign_registry(
+            repo_root / "config" / "catalog_campaign_registry_v1.json"
+        )
+        entry = resolve_catalog_campaign(registry, CAMPAIGN_KEY, repo_root)
+        if not isinstance(entry, CatalogAtlasCampaignEntryV1):
+            raise ValueError("ATLAS_TERMINAL_ENGINE_INVALID")
+        expected_identity = build_atlas_preparation_identity(
+            repo_root, entry, protected_commit_sha
+        )
+    except (OSError, ValueError) as exc:
+        raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PREPARATION_IDENTITY_INVALID") from exc
+    if decision.prepared_receipt_sha256 is None:
+        raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PREPARED_BINDING_INVALID")
+    prepared = _load_bound_prepared_receipt(
+        preflight_root,
+        expected_receipt_sha256=decision.prepared_receipt_sha256,
+        expected_identity=expected_identity,
+    )
+    _validate_freeze(repo_root, plan, prepared)
     manifest_path = _relative(preflight_root / "atlas", "manifest.json", "ATLAS_TERMINAL_CATALOG_INVALID")
     space_path = _relative(preflight_root / "atlas", "recipe_space.json", "ATLAS_TERMINAL_CATALOG_INVALID")
     manifest = _mapping(read_json(manifest_path, "ATLAS_TERMINAL_CATALOG_INVALID"), "ATLAS_TERMINAL_CATALOG_INVALID")
@@ -602,7 +664,9 @@ def verify_atlas_terminal_evidence(
         starts = [_parse_aware(row["started_at"], "ATLAS_TERMINAL_JOB_TIME_INVALID") for row in jobs if row.get("started_at")]
         if starts:
             timing["initial_queue_seconds"] = max(0.0, (min(starts) - created).total_seconds())
-        plan, plan_sha = _validate_preflight(preflight_root, repo_root)
+        plan, plan_sha = _validate_preflight(
+            preflight_root, repo_root, decision, head_sha
+        )
         if expected_plan_sha256 is not None and expected_plan_sha256 != plan_sha:
             raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_PLAN_OUTPUT_MISMATCH")
         final_count, result_hash = _verify_final(final_root, plan)

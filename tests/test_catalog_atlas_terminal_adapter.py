@@ -16,6 +16,78 @@ from aurora.infra.sp500_megarun import catalog_atlas_terminal_adapter as adapter
 from scripts.finalize_catalog_atlas_fast_run import _parser
 
 
+def _dynamic_prepared() -> adapter.AtlasPreparedReceiptV1:
+    identity = adapter.AtlasPreparationIdentityV1(
+        campaign_key=adapter.CAMPAIGN_KEY,
+        protected_commit_sha="e" * 40,
+        campaign_definition_sha256="a" * 64,
+        scientific_contract_sha256="b" * 64,
+        dependency_lock_sha256="c" * 64,
+        freeze_manifest_sha256="d" * 64,
+        data_contract_sha256="e" * 64,
+        feature_contract_sha256="f" * 64,
+        runtime_input_run_id=adapter.EXPECTED_RUNTIME_INPUT_RUN_ID,
+        selection_sha256=adapter.EXPECTED_SELECTION_SHA256,
+    )
+    return adapter.AtlasPreparedReceiptV1.create(
+        identity=identity,
+        qualified_worker_ceiling=20,
+        target_end_iso="2030-01-01T00:00:00+00:00",
+        calibration_receipt_sha256="1" * 64,
+        plan_sha256="2" * 64,
+        generated_at=adapter.datetime(2026, 9, 23, tzinfo=adapter.timezone.utc),
+    )
+
+
+def test_terminal_accepts_admitted_plan_not_historical_plan() -> None:
+    prepared = _dynamic_prepared()
+    plan = SimpleNamespace(
+        catalog_id=adapter.CATALOG_ID,
+        plan_sha256=prepared.plan_sha256,
+        catalog_manifest_sha256=adapter.EXPECTED_CATALOG_MANIFEST_SHA256,
+        catalog_space_sha256=adapter.EXPECTED_CATALOG_SPACE_SHA256,
+        calibration_receipt_sha256=prepared.calibration_receipt_sha256,
+        implementation_commit_sha=adapter.EXPECTED_IMPLEMENTATION_COMMIT_SHA,
+        train_end=adapter.EXPECTED_TRAIN_END,
+        target_end_iso=prepared.target_end_iso,
+        requested_recipe_count=adapter.EXPECTED_RECIPE_COUNT,
+        total_shards=adapter.EXPECTED_SHARD_COUNT,
+        selection_seed=adapter.EXPECTED_SELECTION_SEED,
+        selection_sha256=adapter.EXPECTED_SELECTION_SHA256,
+        model_dump=lambda **_: {"validation_opened": False, "locked_opened": False},
+    )
+    adapter._validate_freeze(Path(__file__).parents[1], plan, prepared)
+    plan.plan_sha256 = adapter.EXPECTED_PLAN_SHA256
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_PLAN_BINDING_INVALID"):
+        adapter._validate_freeze(Path(__file__).parents[1], plan, prepared)
+
+
+def test_terminal_prepared_receipt_must_match_admission_and_identity(tmp_path: Path) -> None:
+    prepared = _dynamic_prepared()
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "atlas_prepared_receipt.json").write_text(
+        json.dumps(prepared.model_dump(mode="json")), encoding="utf-8"
+    )
+    assert adapter._load_bound_prepared_receipt(
+        tmp_path,
+        expected_receipt_sha256=prepared.receipt_sha256,
+        expected_identity=prepared.identity,
+    ) == prepared
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_PREPARED_BINDING_INVALID"):
+        adapter._load_bound_prepared_receipt(
+            tmp_path,
+            expected_receipt_sha256="0" * 64,
+            expected_identity=prepared.identity,
+        )
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_PREPARED_BINDING_INVALID"):
+        adapter._load_bound_prepared_receipt(
+            tmp_path,
+            expected_receipt_sha256=prepared.receipt_sha256,
+            expected_identity=prepared.identity.model_copy(update={"protected_commit_sha": "f" * 40}),
+        )
+
+
 def _plan() -> SimpleNamespace:
     return SimpleNamespace(
         plan_sha256="a" * 64,

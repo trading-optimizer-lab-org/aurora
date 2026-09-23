@@ -428,6 +428,10 @@ jobs:
               controller_root / "atlas_campaign_selection.json",
               "outputs/plan/atlas_campaign_selection.json",
           )
+          shutil.copy2(
+              controller_root / "atlas_prepared_receipt.json",
+              "outputs/plan/atlas_prepared_receipt.json",
+          )
           plan = load_plan(Path("outputs/plan/atlas_run_plan.json"))
           if plan.catalog_manifest_sha256 != json.loads(Path("outputs/atlas/manifest.json").read_text(encoding="utf-8"))["manifest_sha256"]:
               raise SystemExit("ATLAS_CLOUD_PLAN_CATALOG_RECONSTRUCTION_MISMATCH")

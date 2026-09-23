@@ -106,7 +106,7 @@
       "path": ".github/workflows/sp500-atlas-run.yml",
       "previous_sha256": "aa50a5e345803e918929af7bd8a775d9434fdf92e44bb443b4464012912f2dcb",
       "reason": "make the frozen train-only Atlas engine reusable through the sealed protected controller",
-      "replacement_sha256": "3086d47ce21f3e16cf28a74c78276bc78c477c6702a68bb3fb4964bd53050887"
+      "replacement_sha256": "7b10d4a878bfbb43eb8db51ad630ba84c3ba382b51c4279b3b2ebf2285b2f6eb"
     },
     {
       "path": ".github/workflows/tests.yml",
