@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+    CatalogAtlasCampaignEntryV1,
     CatalogCampaignEntryV1,
     CatalogCampaignRegistryV1,
     load_catalog_campaign_registry,
@@ -217,6 +218,45 @@ def test_registry_import_boundary_stays_minimal() -> None:
     assert "infra.github_performance.contracts" not in imported_modules
 
 
+def test_atlas_campaign_uses_its_own_closed_engine_contract() -> None:
+    atlas = {
+        "campaign_key": "sp500-atlas-v1",
+        "engine_id": "atlas_static_v1",
+        "definition_manifest_path": "config/catalog_campaign_definitions/sp500-atlas-v1.manifest.json",
+        "campaign_contract_path": "config/sp500_megarun_dehb_campaign_v1.json",
+        "freeze_manifest_path": "config/sp500_atlas_1/freeze_manifest_v1.json",
+        "data_contract_path": "config/sp500_megarun_free_data_240.json",
+        "feature_contract_path": "config/sp500_megarun_feature_contract_240.json",
+        "runtime_input_run_id": 31418682679,
+        "scientific_contract_sha256": "a" * 64,
+        "max_free_workers": 360,
+        "allowed_protected_branch": "main",
+        "source_artifact_contracts": ["runtime_input_pack_v1"],
+        "active": True,
+    }
+    registry = CatalogCampaignRegistryV1.model_validate(
+        {"schema_version": "1", "campaigns": [atlas]}
+    )
+    entry = registry.campaigns[0]
+    assert isinstance(entry, CatalogAtlasCampaignEntryV1)
+    assert entry.repository_paths == (
+        atlas["campaign_contract_path"],
+        atlas["freeze_manifest_path"],
+        atlas["data_contract_path"],
+        atlas["feature_contract_path"],
+    )
+
+    # Atlas cannot masquerade as an optimized catalog with placeholder paths.
+    with pytest.raises(ValueError):
+        CatalogCampaignRegistryV1.model_validate(
+            {"schema_version": "1", "campaigns": [{**atlas, "engine_id": "optimized_catalog_v1"}]}
+        )
+    with pytest.raises(ValueError):
+        CatalogCampaignRegistryV1.model_validate(
+            {"schema_version": "1", "campaigns": [{**atlas, "freeze_manifest_path": "../outside"}]}
+        )
+
+
 def test_active_campaign_names_all_fixed_execution_families() -> None:
     registry = load_catalog_campaign_registry(
         ROOT / "config/catalog_campaign_registry_v1.json"
@@ -227,5 +267,10 @@ def test_active_campaign_names_all_fixed_execution_families() -> None:
         assert len(campaign.scientific_contract_sha256) == 64
         assert campaign.allowed_protected_branch == "main"
         assert campaign.source_artifact_contracts
-        assert campaign.component_store_family
-        assert campaign.reducer_family
+        if campaign.engine_id == "optimized_catalog_v1":
+            assert campaign.component_store_family
+            assert campaign.reducer_family
+        else:
+            assert campaign.engine_id == "atlas_static_v1"
+            assert campaign.freeze_manifest_path == "config/sp500_atlas_1/freeze_manifest_v1.json"
+            assert campaign.max_free_workers == 20

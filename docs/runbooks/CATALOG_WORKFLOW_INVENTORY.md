@@ -4,17 +4,17 @@ Este documento registra **todos** los workflows presentes durante la migración 
 
 ## Resultado
 
-- Workflows inventariados: **187**.
-- Hash canónico del inventario final: `1fe0b3e8a44354abfeb51f8cceeec5471197a5a728f585c75509dc1d87f3ed13`.
+- Workflows inventariados: **188**.
+- Hash canónico del inventario final: `86c1808ee3a9d99bfbe9cb3a0c7dd97d70dad649d21d61245dbd0125851b4087`.
 - Estado final del validador de topología: **READY**.
-- Campaña activa: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1`.
-- Los Atlas antiguos y sus wrappers quedan inactivos y sin disparador público. Su código se conserva para trazabilidad, pero no existe un llamador autorizado.
+- Campañas activas: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1` y `sp500-atlas-v1` mediante `atlas_static_v1`.
+- Atlas-1 solo acepta la llamada protegida del controlador para el catálogo congelado de 209.906 estrategias; los demás wrappers históricos siguen sin entrada pública.
 - Antes de la migración había **23 incumplimientos relevantes**: 10 entradas públicas de cómputo, 3 interfaces sin sellar, 8 trabajos sin el entorno protegido, 1 motor con llamadores no autorizados y 1 motor que no era exclusivamente reutilizable.
 
 ## Leyenda
 
 - `heavy=yes`: puede preparar, evaluar, reducir o llamar a cómputo de catálogo/Atlas.
-- `active_engine`: único motor productivo registrado.
+- `active_engine`: motor productivo registrado.
 - `production_worker`: trabajador interno del motor activo.
 - `keeper_maintenance`: mantenimiento semanal fijo, limitado y de solo lectura.
 - `inactive_legacy` / `inactive_helper`: conservado sin entrada pública y sin llamador productivo.
@@ -47,7 +47,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/catalog-component-worker.yml | workflow_call | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | sealed worker inputs and protected environment | sealed heavy engine and environment tests |
 | .github/workflows/catalog-controller-policy-check.yml | pull_request, push | no | - | - | pull_request, push | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-equivalence-diagnostic.yml | workflow_call | yes | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
-| .github/workflows/catalog-fast-controller.yml | not present | yes | - | sp500-optimized-catalog-v1 | issues, workflow_call | sole public signed-request entrypoint; one fast gate before the prepared engine | fast-path and repository topology tests |
+| .github/workflows/catalog-fast-controller.yml | not present | yes | - | sp500-optimized-catalog-v1, sp500-atlas-v1 | issues, workflow_call | sole public signed-request entrypoint; one fast gate before the prepared engine | fast-path and repository topology tests |
 | .github/workflows/catalog-future-architecture.yml | workflow_call, workflow_dispatch | yes | - | - | workflow_call | removed direct dispatch; internal synthetic helper only | repository topology receipt |
 | .github/workflows/catalog-ledger-guard.yml | not present | no | - | - | issue_comment | created as edit/delete tamper guard | tamper guard topology test |
 | .github/actions/catalog-live-controls-audit/action.yml | local composite action used only by five protected jobs | no | - | - | exactly five fixed protected job-level callers | protected audit implementation; each caller obtains credentials from `catalog-production`, emits an immutable secret-free receipt artifact, and discards credentials | repository topology receipt |
@@ -56,7 +56,8 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/catalog-optimized-verify-only.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-optimized-worker.yml | workflow_call | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | sealed worker inputs and protected environment | sealed heavy engine and environment tests |
 | .github/workflows/catalog-prepare-one.yml | not present | yes | - | sp500-optimized-catalog-v1 | workflow_call | prepares and seals runtime, inputs, components and balanced plan outside requested runs | preparation and repository topology tests |
-| .github/workflows/catalog-prepare.yml | not present | yes | - | sp500-optimized-catalog-v1 | push, schedule | automatically refreshes PREPARED only when its exact inputs or caches require it | preparation and repository topology tests |
+| .github/workflows/catalog-prepare.yml | not present | yes | - | sp500-optimized-catalog-v1, sp500-atlas-v1 | push, schedule | automatically refreshes PREPARED only when its exact inputs or caches require it | preparation and repository topology tests |
+| .github/workflows/catalog-atlas-prepare-one.yml | not present | yes | - | sp500-atlas-v1 | workflow_call | calibrates and seals the frozen train-only Atlas preparation on the protected commit | Atlas preparation and repository topology tests |
 | .github/workflows/catalog-recovery-wave.yml | not present | yes | optimized_catalog_v1 | sp500-optimized-catalog-v1 | workflow_call | created as the bounded selective-recovery worker path | recovery policy, sealed inputs and topology tests |
 | .github/workflows/catalog-reference-oracle.yml | workflow_call | no | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
 | .github/workflows/catalog-reference-worker.yml | workflow_call | yes | - | - | workflow_call | audited; retained closed/lightweight or internal-only role | repository topology receipt |
@@ -125,7 +126,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/sp500-atlas-controller.yml | workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
 | .github/workflows/sp500-atlas-pilot.yml | workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
 | .github/workflows/sp500-atlas-postrun.yml | workflow_call, workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
-| .github/workflows/sp500-atlas-run.yml | workflow_call, workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
+| .github/workflows/sp500-atlas-run.yml | workflow_call, workflow_dispatch | yes | atlas_static_v1 | sp500-atlas-v1 | workflow_call | protected 209.906-strategy engine; legacy mode remains internal-only | Atlas sealed engine and repository topology tests |
 | .github/workflows/sp500-atlas-segment.yml | workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
 | .github/workflows/sp500-autonomous-discovery.yml | workflow_dispatch | no | - | - | workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/sp500-catalog-optimization-qualification.yml | workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |

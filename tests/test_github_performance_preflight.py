@@ -592,6 +592,41 @@ def test_internal_helper_exception_is_path_scoped(tmp_path: Path) -> None:
     }
 
 
+def test_atlas_preparer_exception_requires_reusable_read_only_call(tmp_path: Path) -> None:
+    calibration = tmp_path / ".github/workflows/sp500-atlas-calibration.yml"
+    calibration.parent.mkdir(parents=True)
+    calibration.write_text("name: calibration\n", encoding="utf-8")
+    path = tmp_path / ".github/workflows/catalog-atlas-prepare-one.yml"
+    payload = {
+        "name": "Atlas preparation",
+        "on": {"workflow_call": {}},
+        "permissions": {"actions": "read", "contents": "read"},
+        "jobs": {
+            "calibrate": {"uses": "./.github/workflows/sp500-atlas-calibration.yml"},
+            "prepare": {
+                "runs-on": "ubuntu-24.04",
+                "timeout-minutes": 120,
+                "steps": [{"run": "python scripts/prepare_catalog_atlas_bundle.py"}],
+            },
+        },
+    }
+    workflow = write_yaml(path, payload)
+    assert validate_workflow_policy(workflow, tmp_path, {}) == []
+
+    payload["on"] = {"workflow_dispatch": {}}
+    write_yaml(path, payload)
+    assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
+        item.code for item in validate_workflow_policy(workflow, tmp_path, {})
+    }
+
+    payload["on"] = {"workflow_call": {}}
+    payload["permissions"]["issues"] = "read"
+    write_yaml(path, payload)
+    assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
+        item.code for item in validate_workflow_policy(workflow, tmp_path, {})
+    }
+
+
 def test_repository_allowlist_has_frozen_adoption_metadata() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     allowlist = load_legacy_workflow_allowlist(repo_root=repo_root)

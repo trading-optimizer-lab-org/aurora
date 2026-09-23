@@ -7,7 +7,7 @@ from pathlib import Path
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 
-from .catalog_campaign_registry import CatalogCampaignEntryV1
+from .catalog_campaign_registry import CatalogAtlasCampaignEntryV1, CatalogCampaignEntryV1
 
 
 PROTOCOL_COMMON_PATHS = (
@@ -98,6 +98,18 @@ PROTOCOL_COMMON_PATHS = (
     "scripts/verify_catalog_terminal_science.py",
 )
 
+ATLAS_PROTOCOL_PATHS = (
+    ".github/workflows/catalog-atlas-prepare-one.yml",
+    ".github/workflows/sp500-atlas-calibration.yml",
+    ".github/workflows/sp500-atlas-run.yml",
+    "infra/sp500_megarun/catalog_atlas_cloud_identity.py",
+    "infra/sp500_megarun/catalog_atlas_terminal_adapter.py",
+    "scripts/prepare_catalog_atlas_bundle.py",
+    "scripts/finalize_catalog_atlas_fast_run.py",
+    "scripts/run_sp500_atlas_worker.py",
+    "scripts/reduce_sp500_atlas_run.py",
+)
+
 
 def _repository_file(root: Path, relative: str) -> Path:
     if not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
@@ -119,7 +131,7 @@ def _repository_file(root: Path, relative: str) -> Path:
 def execution_protocol_sha256(
     *,
     root: Path,
-    entry: CatalogCampaignEntryV1,
+    entry: CatalogCampaignEntryV1 | CatalogAtlasCampaignEntryV1,
     manifest_sha256: str,
 ) -> str:
     """Hash common governance plus the selected engine's closed manifest."""
@@ -127,11 +139,14 @@ def execution_protocol_sha256(
     resolved_root = root.resolve(strict=True)
     if root.is_symlink() or not resolved_root.is_dir():
         raise ValueError("CATALOG_EXECUTION_PROTOCOL_ROOT_INVALID")
+    protocol_paths = PROTOCOL_COMMON_PATHS + (
+        ATLAS_PROTOCOL_PATHS if isinstance(entry, CatalogAtlasCampaignEntryV1) else ()
+    )
     files = {
         relative: hashlib.sha256(
             _repository_file(resolved_root, relative).read_bytes()
         ).hexdigest()
-        for relative in PROTOCOL_COMMON_PATHS
+        for relative in protocol_paths
     }
     return canonical_sha256(
         {

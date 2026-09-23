@@ -107,6 +107,26 @@ def test_atlas_workflows_do_not_checkout_or_execute_untrusted_commit_inputs() ->
     assert 'test "${{ inputs.commit_sha }}" = "$GITHUB_SHA"' in run
 
 
+def test_calibration_separates_frozen_catalog_and_planning_targets() -> None:
+    text = (ROOT / ".github/workflows/sp500-atlas-calibration.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'catalog_target_end_iso:\n        required: false\n        type: string\n        default: "2026-08-20T07:31:00+02:00"' in text
+    assert "ATLAS_CATALOG_TARGET_END_ISO: ${{ inputs.catalog_target_end_iso }}" in text
+    catalog_command = text.split("python scripts/build_sp500_atlas_catalog.py", 1)[1].split(
+        "- name: Run exactly bounded train-only calibration", 1
+    )[0]
+    calibration_command = text.split("python scripts/calibrate_sp500_atlas_run.py", 1)[1].split(
+        "- name: Fail closed on receipt or protected boundary", 1
+    )[0]
+    assert '--target-end-iso "$ATLAS_CATALOG_TARGET_END_ISO"' in catalog_command
+    assert "ATLAS_TARGET_END_ISO" not in catalog_command
+    assert '--target-end-iso "$ATLAS_TARGET_END_ISO"' in calibration_command
+    assert "ATLAS_CATALOG_TARGET_END_ISO" not in calibration_command
+    assert "validation_opened'] is False" in text
+    assert "locked_opened'] is False" in text
+
+
 def test_postrun_workflow_is_train_only_and_publishes_robustness_audit() -> None:
     text = POSTRUN_WORKFLOW.read_text(encoding="utf-8")
     assert "run_sp500_atlas_robustness.py" in text

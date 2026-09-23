@@ -19,7 +19,7 @@ from .catalog_campaign_definition_contract import (
     CatalogDefinitionRole,
     registry_entry_sha256,
 )
-from .catalog_campaign_registry import CatalogCampaignEntryV1, load_catalog_campaign_registry
+from .catalog_campaign_registry import CatalogCampaignEntry, load_catalog_campaign_registry
 
 
 _ENGINE_ROOTS: dict[str, tuple[str, ...]] = {
@@ -30,8 +30,36 @@ _ENGINE_ROOTS: dict[str, tuple[str, ...]] = {
         "infra/sp500_megarun/catalog_optimization_contract.py",
         "scripts/plan_sp500_optimized_catalog_run.py",
         ".github/workflows/catalog-optimized-run.yml",
-    )
+    ),
+    "atlas_static_v1": (
+        "schemas/catalog_campaign_definition_manifest_v1.schema.json",
+        "infra/sp500_megarun/catalog_campaign_registry.py",
+        "infra/sp500_megarun/catalog_campaign_definition_contract.py",
+        "infra/sp500_megarun/atlas_execution_contract.py",
+        "infra/sp500_megarun/atlas_campaign_selection.py",
+        "infra/sp500_megarun/catalog_atlas_contract.py",
+        "infra/sp500_megarun/catalog_atlas_objective.py",
+        "infra/sp500_megarun/catalog_atlas_space.py",
+        "scripts/build_sp500_atlas_catalog.py",
+        "scripts/verify_sp500_atlas_catalog.py",
+        "scripts/plan_sp500_atlas_run.py",
+        "scripts/run_sp500_atlas_worker.py",
+        "scripts/reduce_sp500_atlas_run.py",
+        "requirements/catalog-optimized.lock",
+        ".github/workflows/sp500-atlas-calibration.yml",
+        ".github/workflows/sp500-atlas-controller.yml",
+        ".github/workflows/sp500-atlas-pilot.yml",
+        ".github/workflows/sp500-atlas-postrun.yml",
+        ".github/workflows/sp500-atlas-run.yml",
+        ".github/workflows/sp500-atlas-segment.yml",
+    ),
 }
+_ENGINE_ROOT_LITERAL_PATHS = frozenset(
+    path for roots in _ENGINE_ROOTS.values() for path in roots
+)
+_ATLAS_GATE_LEAF_PATHS = frozenset({
+    "infra/sp500_megarun/catalog_controller.py",
+})
 _DECLARED_PATH_KEYS = frozenset(
     {
         "$ref",
@@ -95,7 +123,7 @@ _PYTHON_HEREDOC = re.compile(
 
 
 class _ClosureBuilder:
-    def __init__(self, repo_root: Path, registry_entry: CatalogCampaignEntryV1):
+    def __init__(self, repo_root: Path, registry_entry: CatalogCampaignEntry):
         self.root = repo_root.resolve(strict=True)
         if not self.root.is_dir() or repo_root.is_symlink():
             raise ValueError("CATALOG_DEFINITION_ROOT_INVALID")
@@ -178,15 +206,23 @@ class _ClosureBuilder:
         )
 
     def _add_roots(self) -> None:
-        role_by_field: dict[str, CatalogDefinitionRole] = {
-            "optimization_policy_path": "configuration",
-            "campaign_contract_path": "contract",
-            "catalog_dir": "data_identity",
-            "selected_config_path": "configuration",
-            "admission_evidence_path": "configuration",
-            "data_contract_path": "data_identity",
-            "feature_contract_path": "data_identity",
-        }
+        if self.registry_entry.engine_id == "atlas_static_v1":
+            role_by_field: dict[str, CatalogDefinitionRole] = {
+                "campaign_contract_path": "contract",
+                "freeze_manifest_path": "configuration",
+                "data_contract_path": "data_identity",
+                "feature_contract_path": "data_identity",
+            }
+        else:
+            role_by_field = {
+                "optimization_policy_path": "configuration",
+                "campaign_contract_path": "contract",
+                "catalog_dir": "data_identity",
+                "selected_config_path": "configuration",
+                "admission_evidence_path": "configuration",
+                "data_contract_path": "data_identity",
+                "feature_contract_path": "data_identity",
+            }
         for field, role in role_by_field.items():
             value = getattr(self.registry_entry, field)
             checked = self._checked_path(value, require_file=False)
@@ -273,6 +309,15 @@ class _ClosureBuilder:
             tree = ast.parse(content.decode("utf-8-sig"), filename=relative)
         except (UnicodeDecodeError, SyntaxError) as exc:
             raise ValueError(f"CATALOG_DEFINITION_PYTHON_INVALID:{relative}:{exc}") from None
+        if (
+            self.registry_entry.engine_id == "atlas_static_v1"
+            and relative in _ATLAS_GATE_LEAF_PATHS
+        ):
+            # The controller's pure authority-ID helpers are operational, not
+            # a science root. Its exact bytes are pinned here and by the
+            # execution protocol; its governance imports must not expand
+            # the frozen scientific closure into unrelated workflows.
+            return
         parents = {
             child: parent
             for parent in ast.walk(tree)
@@ -327,6 +372,16 @@ class _ClosureBuilder:
                             f"CATALOG_DEFINITION_EDGE_UNRESOLVED:{relative}:{module}"
                         )
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if (
+                    relative == "infra/sp500_megarun/catalog_campaign_definition_builder.py"
+                    and (
+                        node.value in _ATLAS_GATE_LEAF_PATHS
+                        or node.value in _ENGINE_ROOT_LITERAL_PATHS
+                    )
+                ):
+                    # _add_roots selects the active engine. Treating every
+                    # literal in this registry as an edge mixes campaigns.
+                    continue
                 if self._is_non_expanding_provenance_identity(
                     relative, node, parents
                 ):
@@ -958,7 +1013,7 @@ class _ClosureBuilder:
 def discover_catalog_campaign_definition(
     *,
     repo_root: Path,
-    registry_entry: CatalogCampaignEntryV1,
+    registry_entry: CatalogCampaignEntry,
 ) -> CatalogCampaignDefinitionManifestV1:
     return _ClosureBuilder(repo_root, registry_entry).build()
 
@@ -966,7 +1021,7 @@ def discover_catalog_campaign_definition(
 def verify_catalog_campaign_definition(
     *,
     repo_root: Path,
-    registry_entry: CatalogCampaignEntryV1,
+    registry_entry: CatalogCampaignEntry,
     manifest: CatalogCampaignDefinitionManifestV1,
 ) -> CatalogCampaignDefinitionManifestV1:
     expected_row_hash = registry_entry_sha256(registry_entry)

@@ -158,6 +158,7 @@ def inspect_request(
     # live admission reader still authenticates ownership; these labels do not.
     lookup_existing = bool(set(label_names) & {"catalog-run-active-v1", "catalog-run-terminal-v1"}) or issue.get("state") == "closed"
     identity = None
+    entry = None
     logical_recipe_count = None
     preparation_error = None
     if not lookup_existing:
@@ -167,12 +168,28 @@ def inspect_request(
             identity = build_catalog_preparation_identity(
                 repo_root=root, registry_entry=entry, protected_commit_sha=expected_commit,
             )
-            catalog_manifest = _mapping(
-                _strict_json(root / entry.catalog_dir / "manifest.json"), "CATALOG_MANIFEST_INVALID",
-            )
-            logical_recipe_count = catalog_manifest.get("strategy_count")
+            if entry.engine_id == "atlas_static_v1":
+                atlas_freeze = _mapping(
+                    _strict_json(root / entry.freeze_manifest_path), "CATALOG_ATLAS_FREEZE_INVALID",
+                )
+                if (
+                    atlas_freeze.get("catalog_id") != "sp500-atlas-1"
+                    or atlas_freeze.get("selection_sha256")
+                    != "8fc537ed98a04b74ae37529fe7659a49432b2d36d1b38de1998d5f5e6771e3a1"
+                    or atlas_freeze.get("validation_opened") is not False
+                    or atlas_freeze.get("locked_opened") is not False
+                ):
+                    raise ValueError("CATALOG_ATLAS_FREEZE_INVALID")
+                logical_recipe_count = atlas_freeze.get("requested_recipe_count")
+            else:
+                catalog_manifest = _mapping(
+                    _strict_json(root / entry.catalog_dir / "manifest.json"), "CATALOG_MANIFEST_INVALID",
+                )
+                logical_recipe_count = catalog_manifest.get("strategy_count")
             if isinstance(logical_recipe_count, bool) or not isinstance(logical_recipe_count, int) or logical_recipe_count < 1:
                 raise ValueError("CATALOG_MANIFEST_INVALID")
+            if entry.engine_id == "atlas_static_v1" and logical_recipe_count != 209_906:
+                raise ValueError("CATALOG_ATLAS_FREEZE_INVALID")
         except (ValueError, OSError) as exc:
             # Authentication above already succeeded. Unavailable current
             # preparation must not prevent reading a previously admitted run.
@@ -204,11 +221,12 @@ def inspect_request(
     _write(output_path, context)
     outputs = {
         "campaign_key": request.campaign_key,
+        "engine_id": entry.engine_id if entry is not None and identity is not None else "",
         "request_sha256": request.request_sha256,
         "submission_key_sha256": request.submission_key_sha256,
         "preparation_key_sha256": identity.preparation_key_sha256 if identity is not None else "",
         "prepared_cache_restore_prefix": (
-            f"aurora-catalog-prepared-v1-{identity.preparation_key_sha256}-"
+            f"aurora-catalog-{'atlas-' if entry is not None and entry.engine_id == 'atlas_static_v1' else ''}prepared-v1-{identity.preparation_key_sha256}-"
             if identity is not None else ""
         ),
     }

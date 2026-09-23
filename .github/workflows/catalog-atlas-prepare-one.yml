@@ -1,0 +1,174 @@
+name: Prepare one Atlas catalog campaign
+
+on:
+  workflow_call:
+    inputs:
+      campaign_key:
+        description: Active Atlas campaign key from the protected catalog registry
+        required: true
+        type: string
+    outputs:
+      run_id:
+        description: GitHub Actions run containing the PREPARED artifact
+        value: ${{ jobs.prepare.outputs.run_id }}
+      artifact_id:
+        description: Uploaded PREPARED artifact identifier
+        value: ${{ jobs.prepare.outputs.artifact_id }}
+      artifact_name:
+        description: Uploaded PREPARED artifact name
+        value: ${{ jobs.prepare.outputs.artifact_name }}
+      preparation_key_sha256:
+        description: Protected commit and campaign definition identity
+        value: ${{ jobs.prepare.outputs.preparation_key_sha256 }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      planning_started_at_iso: ${{ steps.preflight.outputs.planning_started_at_iso }}
+      planned_target_end_iso: ${{ steps.preflight.outputs.planned_target_end_iso }}
+      runtime_input_run_id: ${{ steps.preflight.outputs.runtime_input_run_id }}
+      campaign_definition_sha256: ${{ steps.preflight.outputs.campaign_definition_sha256 }}
+      preparation_key_sha256: ${{ steps.preflight.outputs.preparation_key_sha256 }}
+    steps:
+      - name: Require the canonical protected main context
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "trading-optimizer-lab-org/aurora"
+          test "$GITHUB_REF" = "refs/heads/main"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify checkout is the protected workflow commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - name: Install the pinned Atlas environment
+        run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-optimized.lock
+      - name: Resolve registered definition and future planning target
+        id: preflight
+        env:
+          ATLAS_CAMPAIGN_KEY: ${{ inputs.campaign_key }}
+          ATLAS_COMMIT_SHA: ${{ github.sha }}
+          ATLAS_REPOSITORY: ${{ github.repository }}
+          ATLAS_REF: ${{ github.ref }}
+        run: >-
+          python scripts/prepare_catalog_atlas_bundle.py preflight
+          --campaign-key "$ATLAS_CAMPAIGN_KEY"
+          --protected-commit-sha "$ATLAS_COMMIT_SHA"
+          --repository "$ATLAS_REPOSITORY"
+          --ref "$ATLAS_REF"
+          --github-output "$GITHUB_OUTPUT"
+
+  calibrate:
+    needs: preflight
+    uses: ./.github/workflows/sp500-atlas-calibration.yml
+    with:
+      commit_sha: ${{ github.sha }}
+      runtime_input_run_id: ${{ needs.preflight.outputs.runtime_input_run_id }}
+      target_end_iso: ${{ needs.preflight.outputs.planned_target_end_iso }}
+      catalog_target_end_iso: "2026-08-20T07:31:00+02:00"
+      cache_mode: cold
+    permissions:
+      actions: read
+      contents: read
+
+  prepare:
+    needs: [preflight, calibrate]
+    runs-on: ubuntu-24.04
+    outputs:
+      run_id: ${{ steps.prepare.outputs.run_id }}
+      preparation_key_sha256: ${{ steps.prepare.outputs.preparation_key_sha256 }}
+      artifact_name: ${{ steps.prepare.outputs.artifact_name }}
+      artifact_id: ${{ steps.publish.outputs.artifact-id }}
+    steps:
+      - name: Require the canonical protected main context
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "trading-optimizer-lab-org/aurora"
+          test "$GITHUB_REF" = "refs/heads/main"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify checkout is the protected workflow commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          enable-cache: false
+      - name: Install the pinned Atlas environment
+        run: >-
+          uv pip install --system --require-hashes
+          -r requirements/catalog-optimized.lock
+      - name: Restore the newest cache for this protected preparation identity
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: prepared-cache-previous
+          key: aurora-catalog-atlas-prepared-v1-${{ needs.preflight.outputs.preparation_key_sha256 }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            aurora-catalog-atlas-prepared-v1-${{ needs.preflight.outputs.preparation_key_sha256 }}-
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sp500-atlas-calibration-${{ github.run_id }}
+          path: calibration-output
+      - name: Verify evidence and build PREPARED bundle
+        id: prepare
+        env:
+          ATLAS_CAMPAIGN_KEY: ${{ inputs.campaign_key }}
+          ATLAS_COMMIT_SHA: ${{ github.sha }}
+          ATLAS_REPOSITORY: ${{ github.repository }}
+          ATLAS_REF: ${{ github.ref }}
+          ATLAS_PLANNING_STARTED_AT: ${{ needs.preflight.outputs.planning_started_at_iso }}
+          ATLAS_PLANNED_TARGET_END: ${{ needs.preflight.outputs.planned_target_end_iso }}
+          ATLAS_DEFINITION_SHA256: ${{ needs.preflight.outputs.campaign_definition_sha256 }}
+          ATLAS_PREPARATION_KEY_SHA256: ${{ needs.preflight.outputs.preparation_key_sha256 }}
+        run: >-
+          python scripts/prepare_catalog_atlas_bundle.py prepare
+          --campaign-key "$ATLAS_CAMPAIGN_KEY"
+          --protected-commit-sha "$ATLAS_COMMIT_SHA"
+          --repository "$ATLAS_REPOSITORY"
+          --ref "$ATLAS_REF"
+          --planning-started-at-iso "$ATLAS_PLANNING_STARTED_AT"
+          --planned-target-end-iso "$ATLAS_PLANNED_TARGET_END"
+          --expected-campaign-definition-sha256 "$ATLAS_DEFINITION_SHA256"
+          --expected-preparation-key-sha256 "$ATLAS_PREPARATION_KEY_SHA256"
+          --calibration-output-dir calibration-output
+          --previous-bundle-dir prepared-cache-previous
+          --bundle-dir prepared-bundle
+          --github-output "$GITHUB_OUTPUT"
+      - name: Publish durable PREPARED artifact
+        id: publish
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: catalog-atlas-prepared-${{ inputs.campaign_key }}-${{ steps.prepare.outputs.preparation_key_sha256 }}
+          path: prepared-bundle
+          if-no-files-found: error
+          retention-days: 90
+      - name: Save the protected identity cache
+        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: prepared-bundle
+          key: aurora-catalog-atlas-prepared-v1-${{ steps.prepare.outputs.preparation_key_sha256 }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Expose artifact run ID
+        env:
+          ATLAS_RUN_ID: ${{ github.run_id }}
+          ATLAS_ARTIFACT_NAME: ${{ steps.prepare.outputs.artifact_name }}
+        shell: bash
+        run: |
+          printf 'PREPARED artifact: %s\nRun ID: %s\n' "$ATLAS_ARTIFACT_NAME" "$ATLAS_RUN_ID" >> "$GITHUB_STEP_SUMMARY"

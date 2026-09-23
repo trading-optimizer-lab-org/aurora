@@ -39,20 +39,46 @@ def select_targets(
     registry = load_catalog_campaign_registry(
         root / "config/catalog_campaign_registry_v1.json"
     )
-    active = tuple(sorted(item.campaign_key for item in registry.campaigns if item.active))
+    active_rows = tuple(
+        sorted(
+            (item for item in registry.campaigns if item.active),
+            key=lambda item: item.campaign_key,
+        )
+    )
+    active = tuple(item.campaign_key for item in active_rows)
     if campaign_key:
         if campaign_key not in active:
             raise ValueError("CATALOG_PREPARATION_TARGET_NOT_ACTIVE")
+        active_rows = tuple(item for item in active_rows if item.campaign_key == campaign_key)
         active = (campaign_key,)
     if not active:
         raise ValueError("CATALOG_PREPARATION_TARGETS_EMPTY")
-    matrix = json.dumps(
-        {"include": [{"campaign_key": key} for key in active]},
+    optimized_matrix = json.dumps(
+        {"include": [
+            {"campaign_key": item.campaign_key}
+            for item in active_rows if item.engine_id == "optimized_catalog_v1"
+        ]},
         sort_keys=True,
         separators=(",", ":"),
     )
+    atlas_matrix = json.dumps(
+        {"include": [
+            {"campaign_key": item.campaign_key}
+            for item in active_rows if item.engine_id == "atlas_static_v1"
+        ]},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    unknown = {item.engine_id for item in active_rows} - {
+        "optimized_catalog_v1", "atlas_static_v1"
+    }
+    if unknown:
+        raise ValueError("CATALOG_PREPARATION_ENGINE_UNSUPPORTED")
     with github_output.open("a", encoding="utf-8", newline="\n") as stream:
-        stream.write(f"matrix={matrix}\n")
+        stream.write(f"matrix={optimized_matrix}\n")
+        stream.write(f"atlas_matrix={atlas_matrix}\n")
+        stream.write(f"optimized_count={sum(item.engine_id == 'optimized_catalog_v1' for item in active_rows)}\n")
+        stream.write(f"atlas_count={sum(item.engine_id == 'atlas_static_v1' for item in active_rows)}\n")
         stream.write(f"target_count={len(active)}\n")
     return active
 

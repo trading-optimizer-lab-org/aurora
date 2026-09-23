@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path, PurePosixPath
-from typing import Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import Field, field_validator
 
@@ -23,7 +23,7 @@ _PATH_FIELDS = (
     "feature_contract_path",
 )
 
-CatalogEngineId: TypeAlias = Literal["optimized_catalog_v1"]
+CatalogEngineId: TypeAlias = Literal["optimized_catalog_v1", "atlas_static_v1"]
 CatalogSourceArtifactContract: TypeAlias = Literal[
     "runtime_input_pack_v1",
     "reference_oracle_v1",
@@ -72,7 +72,7 @@ def _validate_repository_path(value: str) -> str:
 
 class CatalogCampaignEntryV1(FrozenModel):
     campaign_key: str
-    engine_id: CatalogEngineId
+    engine_id: Literal["optimized_catalog_v1"]
     definition_manifest_path: str
     optimization_policy_path: str
     campaign_contract_path: str
@@ -132,9 +132,60 @@ class CatalogCampaignEntryV1(FrozenModel):
         return min(self.max_free_workers, *values)
 
 
+class CatalogAtlasCampaignEntryV1(FrozenModel):
+    """Atlas's compact ordinal catalog is not an optimized-catalog payload."""
+
+    campaign_key: str
+    engine_id: Literal["atlas_static_v1"]
+    definition_manifest_path: str
+    campaign_contract_path: str
+    freeze_manifest_path: str
+    data_contract_path: str
+    feature_contract_path: str
+    runtime_input_run_id: int = Field(ge=1)
+    scientific_contract_sha256: Sha256
+    max_free_workers: int = Field(ge=1, le=360)
+    allowed_protected_branch: Literal["main"]
+    source_artifact_contracts: tuple[Literal["runtime_input_pack_v1"], ...] = Field(
+        min_length=1, max_length=1
+    )
+    active: bool
+
+    @field_validator(
+        "definition_manifest_path", "campaign_contract_path", "freeze_manifest_path",
+        "data_contract_path", "feature_contract_path"
+    )
+    @classmethod
+    def _require_safe_repository_path(cls, value: str) -> str:
+        return _validate_repository_path(value)
+
+    @property
+    def repository_paths(self) -> tuple[str, ...]:
+        return (
+            self.campaign_contract_path,
+            self.freeze_manifest_path,
+            self.data_contract_path,
+            self.feature_contract_path,
+        )
+
+    def select_safe_worker_ceiling(
+        self, *, compatible_qualified_ceiling: int, current_safe_free_capacity: int
+    ) -> int:
+        values = (compatible_qualified_ceiling, current_safe_free_capacity)
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in values):
+            raise ValueError("CATALOG_WORKER_CEILING_INVALID")
+        return min(self.max_free_workers, *values)
+
+
+CatalogCampaignEntry: TypeAlias = Annotated[
+    CatalogCampaignEntryV1 | CatalogAtlasCampaignEntryV1,
+    Field(discriminator="engine_id"),
+]
+
+
 class CatalogCampaignRegistryV1(FrozenModel):
     schema_version: Literal["1"]
-    campaigns: tuple[CatalogCampaignEntryV1, ...]
+    campaigns: tuple[CatalogCampaignEntry, ...]
 
 
 def load_catalog_campaign_registry(path: Path) -> CatalogCampaignRegistryV1:
@@ -154,7 +205,7 @@ def resolve_catalog_campaign(
     registry: CatalogCampaignRegistryV1,
     campaign_key: str,
     repo_root: Path,
-) -> CatalogCampaignEntryV1:
+) -> CatalogCampaignEntryV1 | CatalogAtlasCampaignEntryV1:
     matches = tuple(
         campaign
         for campaign in registry.campaigns
@@ -189,7 +240,8 @@ def resolve_catalog_for_reduction(
     root = repo_root.resolve(strict=True)
     registry = load_catalog_campaign_registry(root / "config/catalog_campaign_registry_v1.json")
     matches = [entry for entry in registry.campaigns
-               if entry.active and entry.scientific_contract_sha256 == scientific_contract_sha256]
+               if isinstance(entry, CatalogCampaignEntryV1)
+               and entry.active and entry.scientific_contract_sha256 == scientific_contract_sha256]
     if len(matches) != 1:
         raise ValueError("CATALOG_REDUCER_CATALOG_UNRESOLVED")
     entry = resolve_catalog_campaign(registry, matches[0].campaign_key, root)

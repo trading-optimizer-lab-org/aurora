@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 
 import jsonschema
 import pytest
@@ -19,6 +20,7 @@ from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import (
     parse_catalog_campaign_definition_bytes,
 )
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
+    CatalogAtlasCampaignEntryV1,
     load_catalog_campaign_registry,
     resolve_catalog_campaign,
 )
@@ -48,6 +50,105 @@ def _entry():
         "sp500-optimized-catalog-v1",
         ROOT,
     )
+
+
+def _atlas_entry() -> CatalogAtlasCampaignEntryV1:
+    return CatalogAtlasCampaignEntryV1(
+        campaign_key="sp500-atlas-static-v1",
+        engine_id="atlas_static_v1",
+        definition_manifest_path=(
+            "config/catalog_campaign_definitions/sp500-atlas-static-v1.manifest.json"
+        ),
+        campaign_contract_path="config/sp500_megarun_dehb_campaign_v1.json",
+        freeze_manifest_path="config/sp500_atlas_1/freeze_manifest_v1.json",
+        data_contract_path="config/sp500_megarun_free_data_240.json",
+        feature_contract_path="config/sp500_megarun_feature_contract_240.json",
+        runtime_input_run_id=31418682679,
+        scientific_contract_sha256="a" * 64,
+        max_free_workers=360,
+        allowed_protected_branch="main",
+        source_artifact_contracts=("runtime_input_pack_v1",),
+        active=True,
+    )
+
+
+def _mock_atlas_registry(monkeypatch, entry: CatalogAtlasCampaignEntryV1) -> None:
+    import aurora.infra.sp500_megarun.catalog_campaign_definition_builder as builder
+
+    monkeypatch.setattr(
+        builder,
+        "load_catalog_campaign_registry",
+        lambda _path: SimpleNamespace(campaigns=(entry,)),
+    )
+
+
+def test_atlas_engine_closure_covers_frozen_science_evaluator_and_workflows(
+    monkeypatch,
+) -> None:
+    entry = _atlas_entry()
+    _mock_atlas_registry(monkeypatch, entry)
+
+    discovered = discover_catalog_campaign_definition(
+        repo_root=ROOT,
+        registry_entry=entry,
+    )
+    paths = {item.path for item in discovered.entries}
+
+    assert entry.freeze_manifest_path in paths
+    assert "infra/sp500_megarun/atlas_campaign_selection.py" in paths
+    assert "infra/sp500_megarun/catalog_atlas_space.py" in paths
+    assert "infra/sp500_megarun/catalog_atlas_objective.py" in paths
+    assert "scripts/run_sp500_atlas_worker.py" in paths
+    assert "scripts/reduce_sp500_atlas_run.py" in paths
+    assert "requirements/catalog-optimized.lock" in paths
+    assert ".github/workflows/sp500-atlas-run.yml" in paths
+    assert ".github/workflows/sp500-atlas-segment.yml" in paths
+    assert not any(
+        path.startswith("config/sp500_megarun_strategy_catalog_v1/")
+        for path in paths
+    )
+    assert "config/sp500_catalog_optimization_policy_v1.json" not in paths
+
+
+def test_atlas_closure_rehash_binds_freeze_and_selection_code(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    entry = _atlas_entry()
+    _mock_atlas_registry(monkeypatch, entry)
+    checked = discover_catalog_campaign_definition(
+        repo_root=ROOT,
+        registry_entry=entry,
+    )
+
+    for relative in (
+        entry.freeze_manifest_path,
+        "infra/sp500_megarun/atlas_campaign_selection.py",
+    ):
+        checkout = _copy_definition_checkout(tmp_path / Path(relative).stem, checked)
+        target = checkout / relative
+        target.write_bytes(target.read_bytes() + b"\n")
+        with pytest.raises(ValueError, match="CATALOG_CAMPAIGN_DEFINITION_MISMATCH"):
+            verify_catalog_campaign_definition(
+                repo_root=checkout,
+                registry_entry=entry,
+                manifest=checked,
+            )
+
+
+def test_atlas_workflow_path_inputs_do_not_expand_as_repository_edges() -> None:
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
+        _ClosureBuilder,
+    )
+
+    builder = _ClosureBuilder(ROOT, _atlas_entry())
+    builder._scan_yaml(
+        ".github/workflows/sp500-atlas-run.yml",
+        b"jobs:\n  example:\n    steps:\n      - with:\n"
+        b"          path: '${{ inputs.workflow_path }}'\n",
+    )
+
+    assert builder.roles == {}
 
 
 def _copy_definition_checkout(
