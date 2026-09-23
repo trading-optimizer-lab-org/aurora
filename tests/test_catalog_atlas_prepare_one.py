@@ -327,6 +327,9 @@ def test_workflow_is_call_only_cold_and_publishes_commit_definition_keyed_output
     assert tuple(workflow["on"]) == ("workflow_call",)
     assert tuple(call["inputs"]) == ("campaign_key",)
     assert workflow["permissions"] == {"actions": "read", "contents": "read"}
+    assert workflow["env"]["PYTHONPATH"] == (
+        "${{ github.workspace }}/..:${{ github.workspace }}"
+    )
     assert workflow["jobs"]["calibrate"]["uses"] == "./.github/workflows/sp500-atlas-calibration.yml"
     assert workflow["jobs"]["calibrate"]["with"]["catalog_target_end_iso"] == (
         producer.CATALOG_TARGET_END_ISO
