@@ -166,12 +166,17 @@ def _install_fake_plan(
     )
     monkeypatch.setattr(producer, "plan_atlas_run", fake_plan_atlas_run)
     monkeypatch.setattr(producer, "AtlasRunPlanV1", fake_plan_type)
+
+    def fake_load_plan(path: Path) -> SimpleNamespace:
+        return SimpleNamespace(
+            **json.loads(Path(path).read_text(encoding="utf-8")),
+            plan_sha256=plan_sha256,
+        )
+
     monkeypatch.setattr(
         producer,
         "load_plan",
-        lambda path: fake_plan_type.model_validate(
-            json.loads(Path(path).read_text(encoding="utf-8"))
-        ),
+        fake_load_plan,
     )
     monkeypatch.setattr(
         producer,
