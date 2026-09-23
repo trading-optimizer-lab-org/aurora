@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Annotated, Literal, Mapping
+from typing import Annotated, Literal, Mapping, NoReturn, TypedDict
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
@@ -44,7 +44,21 @@ _EXPECTED_RUNTIME_INPUT_RUN_ID = 31418682679
 FREEZE_MANIFEST_PATH = (
     _REPOSITORY_ROOT / "config" / "sp500_atlas_1" / "freeze_manifest_v1.json"
 )
-_EXPECTED_FREEZE = {
+
+
+class _AtlasFreezeExpectation(TypedDict):
+    catalog_id: str
+    catalog_manifest_sha256: str
+    catalog_space_sha256: str
+    requested_recipe_count: int
+    total_shards: int
+    selection_seed: int
+    selection_sha256: str
+    train_end: str
+    scientific_implementation_commit_sha: str
+
+
+_EXPECTED_FREEZE: _AtlasFreezeExpectation = {
     "catalog_id": "sp500-atlas-1",
     "catalog_manifest_sha256": "09068cf0b0ff716075bdd693dbdfbdcf3779c7cb326a92aca11d9ab22b577f08",
     "catalog_space_sha256": "c5a29064acd626a0aa67559222789022aecd253cb9ab011bd6e7e4bb2253be63",
@@ -66,7 +80,7 @@ _OBJECTIVE_EVALUATOR_FILES = (
 _CommitSha = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 
 
-def _fail(code: str) -> None:
+def _fail(code: str) -> NoReturn:
     raise ValueError(f"ATLAS_CLOUD_IDENTITY_{code}")
 
 
@@ -272,9 +286,12 @@ def build_atlas_preparation_identity(
     freeze_path = repository_file(registry_entry.freeze_manifest_path)
     freeze = _read_json(freeze_path, "FREEZE_UNREADABLE")
     _verify_freeze(freeze)
+    raw_run_id = freeze.get("runtime_input_run_id")
+    if isinstance(raw_run_id, bool) or not isinstance(raw_run_id, (str, int)):
+        _fail("PREPARATION_RUNTIME_INPUT_ID_INVALID")
     try:
-        frozen_runtime_input_run_id = int(freeze["runtime_input_run_id"])
-    except (KeyError, TypeError, ValueError) as exc:
+        frozen_runtime_input_run_id = int(raw_run_id)
+    except ValueError as exc:
         raise ValueError("ATLAS_PREPARATION_RUNTIME_INPUT_ID_INVALID") from exc
     if registry_entry.runtime_input_run_id != frozen_runtime_input_run_id:
         _fail("PREPARATION_RUNTIME_INPUT_ID_MISMATCH")
@@ -302,18 +319,22 @@ def _verify_freeze(freeze: Mapping[str, object]) -> None:
         if freeze.get(key) != expected:
             _fail(f"FREEZE_{key.upper()}_MISMATCH")
     counts = freeze.get("catalog_counts")
-    try:
-        frozen_capacity = int(counts["canonical_recipe_count"]) if isinstance(counts, dict) else -1
-    except (KeyError, TypeError, ValueError):
-        frozen_capacity = -1
+    raw_capacity = (
+        counts.get("canonical_recipe_count") if isinstance(counts, dict) else None
+    )
+    frozen_capacity = (
+        raw_capacity
+        if isinstance(raw_capacity, int) and not isinstance(raw_capacity, bool)
+        else -1
+    )
     if frozen_capacity < int(_EXPECTED_FREEZE["requested_recipe_count"]):
         _fail("FREEZE_CAPACITY_INVALID")
     raw_runtime_input_run_id = freeze.get("runtime_input_run_id")
-    if isinstance(raw_runtime_input_run_id, bool):
+    if isinstance(raw_runtime_input_run_id, bool) or not isinstance(raw_runtime_input_run_id, (str, int)):
         _fail("FREEZE_RUNTIME_INPUT_ID_INVALID")
     try:
         runtime_input_run_id = int(raw_runtime_input_run_id)
-    except (TypeError, ValueError):
+    except ValueError:
         _fail("FREEZE_RUNTIME_INPUT_ID_INVALID")
     if runtime_input_run_id != _EXPECTED_RUNTIME_INPUT_RUN_ID:
         _fail("FREEZE_RUNTIME_INPUT_ID_MISMATCH")

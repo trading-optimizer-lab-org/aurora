@@ -245,6 +245,8 @@ def resolve_catalog_for_reduction(
     if len(matches) != 1:
         raise ValueError("CATALOG_REDUCER_CATALOG_UNRESOLVED")
     entry = resolve_catalog_campaign(registry, matches[0].campaign_key, root)
+    if not isinstance(entry, CatalogCampaignEntryV1):
+        raise ValueError("CATALOG_REDUCER_CATALOG_UNRESOLVED")
     try:
         manifest_path = (root / entry.catalog_dir / "manifest.json").resolve(strict=True)
         catalog_path = (root / entry.catalog_dir / "catalog.jsonl").resolve(strict=True)

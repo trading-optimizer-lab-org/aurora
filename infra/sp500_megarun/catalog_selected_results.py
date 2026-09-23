@@ -58,7 +58,8 @@ def resolve_registered_selected_result_keys(
         raise ValueError('CATALOG_REDUCER_SELECTED_CATALOG_MISMATCH')
     registry = load_catalog_campaign_registry(root / 'config/catalog_campaign_registry_v1.json')
     matches = [row for row in registry.campaigns
-               if row.active and row.scientific_contract_sha256 == scientific_contract_sha256]
+               if isinstance(row, CatalogCampaignEntryV1)
+               and row.active and row.scientific_contract_sha256 == scientific_contract_sha256]
     if len(matches) != 1:
         raise ValueError('CATALOG_REDUCER_SELECTED_CAMPAIGN_UNRESOLVED')
     entry = matches[0]

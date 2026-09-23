@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from typing import Mapping, cast
 
 import pytest
 
@@ -177,7 +178,9 @@ def test_parent_run_in_progress_and_required_matrix_jobs_are_accepted(tmp_path: 
     rows.extend({"name": f"engine_atlas / evaluate_{name} ({index})", "conclusion": "success"}
                 for index, name in enumerate(("a", "b", "c") * 120))
     assert len(adapter._validate_jobs({"jobs": rows})) == 367
-    assert len(adapter._validate_jobs({"jobs": [row for row in rows if row["name"] != "engine"]})) == 366
+    assert len(adapter._validate_jobs({"jobs": [
+        row for row in rows if cast(Mapping[str, object], row)["name"] != "engine"
+    ]})) == 366
 
 
 def test_cli_requires_only_parent_snapshots_and_two_artifact_roots() -> None:

@@ -193,6 +193,8 @@ def _resolve_verified_request(
         _repository_file(root, "config/catalog_campaign_registry_v1.json")
     )
     entry = resolve_catalog_campaign(registry, request.campaign_key, root)
+    if not isinstance(entry, CatalogCampaignEntryV1):
+        raise ValueError("CATALOG_CAMPAIGN_ENGINE_UNSUPPORTED")
     manifest = parse_catalog_campaign_definition_bytes(
         _repository_file(root, entry.definition_manifest_path).read_bytes()
     )
@@ -476,42 +478,42 @@ def build_catalog_routing_bundle(
             continue
         if not isinstance(body, str) or REQUEST_RECEIPT_MARKER not in body:
             continue
-        receipt: CatalogRequestReceiptV1 | None = None
+        comment_receipt: CatalogRequestReceiptV1 | None = None
         comment_valid = False
         provenance_valid = False
         mirror_valid = False
         if author == "github-actions[bot]":
             try:
-                receipt = parse_request_receipt_comment(
+                comment_receipt = parse_request_receipt_comment(
                     raw_comment,
                     expected_author="github-actions[bot]",
                 )
-                if receipt is None:
+                if comment_receipt is None:
                     raise ValueError
                 comment_valid = (
-                    receipt.issue_number == request_number
-                    and receipt.request_sha256 == request.request_sha256
-                    and receipt.receipt_sha256 not in trusted_receipt_hashes
+                    comment_receipt.issue_number == request_number
+                    and comment_receipt.request_sha256 == request.request_sha256
+                    and comment_receipt.receipt_sha256 not in trusted_receipt_hashes
                 )
                 if not comment_valid:
                     raise ValueError
-                trusted_receipt_hashes.add(receipt.receipt_sha256)
-                snapshot = receipt_writer_snapshots.get(receipt.writer_run_id)
+                trusted_receipt_hashes.add(comment_receipt.receipt_sha256)
+                snapshot = receipt_writer_snapshots.get(comment_receipt.writer_run_id)
                 if snapshot is not None:
                     verify_request_receipt_writer_provenance(
-                        receipt,
+                        comment_receipt,
                         snapshot,
                         expected_repository=str(repository_snapshot.get("full_name")),
                     )
                     provenance_valid = True
-                mirrored = receipt_artifacts.get(receipt.receipt_sha256)
+                mirrored = receipt_artifacts.get(comment_receipt.receipt_sha256)
                 mirror_valid = (
                     mirrored is not None
                     and canonical_model_bytes(mirrored)
-                    == canonical_model_bytes(receipt)
+                    == canonical_model_bytes(comment_receipt)
                 )
                 if provenance_valid and mirror_valid:
-                    trusted_receipts.append(receipt)
+                    trusted_receipts.append(comment_receipt)
             except (ValueError, TypeError, IndexError):
                 comment_valid = False
         if author == "github-actions[bot]":
@@ -526,11 +528,11 @@ def build_catalog_routing_bundle(
                 "updated_at": raw_comment.get("updated_at"),
                 "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
                 "receipt_sha256": (
-                    receipt.receipt_sha256 if receipt is not None else None
+                    comment_receipt.receipt_sha256 if comment_receipt is not None else None
                 ),
                 "receipt": (
-                    receipt.model_dump(mode="json")
-                    if receipt is not None and comment_valid
+                    comment_receipt.model_dump(mode="json")
+                    if comment_receipt is not None and comment_valid
                     else None
                 ),
                 "writer_receipt_valid": comment_valid,

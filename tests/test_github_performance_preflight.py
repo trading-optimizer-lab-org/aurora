@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from collections.abc import MutableMapping
+from typing import cast
 
 import pytest
 
@@ -620,7 +622,7 @@ def test_atlas_preparer_exception_requires_reusable_read_only_call(tmp_path: Pat
     }
 
     payload["on"] = {"workflow_call": {}}
-    payload["permissions"]["issues"] = "read"
+    cast(MutableMapping[str, object], payload["permissions"])["issues"] = "read"
     write_yaml(path, payload)
     assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
         item.code for item in validate_workflow_policy(workflow, tmp_path, {})

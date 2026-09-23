@@ -12,7 +12,7 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 import sys
-from typing import Mapping
+from typing import Mapping, NoReturn
 
 from aurora.infra.sp500_megarun.atlas_execution_contract import AtlasRunPlanV1
 from aurora.infra.sp500_megarun.catalog_atlas_cloud_identity import (
@@ -91,7 +91,7 @@ def _qualified_worker_ceiling(context: CampaignContext) -> int:
     return ceiling
 
 
-def _fail(code: str) -> None:
+def _fail(code: str) -> NoReturn:
     raise ValueError(f"ATLAS_PREPARE_{code}")
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from infra.github_performance.preflight import load_github_yaml
 
@@ -10,7 +11,7 @@ ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/sp500-atlas-run.yml"
 
 
-def _workflow() -> dict[str, object]:
+def _workflow() -> dict[str, Any]:
     return dict(load_github_yaml(WORKFLOW))
 
 

@@ -26,6 +26,7 @@ from .catalog_campaign_definition_contract import (
     registry_entry_sha256,
 )
 from .catalog_campaign_registry import (
+    CatalogAtlasCampaignEntryV1,
     CatalogCampaignEntryV1,
     load_catalog_campaign_registry,
 )
@@ -572,7 +573,7 @@ class CatalogRequesterReconcileHintV1(FrozenModel):
 def build_catalog_intent_draft(
     *,
     ticket: CatalogLaunchTicketV1,
-    registry_entry: CatalogCampaignEntryV1,
+    registry_entry: CatalogCampaignEntryV1 | CatalogAtlasCampaignEntryV1,
     campaign_manifest: CatalogCampaignDefinitionManifestV1,
     prompt_bytes: bytes,
 ) -> CatalogRunIntentDraftV1:
@@ -734,7 +735,7 @@ def _select_registered_campaign(
     *,
     registry_path: Path,
     campaign_key: str,
-) -> CatalogCampaignEntryV1:
+) -> CatalogCampaignEntryV1 | CatalogAtlasCampaignEntryV1:
     campaign_key = _validated_campaign_key(campaign_key)
     registry = load_catalog_campaign_registry(_fixed_file(registry_path))
     matches = tuple(

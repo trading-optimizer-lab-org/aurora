@@ -91,7 +91,7 @@ class AtlasTerminalVerification:
 
 
 def _canonical(value: object) -> str:
-    return canonical_sha256(value)  # type: ignore[arg-type]
+    return canonical_sha256(value)
 
 
 def _sha256_file(path: Path) -> str:

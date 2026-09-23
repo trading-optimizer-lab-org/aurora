@@ -19,6 +19,7 @@ from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import (
 from aurora.infra.sp500_megarun.catalog_campaign_registry import (
     CatalogAtlasCampaignEntryV1,
 )
+from scripts.build_sp500_atlas_catalog import build_catalog
 
 
 def _write_json(path, payload):
@@ -420,9 +421,12 @@ def test_rejects_changed_selection_hash(valid_inputs, monkeypatch):
         )
 
 
-def test_real_generated_catalog_verifies_with_historical_calibration():
-    catalog_dir = Path(
-        "C:/Users/HP/AppData/Local/Temp/aurora-atlas-verify-209906-20260923"
+def test_real_generated_catalog_verifies_with_historical_calibration(tmp_path: Path):
+    catalog_dir = tmp_path / "atlas-catalog"
+    build_catalog(
+        data_contract_path=Path("config/sp500_megarun_free_data_240.json"),
+        feature_contract_path=Path("config/sp500_megarun_feature_contract_240.json"),
+        output_dir=catalog_dir,
     )
     freeze = identity._read_json(identity.FREEZE_MANIFEST_PATH, "FREEZE_UNREADABLE")
     identity._verify_freeze(freeze)
