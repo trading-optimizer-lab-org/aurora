@@ -133,6 +133,30 @@ def test_consumed_sp500_generation_eight_keeps_its_historical_release_boundary()
     assert approval.source_ticket_contexts == ()
 
 
+def test_ordinary_canary_generation_twelve_uses_verified_predecessor():
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
+    from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
+
+    root = Path(__file__).resolve().parents[1]
+    definition = parse_catalog_campaign_definition_bytes(
+        (root / 'config/catalog_campaign_definitions/catalog-fast-canary-v1.manifest.json').read_bytes()
+    )
+    ticket = CatalogLaunchTicketV1(
+        schema_version='1', request_id='018f47a2-6e91-7c34-8000-000000000012',
+        campaign_key='catalog-fast-canary-v1', launch_generation=12,
+        previous_terminal_request_sha256='d46799a897dd2d8f4d51837e6783e4c03e84b9773c3da243225a016ab9e5ed6d',
+        campaign_definition_sha256=definition.campaign_definition_sha256,
+        prompt_sha256=hashlib.sha256((root / 'docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md').read_bytes()).hexdigest(),
+    )
+    approval = load_lineage_transition(root, ticket)
+    assert approval is not None
+    assert approval.next_generation == 12
+    assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
+    assert approval.target_definition_sha256 == ticket.campaign_definition_sha256
+    assert approval.target_prompt_sha256 == ticket.prompt_sha256
+    assert approval.source_ticket_contexts == ()
+
+
 def test_consumed_canary_generation_eleven_keeps_its_historical_release_boundary():
     from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
 

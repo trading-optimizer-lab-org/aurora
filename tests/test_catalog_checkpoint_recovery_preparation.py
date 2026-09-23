@@ -85,6 +85,47 @@ def test_canary_does_not_restore(tmp_path):
         restore_root=tmp_path, restore=lambda: pytest.fail('unexpected restore')) is None
 
 
+def test_ordinary_preparation_does_not_load_historical_recovery(tmp_path, monkeypatch):
+    monkeypatch.setattr(prepare, 'load_checkpoint_recovery_profile',
+                        lambda *args: pytest.fail('ordinary preparation loaded historical recovery'))
+    assert prepare._preparation_checkpoint_profile(tmp_path, 'sp500-optimized-catalog-v1', None) is None
+
+
+@pytest.mark.parametrize('generation', [10, 9, 8])
+def test_explicit_recovery_selects_closed_profile_in_order(tmp_path, monkeypatch, generation):
+    calls = []
+    profile = object()
+    def load(root, campaign, requested):
+        calls.append(requested)
+        return profile if requested == generation else None
+    monkeypatch.setattr(prepare, 'load_checkpoint_recovery_profile', load)
+    assert prepare._preparation_checkpoint_profile(tmp_path, 'sp500-optimized-catalog-v1', lambda: None) is profile
+    assert calls == list(range(10, generation - 1, -1))
+
+
+def test_ordinary_finalize_without_recovery_does_not_load_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(finalize, 'load_checkpoint_recovery_profile',
+                        lambda *args: pytest.fail('ordinary finalization loaded historical recovery'))
+    assert finalize._load_checkpoint_recovery_seed(tmp_path, tmp_path, 'sp500-optimized-catalog-v1', {}) is None
+
+
+@pytest.mark.parametrize('kind', ['file', 'directory', 'broken_symlink'])
+def test_ordinary_finalize_rejects_orphan_recovery_transport(tmp_path, monkeypatch, kind):
+    path = tmp_path / 'checkpoint-recovery'
+    if kind == 'file':
+        path.write_bytes(b'orphan')
+    elif kind == 'directory':
+        path.mkdir()
+    else:
+        try:
+            path.symlink_to(tmp_path / 'absent-target', target_is_directory=True)
+        except OSError:
+            pytest.skip('symlink creation unavailable')
+    monkeypatch.setattr(finalize, 'load_checkpoint_recovery_profile', lambda *args: None)
+    with pytest.raises(ValueError, match='CATALOG_CHECKPOINT_RECOVERY_UNEXPECTED'):
+        finalize._load_checkpoint_recovery_seed(tmp_path, tmp_path, 'sp500-optimized-catalog-v1', {})
+
+
 def test_durable_prepared_transport_compresses_with_bounded_composed_capacity():
     from pathlib import Path
     from aurora.infra.github_performance.preflight import load_github_yaml

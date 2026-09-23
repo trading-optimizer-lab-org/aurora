@@ -47,9 +47,6 @@ from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_profile import (
     load_checkpoint_recovery_profile,
     validate_exact_checkpoint_profile,
 )
-from aurora.infra.sp500_megarun.catalog_checkpoint_recovery_restore import (
-    restore_catalog_checkpoint_recovery,
-)
 from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
     verify_catalog_campaign_definition,
 )
@@ -308,6 +305,18 @@ def _recovery_files(root: Path) -> list[dict[str, object]]:
     if not files:
         raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
     return files
+
+
+def _preparation_checkpoint_profile(
+    root: Path, campaign_key: str, restore: Callable[[], object] | None,
+) -> CheckpointRecoveryProfileV1 | None:
+    if restore is None:
+        return None
+    return (
+        load_checkpoint_recovery_profile(root, campaign_key, 10)
+        or load_checkpoint_recovery_profile(root, campaign_key, 9)
+        or load_checkpoint_recovery_profile(root, campaign_key, 8)
+    )
 
 
 def _checkpoint_recovery_state(
@@ -650,10 +659,8 @@ def prepare_campaign(
         download_root=runner_temp / "catalog-preparation-indexes",
     )
 
-    checkpoint_recovery_profile = load_checkpoint_recovery_profile(root, entry.campaign_key, 10) or load_checkpoint_recovery_profile(root, entry.campaign_key, 9) or load_checkpoint_recovery_profile(
-        root,
-        entry.campaign_key,
-        8,
+    checkpoint_recovery_profile = _preparation_checkpoint_profile(
+        root, entry.campaign_key, checkpoint_recovery_restore,
     )
     checkpoint_recovery_staging = target.parent / (
         f".{target.name}-checkpoint-recovery"
@@ -662,22 +669,6 @@ def prepare_campaign(
     if checkpoint_recovery_profile is not None:
         if checkpoint_recovery_profile.science_sha256 != science_sha256:
             raise ValueError("CATALOG_CHECKPOINT_RECOVERY_SCIENCE_MISMATCH")
-        if checkpoint_recovery_restore is None:
-            checkpoint_recovery_restore = lambda: restore_catalog_checkpoint_recovery(
-                repo_root=root,
-                repository=repository,
-                protected_commit_sha=expected_commit,
-                profile=checkpoint_recovery_profile,
-                output_dir=checkpoint_recovery_staging,
-                fetch_json=client,
-                download_artifact=lambda artifact_id: (
-                    _download_checkpoint_recovery_artifact(
-                        repository,
-                        token,
-                        artifact_id,
-                    )
-                ),
-            )
         checkpoint_recovery_state = _checkpoint_recovery_state(
             repo_root=root,
             profile=checkpoint_recovery_profile,

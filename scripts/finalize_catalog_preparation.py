@@ -275,8 +275,13 @@ def required_prepared_cache_keys(
 
 
 def _load_checkpoint_recovery_seed(root, seed, campaign_key, seed_context):
-    profile = load_checkpoint_recovery_profile(root, campaign_key, 10) or load_checkpoint_recovery_profile(root, campaign_key, 9) or load_checkpoint_recovery_profile(root, campaign_key, 8)
     document = seed_context.get('checkpoint_recovery')
+    transport = seed / 'checkpoint-recovery'
+    if document is None:
+        if transport.exists() or transport.is_symlink():
+            raise ValueError('CATALOG_CHECKPOINT_RECOVERY_UNEXPECTED')
+        return None
+    profile = load_checkpoint_recovery_profile(root, campaign_key, 10) or load_checkpoint_recovery_profile(root, campaign_key, 9) or load_checkpoint_recovery_profile(root, campaign_key, 8)
     if profile is None:
         if document is not None:
             raise ValueError('CATALOG_CHECKPOINT_RECOVERY_UNEXPECTED')
@@ -291,7 +296,6 @@ def _load_checkpoint_recovery_seed(root, seed, campaign_key, seed_context):
         raise ValueError('CATALOG_CHECKPOINT_RECOVERY_OWNER_PROOF_INVALID') from exc
     if document.get('binding') != build_checkpoint_recovery_binding(profile, proof):
         raise ValueError('CATALOG_CHECKPOINT_RECOVERY_BINDING_INVALID')
-    transport = seed / 'checkpoint-recovery'
     if transport.is_symlink() or not transport.is_dir():
         raise ValueError('CATALOG_CHECKPOINT_RECOVERY_TRANSPORT_INVALID')
     if document.get('files') != _recovery_files(transport):

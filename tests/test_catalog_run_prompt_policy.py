@@ -124,6 +124,18 @@ def test_source_prompt_archive_is_the_approved_exact_version() -> None:
     assert hashlib.sha256(SOURCE_ARCHIVE.read_bytes()).hexdigest() == EXPECTED_SOURCE_SHA256
 
 
+def test_ordinary_short_prompt_preserves_the_canonical_protocol() -> None:
+    short = (ROOT / 'docs/runbooks/CATALOG_RUN_SHORT_PROMPT.md').read_text(encoding='utf-8')
+    assert len(short.splitlines()) <= 60
+    for required in ('orden explícita', 'CATALOG_RUN_MASTER_PROMPT.md',
+                     '[AURORA CATALOG INTENT] INTENT_ID', 'UUIDv4',
+                     'no repitas el POST', 'terminal auténtico', 'comparador científico',
+                     'No avances generaciones', 'No uses Windows', 'No uses recursos de pago'):
+        assert required in short
+    for forbidden in DIRECT_MECHANICS:
+        assert forbidden not in short
+
+
 def test_active_prompt_is_controller_only_and_hash_bound() -> None:
     text = PROMPT.read_text(encoding="utf-8")
     policy = _json(POLICY)
