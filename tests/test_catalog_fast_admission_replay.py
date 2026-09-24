@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import io
 import json
@@ -18,6 +18,18 @@ from aurora.infra.sp500_megarun.catalog_run_request import parse_catalog_run_req
 from aurora.tests.test_inspect_catalog_fast_request import _entry, _identity, _signed_request
 from aurora.tests.test_catalog_fast_reservation import _metadata
 from scripts import admit_catalog_fast_request as admission
+
+
+def test_unlaunched_blocked_issue_is_preserved_only_until_expiry():
+    now = datetime(2026, 9, 24, 15, tzinfo=timezone.utc)
+    decision = SimpleNamespace(state="BLOCKED", launch_required=False,
+        decided_at=now, expires_at=now + timedelta(minutes=30))
+    assert admission._preserve_unlaunched_issue(decision)
+    decision.expires_at = now - timedelta(seconds=1)
+    assert not admission._preserve_unlaunched_issue(decision)
+    decision.expires_at = now + timedelta(minutes=30)
+    decision.launch_required = True
+    assert not admission._preserve_unlaunched_issue(decision)
 
 
 @pytest.mark.parametrize("case", (

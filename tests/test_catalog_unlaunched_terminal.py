@@ -49,10 +49,19 @@ def test_unlaunched_terminal_requires_expiry_and_no_original_owner(monkeypatch, 
 
 
 @pytest.mark.parametrize("fault", (None, "digest", "source", "third", "foreign_issue"))
-def test_exact_orphaned_atlas_receipt_can_be_superseded_without_deleting_it(monkeypatch, fault):
+@pytest.mark.parametrize("orphan_number", (370, 375))
+def test_exact_orphaned_atlas_receipt_can_be_superseded_without_deleting_it(monkeypatch, fault, orphan_number):
     from scripts import publish_catalog_fast_authority as command
 
-    request = SimpleNamespace(request_sha256="50c97b410f5bd9659e90c3c16c20b6717c70afc919d2a5f057159f406d5c6bb1")
+    orphan = {
+        370: ("50c97b410f5bd9659e90c3c16c20b6717c70afc919d2a5f057159f406d5c6bb1",
+              10808827739, "sha256:2eecc3be434d4d3b0e11d601cf70724f2b822899108ddaa58ee9f37cf10eb938",
+              36003599751, "64b31d9867a3140ebc1835e8bca40cd58f89e557"),
+        375: ("fac5dcb9359ebeded5b8d2fd06af4f8c332d4aace282dc6667fd446e80ae10d2",
+              10817955043, "sha256:8cad1b8c79fef1827c7b506ae772d6a4a493a54c301ea0e3cac0d8dc2c733a3b",
+              36022682478, "c3eb87071ca1b944599c9f7636f18046b2f325a5"),
+    }[orphan_number]
+    request = SimpleNamespace(request_sha256=orphan[0])
     created = NOW - timedelta(minutes=31)
     decision = SimpleNamespace(state="BLOCKED", reason_code="CATALOG_REQUEST_EXPIRED",
         launch_required=False, existing_run_id=None, selected_workers=0,
@@ -61,10 +70,8 @@ def test_exact_orphaned_atlas_receipt_can_be_superseded_without_deleting_it(monk
         engine_run_id=None, run_url=None, observed_recipe_count=0,
         result_science_sha256=None, created_at=NOW)
     issue = {"created_at": created.isoformat(), "state": "open", "labels": []}
-    old = {"id": 10808827739, "expired": False,
-        "digest": "sha256:2eecc3be434d4d3b0e11d601cf70724f2b822899108ddaa58ee9f37cf10eb938",
-        "workflow_run": {"id": 36003599751,
-                         "head_sha": "64b31d9867a3140ebc1835e8bca40cd58f89e557"}}
+    old = {"id": orphan[1], "expired": False, "digest": orphan[2],
+        "workflow_run": {"id": orphan[3], "head_sha": orphan[4]}}
     if fault == "digest":
         old["digest"] = "sha256:" + "f" * 64
     elif fault == "source":
@@ -83,7 +90,7 @@ def test_exact_orphaned_atlas_receipt_can_be_superseded_without_deleting_it(monk
 
     monkeypatch.setattr(command, "load_fast_gate_owner", lambda **kwargs: None)
     arguments = dict(client=Client(), repository=Client.repository, token="fixture-only",
-        commit="a" * 40, number=371 if fault == "foreign_issue" else 370,
+        commit="a" * 40, number=371 if fault == "foreign_issue" else orphan_number,
         request=request, issue=issue, context={"issue_created_at": issue["created_at"]},
         decision=decision, receipt=receipt, run_id=123, receipt_artifact_id=88)
     if fault is None:
