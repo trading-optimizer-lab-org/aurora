@@ -16,6 +16,32 @@ from tests.test_catalog_fast_authority import _lineage_boundary
 NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
 
 
+def test_atlas_generation_two_uses_only_the_closed_first_request_and_current_definition():
+    from aurora.infra.sp500_megarun.catalog_campaign_definition_contract import parse_catalog_campaign_definition_bytes
+    from aurora.infra.sp500_megarun.catalog_lineage_transition import load_lineage_transition
+
+    root = Path(__file__).resolve().parents[1]
+    definition = parse_catalog_campaign_definition_bytes(
+        (root / "config/catalog_campaign_definitions/sp500-atlas-v1.manifest.json").read_bytes()
+    )
+    prompt_sha256 = hashlib.sha256(
+        (root / "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md").read_bytes()
+    ).hexdigest()
+    ticket = CatalogLaunchTicketV1(
+        schema_version="1", request_id="018f47a2-6e91-7c34-8000-000000000020",
+        campaign_key="sp500-atlas-v1", launch_generation=2,
+        previous_terminal_request_sha256="50c97b410f5bd9659e90c3c16c20b6717c70afc919d2a5f057159f406d5c6bb1",
+        campaign_definition_sha256=definition.campaign_definition_sha256,
+        prompt_sha256=prompt_sha256,
+    )
+    approval = load_lineage_transition(root, ticket)
+    assert approval is not None
+    assert approval.previous_request_sha256 == ticket.previous_terminal_request_sha256
+    assert approval.target_definition_sha256 == ticket.campaign_definition_sha256
+    assert approval.target_prompt_sha256 == ticket.prompt_sha256
+    assert approval.source_ticket_contexts == ()
+
+
 @pytest.mark.parametrize("campaign,generation,predecessor,installed_definition", [
     ("sp500-optimized-catalog-v1", 7,
      "1f73eadbb2404095072c61fb67f36f813cff8b119bc17bbb3d5df8852ad333f7",
