@@ -99,7 +99,9 @@ def _new_emission(root, context, run_id, commit, *, recovery_proof=None, unreser
         prompt_sha256=prompt_sha, imported_ticket=imported, lineage_transition=transition,
         lineage_resolver=lambda candidate: load_lineage_transition(root, candidate),
         recovery_proof=recovery_proof,
-        unreserved_proof=unreserved_proof, now=now,
+        unreserved_proof=unreserved_proof,
+        cloud_native_initial=(entry.campaign_key == "sp500-atlas-v1" and entry.engine_id == "atlas_static_v1"),
+        now=now,
     )
     draft = build_catalog_intent_draft(ticket=ticket, registry_entry=entry,
                                       campaign_manifest=manifest, prompt_bytes=prompt)

@@ -47,6 +47,20 @@ def test_missing_import_does_not_recreate_ticket():
         select(FastAuthorityStateV1.bootstrap(campaigns=()))
 
 
+def test_protected_atlas_initial_ticket_is_generation_one_only():
+    intent = _validate().model_copy(update={"campaign_key": "sp500-atlas-v1"})
+    state = FastAuthorityStateV1.bootstrap(campaigns=())
+    ticket = select(state, intent=intent, cloud_native_initial=True)
+    assert ticket.campaign_key == "sp500-atlas-v1"
+    assert ticket.launch_generation == 1
+    assert ticket.previous_terminal_request_sha256 is None
+    assert ticket.request_id == "018f47a2-6e91-7c34-8000-000000000099"
+    assert ticket.campaign_definition_sha256 == emission().request.campaign_definition_sha256
+
+    with pytest.raises(ValueError, match="CUTOVER_TICKET_REQUIRED"):
+        select(state, cloud_native_initial=True)
+
+
 def test_terminal_advances_one_generation_with_exact_predecessor():
     state = terminal_state()
     ticket = select(state)

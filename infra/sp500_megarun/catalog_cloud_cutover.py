@@ -98,6 +98,8 @@ def imported_cloud_ticket(
         return None
     rows = [row for row in retirement.campaigns if row.journal.campaign_key == campaign_key]
     if len(rows) != 1:
+        if not rows and campaign_key == "sp500-atlas-v1":
+            return None
         raise ValueError("CATALOG_CLOUD_CUTOVER_TICKET_REQUIRED")
     row = rows[0]
     ticket = row.journal.ticket
