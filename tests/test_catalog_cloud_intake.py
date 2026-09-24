@@ -473,7 +473,9 @@ def test_only_prevalidated_unstaged_atlas_issue_can_resume_without_authority_bin
 
     for field, value in (("id", 5566551793), ("number", 369)):
         changed_event, changed_live = deepcopy(event), deepcopy(live_issue)
-        changed_event["issue"][field] = value
+        changed_issue = changed_event["issue"]
+        assert isinstance(changed_issue, dict)
+        changed_issue[field] = value
         changed_live[field] = value
         with pytest.raises(ValueError, match="CLOUD_INTAKE_INVALID"):
             _validate(
