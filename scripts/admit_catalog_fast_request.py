@@ -32,6 +32,7 @@ from aurora.infra.sp500_megarun.catalog_campaign_registry import (
 )
 from aurora.infra.sp500_megarun.catalog_fast_path import (
     AtlasPreparationIdentityV1,
+    AtlasPreparedReceiptV1,
     CatalogFastGateSnapshotV1,
     CatalogFastLaunchDecisionV1,
     CatalogPreparationIdentityV1,
@@ -233,19 +234,17 @@ def _materialize_atlas_prepared_plan(
     *,
     bundle_dir: Path,
     expected_identity: AtlasPreparationIdentityV1,
+    prepared_receipt: AtlasPreparedReceiptV1,
+    verified_manifest: Mapping[str, object],
     registry_entry: CatalogAtlasCampaignEntryV1,
     request_sha256: str,
     decision_sha256: str,
     repo_root: Path,
     output_dir: Path,
 ) -> Mapping[str, object]:
-    """Create the request-bound Atlas envelope without optimized payloads."""
+    """Create the request-bound envelope from this gate's verified bundle."""
 
-    receipt, verified_manifest = verify_atlas_prepared_bundle(
-        bundle_dir=bundle_dir,
-        expected_identity=expected_identity,
-        repo_root=repo_root,
-    )
+    receipt = prepared_receipt
     target = Path(output_dir).resolve(strict=False)
     if output_dir.exists() or output_dir.is_symlink():
         raise ValueError("CATALOG_ATLAS_SEALED_PLAN_OUTPUT_EXISTS")
@@ -756,6 +755,7 @@ def admit_request(
     issue_created_at = _utc(context.get("issue_created_at"))
     expires_at = issue_created_at + timedelta(minutes=30)
     prepared = None
+    atlas_verified_manifest: Mapping[str, object] | None = None
     if request.campaign_key in active_campaigns:
         decision = _blocked(
             request=request,
@@ -775,7 +775,7 @@ def admit_request(
     else:
         try:
             if entry.engine_id == "atlas_static_v1":
-                prepared, _ = verify_atlas_prepared_bundle(
+                prepared, atlas_verified_manifest = verify_atlas_prepared_bundle(
                     bundle_dir=bundle,
                     expected_identity=identity,
                     repo_root=root,
@@ -918,9 +918,13 @@ def admit_request(
     sealed_receipt: Mapping[str, Any] | None = None
     if decision.launch_required:
         if entry.engine_id == "atlas_static_v1":
+            if not isinstance(prepared, AtlasPreparedReceiptV1) or atlas_verified_manifest is None:
+                raise ValueError("CATALOG_ATLAS_VERIFIED_BUNDLE_UNAVAILABLE")
             sealed_receipt = _materialize_atlas_prepared_plan(
                 bundle_dir=bundle,
                 expected_identity=identity,
+                prepared_receipt=prepared,
+                verified_manifest=atlas_verified_manifest,
                 registry_entry=entry,
                 request_sha256=request.request_sha256,
                 decision_sha256=decision.decision_sha256,
