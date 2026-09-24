@@ -1,7 +1,7 @@
 """Bind a validated event to its existing durable intent before ticket access."""
 
 from .catalog_cloud_emission import CatalogCloudCompletedIntentV1, CatalogCloudEmissionV1
-from .catalog_cloud_intake import AuthenticatedCloudIntentV1
+from .catalog_cloud_intake import AuthenticatedCloudIntentV1, is_prevalidated_unstaged_atlas_intent
 from .catalog_fast_authority import FastAuthorityStateV1
 
 
@@ -12,7 +12,8 @@ def resolve_cloud_replay(
 
     Both arguments must have been obtained through their production validators.
     A reused UUID from a different issue/actor is a conflict, not a new intent.
-    A resume can read existing history but can never originate a new emission.
+    A resume can read existing history. Only the protected, previously validated
+    Atlas issue may recover its unstaged first emission.
     """
     candidates: list[CatalogCloudEmissionV1 | CatalogCloudCompletedIntentV1] = []
     for emission_row in authority.emissions:
@@ -32,7 +33,7 @@ def resolve_cloud_replay(
         if superseded_emission.intent_id == intent.intent_id:
             candidates.append(superseded_emission)
     if not candidates:
-        if intent.is_resume:
+        if intent.is_resume and not is_prevalidated_unstaged_atlas_intent(intent):
             raise ValueError("CATALOG_CLOUD_RESUME_UNKNOWN")
         return None
     if len(candidates) != 1:

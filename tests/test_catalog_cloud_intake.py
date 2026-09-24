@@ -438,3 +438,45 @@ def test_rejects_comment_actor_when_it_is_a_bool_instead_of_an_int() -> None:
 
     with pytest.raises(ValueError, match="CLOUD_INTAKE_INVALID"):
         _validate("issue_comment", event=event, live_issue=live_issue)
+
+
+def test_only_prevalidated_unstaged_atlas_issue_can_resume_without_authority_binding() -> None:
+    created = datetime(2026, 9, 24, 9, 56, 6, tzinfo=UTC)
+    commented = created + timedelta(days=2)
+    intent_id = "7ce685e5-b48d-494e-a1d4-a115c9507dcb"
+    issue = _issue(
+        issue_id=5566551792,
+        title=f"[AURORA CATALOG INTENT] {intent_id}",
+        body=(f'{{"schema_version":"1","campaign_key":"sp500-atlas-v1",'
+              f'"intent_id":"{intent_id}"}}'),
+        created_at=created,
+        updated_at=commented,
+    )
+    issue["number"] = 368
+    issue["url"] = "https://api.github.com/repos/trading-optimizer-lab-org/aurora/issues/368"
+    issue["repository_url"] = "https://api.github.com/repos/trading-optimizer-lab-org/aurora"
+    event, live_issue = _event(
+        event_name="issue_comment", action="created", issue=issue,
+        comment_body=f"AURORA_REANUDAR_INTENCION {intent_id}", created_at=commented,
+    )
+    event["repository"] = {
+        "id": REPOSITORY_ID, "full_name": "trading-optimizer-lab-org/aurora",
+        "url": "https://api.github.com/repos/trading-optimizer-lab-org/aurora",
+    }
+    policy = _policy(repository="trading-optimizer-lab-org/aurora")
+    accepted = _validate(
+        "issue_comment", event=event, live_issue=live_issue, policy=policy,
+        observed_at=commented + timedelta(seconds=1),
+    )
+    assert accepted.intent_id == intent_id
+    assert accepted.is_resume is True
+
+    for field, value in (("id", 5566551793), ("number", 369)):
+        changed_event, changed_live = deepcopy(event), deepcopy(live_issue)
+        changed_event["issue"][field] = value
+        changed_live[field] = value
+        with pytest.raises(ValueError, match="CLOUD_INTAKE_INVALID"):
+            _validate(
+                "issue_comment", event=changed_event, live_issue=changed_live,
+                policy=policy, observed_at=commented + timedelta(seconds=1),
+            )
