@@ -152,6 +152,13 @@
       "next_generation": 12,
       "target_definition_sha256": "9eb2313d6d6abfdc31ed5b84d33705827994ea7fb650eb78dce534adb86f02aa",
       "target_prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3"
+    },
+    {
+      "campaign_key": "sp500-atlas-v1",
+      "previous_request_sha256": "50c97b410f5bd9659e90c3c16c20b6717c70afc919d2a5f057159f406d5c6bb1",
+      "next_generation": 2,
+      "target_definition_sha256": "cdbd3fcfad1e3bc70d6f2fd6699015e0a06cb980aae027ea181261d1fff58367",
+      "target_prompt_sha256": "c69e7e311f2d2c728d41573a7512276a94ca6d7360d06d1f3f8b2e37b5bb42d3"
     }
   ]
 }
