@@ -167,27 +167,34 @@ def finalize_atlas_run(
     if gate_result not in {None, "success", "failure", "cancelled", "skipped"}:
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_GATE_RESULT_INVALID")
     request, decision = _load_boundaries(request_context_path, decision_path)
-    try:
-        _, verified_request, verified_decision, verification = verify_atlas_terminal_evidence(
-            repo_root=Path(repo_root),
-            context_path=request_context_path,
-            decision_path=decision_path,
-            run_path=run_path,
-            jobs_path=jobs_path,
-            preflight_root=preflight_root,
-            final_root=final_root,
-            gate_result=gate_result,
-            expected_plan_sha256=expected_plan_sha256,
-            final_results_artifact=final_results_artifact,
-        )
-        request, decision = verified_request, verified_decision
-    except AtlasTerminalEvidenceError as exc:
-        # Request and decision are already authenticated and hash-bound.  A
-        # malformed/missing parent-run evidence is therefore safe to terminalize
-        # as BLOCKED, while a malformed authority input still raises above.
+    if gate_result == "success" and decision.state == "BLOCKED" and not decision.launch_required:
+        # No Atlas engine was authorized. Keep the gate's exact reason for the
+        # expiry-bound unlaunched authority closure; science evidence cannot exist.
+        reason = decision.reason_code
+    else:
+        try:
+            _, verified_request, verified_decision, verification = verify_atlas_terminal_evidence(
+                repo_root=Path(repo_root),
+                context_path=request_context_path,
+                decision_path=decision_path,
+                run_path=run_path,
+                jobs_path=jobs_path,
+                preflight_root=preflight_root,
+                final_root=final_root,
+                gate_result=gate_result,
+                expected_plan_sha256=expected_plan_sha256,
+                final_results_artifact=final_results_artifact,
+            )
+            request, decision = verified_request, verified_decision
+        except AtlasTerminalEvidenceError as exc:
+            # Bound authority inputs may produce a fail-closed receipt, never success.
+            reason = exc.code
+        else:
+            reason = None
+    if reason is not None:
         verification = AtlasTerminalVerification(
             state="BLOCKED",
-            reason_code=exc.code,
+            reason_code=reason,
             expected_recipe_count=209_906,
             observed_recipe_count=0,
             run_id=None,
@@ -203,7 +210,7 @@ def finalize_atlas_run(
                 "reduction_jobs_window_seconds": None,
                 "worker_evaluation_seconds": None,
             },
-            diagnostics=(exc.code,),
+            diagnostics=(reason,),
         )
     receipt = build_terminal_receipt(
         request=request,

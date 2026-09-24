@@ -153,20 +153,20 @@ jobs:
           --expected-preparation-key-sha256 "$ATLAS_PREPARATION_KEY_SHA256"
           --calibration-output-dir calibration-output
           --previous-bundle-dir prepared-cache-previous
-          --bundle-dir prepared-bundle
+          --bundle-dir "$RUNNER_TEMP/prepared-bundle"
           --github-output "$GITHUB_OUTPUT"
       - name: Publish durable PREPARED artifact
         id: publish
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: catalog-atlas-prepared-${{ inputs.campaign_key }}-${{ steps.prepare.outputs.preparation_key_sha256 }}
-          path: prepared-bundle
+          path: ${{ runner.temp }}/prepared-bundle
           if-no-files-found: error
           retention-days: 90
       - name: Save the protected identity cache
         uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: prepared-bundle
+          path: ${{ runner.temp }}/prepared-bundle
           key: aurora-catalog-atlas-prepared-v1-${{ steps.prepare.outputs.preparation_key_sha256 }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Expose artifact run ID
         env:

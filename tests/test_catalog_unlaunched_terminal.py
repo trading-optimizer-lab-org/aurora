@@ -48,6 +48,51 @@ def test_unlaunched_terminal_requires_expiry_and_no_original_owner(monkeypatch, 
             command._require_unlaunched_terminal(**arguments)
 
 
+@pytest.mark.parametrize("fault", (None, "digest", "source", "third", "foreign_issue"))
+def test_exact_orphaned_atlas_receipt_can_be_superseded_without_deleting_it(monkeypatch, fault):
+    from scripts import publish_catalog_fast_authority as command
+
+    request = SimpleNamespace(request_sha256="50c97b410f5bd9659e90c3c16c20b6717c70afc919d2a5f057159f406d5c6bb1")
+    created = NOW - timedelta(minutes=31)
+    decision = SimpleNamespace(state="BLOCKED", reason_code="CATALOG_REQUEST_EXPIRED",
+        launch_required=False, existing_run_id=None, selected_workers=0,
+        decided_at=NOW, expires_at=created + timedelta(minutes=30))
+    receipt = SimpleNamespace(state="BLOCKED", reason_code=decision.reason_code,
+        engine_run_id=None, run_url=None, observed_recipe_count=0,
+        result_science_sha256=None, created_at=NOW)
+    issue = {"created_at": created.isoformat(), "state": "open", "labels": []}
+    old = {"id": 10808827739, "expired": False,
+        "digest": "sha256:2eecc3be434d4d3b0e11d601cf70724f2b822899108ddaa58ee9f37cf10eb938",
+        "workflow_run": {"id": 36003599751,
+                         "head_sha": "64b31d9867a3140ebc1835e8bca40cd58f89e557"}}
+    if fault == "digest":
+        old["digest"] = "sha256:" + "f" * 64
+    elif fault == "source":
+        old["workflow_run"]["id"] += 1
+    rows = [old, {"id": 88, "expired": False,
+                  "workflow_run": {"id": 123, "head_sha": "a" * 40}}]
+    if fault == "third":
+        rows.append({"id": 89, "expired": False, "workflow_run": {"id": 124}})
+
+    class Client:
+        repository = "trading-optimizer-lab-org/aurora"
+        def stable_paginated(self, path, *, root):
+            assert root == "artifacts"
+            return SimpleNamespace(stable=True,
+                collection=SimpleNamespace(complete=True, rows=tuple(rows)))
+
+    monkeypatch.setattr(command, "load_fast_gate_owner", lambda **kwargs: None)
+    arguments = dict(client=Client(), repository=Client.repository, token="fixture-only",
+        commit="a" * 40, number=371 if fault == "foreign_issue" else 370,
+        request=request, issue=issue, context={"issue_created_at": issue["created_at"]},
+        decision=decision, receipt=receipt, run_id=123, receipt_artifact_id=88)
+    if fault is None:
+        command._require_unlaunched_terminal(**arguments)
+    else:
+        with pytest.raises(ValueError, match="CATALOG_FAST_AUTHORITY_UNLAUNCHED_TERMINAL_CONFLICT"):
+            command._require_unlaunched_terminal(**arguments)
+
+
 def test_unlaunched_terminal_workflow_requires_authority_before_closing():
     from pathlib import Path
     from aurora.infra.github_performance.preflight import load_github_yaml
