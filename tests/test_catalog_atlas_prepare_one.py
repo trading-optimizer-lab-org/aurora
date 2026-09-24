@@ -14,6 +14,8 @@ from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_atlas_cloud_identity import (
     AtlasPreparedReceiptV1,
 )
+from aurora.infra.sp500_megarun.atlas_execution_contract import build_run_plan, write_plan
+from aurora.infra.sp500_megarun.atlas_campaign_selection import build_campaign_selection
 from scripts import prepare_catalog_atlas_bundle as producer
 
 
@@ -164,6 +166,18 @@ def _install_fake_plan(
     )
     monkeypatch.setattr(producer, "plan_atlas_run", fake_plan_atlas_run)
     monkeypatch.setattr(producer, "AtlasRunPlanV1", fake_plan_type)
+
+    def fake_load_plan(path: Path) -> SimpleNamespace:
+        return SimpleNamespace(
+            **json.loads(Path(path).read_text(encoding="utf-8")),
+            plan_sha256=plan_sha256,
+        )
+
+    monkeypatch.setattr(
+        producer,
+        "load_plan",
+        fake_load_plan,
+    )
     monkeypatch.setattr(
         producer,
         "verify_atlas_cloud_identity",
@@ -365,3 +379,72 @@ def test_workflow_is_call_only_cold_and_publishes_commit_definition_keyed_output
     )
     assert "retention-days: 90" in text
     assert "refs/heads/main" in text
+
+
+def test_prepared_verifier_accepts_real_hash_bound_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selection = build_campaign_selection(
+        {
+            "canonical_recipe_count": 100,
+            "ranges": [{"range_id": "a", "start_ordinal": 0, "stop_ordinal": 100}],
+        },
+        requested_recipe_count=8,
+        seed=producer.SELECTION_SEED,
+    )
+    manifest_sha = producer.EXPECTED_FREEZE["catalog_manifest_sha256"]
+    plan = build_run_plan(
+        catalog_manifest={
+            "catalog_id": producer.EXPECTED_FREEZE["catalog_id"],
+            "manifest_sha256": manifest_sha,
+            "artifacts_sha256": {
+                "recipe_space.json": producer.EXPECTED_FREEZE["catalog_space_sha256"]
+            },
+            "counts": {"canonical_recipe_count": 100},
+            "validation_opened": False,
+            "locked_opened": False,
+            "execution_authorized": False,
+        },
+        calibration_receipt={
+            "catalog_sha256": manifest_sha,
+            "hard_limit_seconds": 1200.0,
+            "target_recipe_count_with_margin": 8,
+            "recipes_per_minute": 10.0,
+            "recommended_mode": "cold",
+            "available_minutes_to_target": 100.0,
+            "safety_fraction": 0.8,
+            "validation_opened": False,
+            "locked_opened": False,
+        },
+        target_end_iso=TARGET_ISO,
+        implementation_commit_sha="91c605b90ab4136c73dd00b8c200460a67571dbe",
+        total_shards=4,
+        selection=selection,
+    )
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    write_plan(plan_dir / "atlas_run_plan.json", plan)
+    (plan_dir / "atlas_campaign_selection.json").write_text(
+        json.dumps(selection), encoding="utf-8"
+    )
+    monkeypatch.setattr(producer, "REQUESTED_RECIPE_COUNT", 8)
+    monkeypatch.setattr(producer, "TOTAL_SHARDS", 4)
+    monkeypatch.setitem(producer.EXPECTED_FREEZE, "selection_sha256", selection["selection_sha256"])
+    loaded, loaded_selection = producer._verify_plan_and_selection(
+        tmp_path,
+        {
+            "accepted": True,
+            "plan_sha256": plan.plan_sha256,
+            "requested_recipe_count": 8,
+            "total_shards": 4,
+            "target_end_iso": TARGET_ISO,
+            "selection_seed": producer.SELECTION_SEED,
+            "validation_opened": False,
+            "locked_opened": False,
+            "execution_authorized": False,
+        },
+        _context(),
+        TARGET_ISO,
+    )
+    assert loaded.plan_sha256 == plan.plan_sha256
+    assert loaded_selection == selection
