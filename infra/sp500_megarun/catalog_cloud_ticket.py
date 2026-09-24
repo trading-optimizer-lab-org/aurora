@@ -21,13 +21,15 @@ def select_cloud_launch_ticket(
     new_request_id: Callable[[], UUID] = _uuid7,
     recovery_proof: CheckpointRecoveryOwnerProofV1 | None = None,
     unreserved_proof=None,
+    cloud_native_initial: bool = False,
     now=None,
 ) -> CatalogLaunchTicketV1:
     """Preserve the verified cutover ticket or advance one cloud terminal.
 
     ``imported_ticket`` is obtained only from the protected, verified cutover
     package. This function cannot accredit that package or revoke a local
-    sender. An absent initial ticket is an error, never a bootstrap trigger.
+    sender. An absent initial ticket is an error except for the explicitly
+    registered cloud-native Atlas campaign's first generation.
     An existing intent must take the replay branch before this is called.
     """
     if resolve_cloud_replay(authority, intent) is not None:
@@ -51,8 +53,17 @@ def select_cloud_launch_ticket(
                                                  unreserved_proof=unreserved_proof, now=now)
     elif prior is None:
         if imported_ticket is None:
-            raise ValueError("CATALOG_CLOUD_CUTOVER_TICKET_REQUIRED")
-        ticket = imported_ticket
+            if (cloud_native_initial is not True or intent.campaign_key != "sp500-atlas-v1"
+                    or owner is not None):
+                raise ValueError("CATALOG_CLOUD_CUTOVER_TICKET_REQUIRED")
+            ticket = CatalogLaunchTicketV1(
+                schema_version="1", request_id=str(new_request_id()),
+                campaign_key=intent.campaign_key, launch_generation=1,
+                campaign_definition_sha256=campaign_definition_sha256,
+                prompt_sha256=prompt_sha256, previous_terminal_request_sha256=None,
+            )
+        else:
+            ticket = imported_ticket
     else:
         if (prior.state != "PUBLICADO" or owner is None
                 or (owner.terminal_receipt_sha256 is None and recovery_proof is None)

@@ -487,6 +487,11 @@ def load_validated_cloud_context(repo_root: Path) -> CloudValidatedContextV1:
         observed_at,
         existing=existing,
     )
+    if intent.is_resume and not existing and any(
+        row.request.campaign_key == "sp500-atlas-v1"
+        for row in (*authority.emissions, *authority.campaigns)
+    ):
+        raise _invalid("unstaged Atlas recovery requires no prior campaign owner")
     replay = resolve_cloud_replay(authority, intent)
     return CloudValidatedContextV1(
         intent=intent,

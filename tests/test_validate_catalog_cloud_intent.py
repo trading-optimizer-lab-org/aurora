@@ -11,7 +11,7 @@ from aurora.infra.sp500_megarun.catalog_cloud_intake import CloudIntentV1
 from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1
 from scripts import validate_catalog_cloud_intent as command
 from scripts import verify_catalog_cloud_qualification as qualification_gate
-from tests.test_catalog_cloud_authority import emission
+from tests.test_catalog_cloud_authority import emission, signed_request
 from tests.test_catalog_fast_authority_github import publication_transport
 
 
@@ -122,9 +122,10 @@ def _install_bound_network(monkeypatch, tmp_path: Path, event, live_issue, *, st
         step["name"] += " (intake-signed)"
 
     original_get_json = fixture.client.get_json
+    issue_number = event["issue"]["number"]
 
     def get_json(path):
-        if path == f"/repos/{REPOSITORY}/issues/{ISSUE_NUMBER}":
+        if path == f"/repos/{REPOSITORY}/issues/{issue_number}":
             return live_issue, None
         return original_get_json(path)
 
@@ -249,6 +250,35 @@ def test_existing_resume_accepts_issue_timestamp_changed_by_that_comment(tmp_pat
     assert context.intent.is_resume is True
     assert context.replay == item
     assert fixture.state == context.authority
+
+
+def test_prevalidated_atlas_issue_recovers_only_before_first_campaign_owner(tmp_path, monkeypatch):
+    intent_id = "7ce685e5-b48d-494e-a1d4-a115c9507dcb"
+    created = "2026-09-24T09:56:06Z"
+    resumed = "2026-09-26T09:56:06Z"
+    event, live_issue = _event(
+        event_name="issue_comment", intent_id=intent_id,
+        body=(f'{{"schema_version":"1","campaign_key":"sp500-atlas-v1",'
+              f'"intent_id":"{intent_id}"}}'),
+    )
+    for issue in (event["issue"], live_issue):
+        issue.update(id=5566551792, number=368, created_at=created, updated_at=resumed,
+                     url=f"https://api.github.com/repos/{REPOSITORY}/issues/368")
+    event["comment"].update(body=f"AURORA_REANUDAR_INTENCION {intent_id}",
+                            created_at=resumed, updated_at=resumed)
+    fixture = _install_bound_network(monkeypatch, tmp_path, event, live_issue)
+    fixture.client.observed_at = datetime(2026, 9, 26, 9, 56, 7, tzinfo=timezone.utc)
+    context = command.load_validated_cloud_context(ROOT)
+    assert context.intent.intent_id == intent_id
+    assert context.replay is None
+
+    owner_state = FastAuthorityStateV1.bootstrap(campaigns=()).stage_emission(
+        emission(request=signed_request(campaign_key="sp500-atlas-v1"))
+    )
+    fixture = _install_bound_network(monkeypatch, tmp_path, event, live_issue, state=owner_state)
+    fixture.client.observed_at = datetime(2026, 9, 26, 9, 56, 7, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="unstaged Atlas recovery requires no prior campaign owner"):
+        command.load_validated_cloud_context(ROOT)
 
 
 def test_replay_binding_conflict_is_not_an_authorization_boolean(tmp_path, monkeypatch):

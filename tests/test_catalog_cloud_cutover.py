@@ -57,6 +57,21 @@ def test_actual_import_preserves_ticket_identity(tmp_path):
     assert imported == ticket
 
 
+def test_new_atlas_campaign_has_no_fabricated_local_cutover_ticket(tmp_path):
+    ticket = ticket_for(emission().request)
+    write_retirement(tmp_path, ticket)
+    authority = FastAuthorityStateV1.bootstrap(campaigns=())
+    assert imported_cloud_ticket(
+        root=tmp_path, authority=authority, campaign_key="sp500-atlas-v1",
+        campaign_definition_sha256="a" * 64, prompt_sha256="b" * 64,
+    ) is None
+    with pytest.raises(ValueError, match="CUTOVER_TICKET_REQUIRED"):
+        imported_cloud_ticket(
+            root=tmp_path, authority=authority, campaign_key="unregistered-campaign",
+            campaign_definition_sha256="a" * 64, prompt_sha256="b" * 64,
+        )
+
+
 def test_first_import_after_legacy_sp500_without_cloud_emission_is_allowed(tmp_path):
     first = emission()
     authority = FastAuthorityStateV1.bootstrap(campaigns=()).reconcile_legacy_closure(
