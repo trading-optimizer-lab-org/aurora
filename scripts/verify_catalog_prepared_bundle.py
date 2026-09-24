@@ -46,6 +46,7 @@ from aurora.infra.sp500_megarun.catalog_github_snapshot import (
 from aurora.infra.sp500_megarun.catalog_prepared_bundle import (
     verify_prepared_catalog_bundle,
 )
+from aurora.infra.sp500_megarun.data_contract import load_and_validate_contract
 
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -239,6 +240,30 @@ def _atlas_verify_fresh_window(
         raise ValueError("CATALOG_ATLAS_PREPARED_WINDOW_INSUFFICIENT")
 
 
+def _atlas_identity_hashes_match(
+    *, source_root: Path, expected_identity: AtlasPreparationIdentityV1,
+    verified: Mapping[str, object],
+) -> bool:
+    # The preparation identity binds raw repository bytes; the frozen Atlas
+    # catalog records the validated contract's canonical semantic hash. Check
+    # both representations against the same protected data contract file.
+    data_path = source_root / "config/sp500_megarun_free_data_240.json"
+    data_semantic_sha256 = load_and_validate_contract(data_path).sha256
+    return (
+        _atlas_sha256(data_path) == expected_identity.data_contract_sha256
+        and verified.get("data_contract_sha256") == data_semantic_sha256
+        and all(
+            verified.get(key) == getattr(expected_identity, key)
+            for key in (
+                "scientific_contract_sha256",
+                "freeze_manifest_sha256",
+                "feature_contract_sha256",
+                "selection_sha256",
+            )
+        )
+    )
+
+
 def verify_atlas_prepared_bundle(
     *,
     bundle_dir: Path,
@@ -297,16 +322,14 @@ def verify_atlas_prepared_bundle(
             )
             raise ValueError(mapped) from exc
         raise ValueError("CATALOG_ATLAS_PREPARED_IDENTITY_INVALID") from exc
-    if any(
-        verified.get(key) != getattr(expected_identity, key)
-        for key in (
-            "scientific_contract_sha256",
-            "freeze_manifest_sha256",
-            "data_contract_sha256",
-            "feature_contract_sha256",
-            "selection_sha256",
+    try:
+        hashes_match = _atlas_identity_hashes_match(
+            source_root=source_root, expected_identity=expected_identity,
+            verified=verified,
         )
-    ):
+    except (OSError, ValueError) as exc:
+        raise ValueError("CATALOG_ATLAS_PREPARED_IDENTITY_INVALID") from exc
+    if not hashes_match:
         raise ValueError("CATALOG_ATLAS_PREPARED_IDENTITY_STALE")
     catalog_manifest = _atlas_strict_json(root / _ATLAS_CATALOG_MANIFEST_PATH)
     if not isinstance(catalog_manifest, Mapping):

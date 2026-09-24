@@ -93,18 +93,25 @@ def _require_unlaunched_terminal(*, client, repository, token, commit, number,
         f"/repos/{repository}/actions/artifacts?name=catalog-terminal-receipt-{request.request_sha256}",
         root="artifacts")
     rows = inventory.collection.rows
-    # The first Atlas attempt published a BLOCKED receipt with a reason that did
-    # not match its gate, so authority correctly rejected it. Preserve that
-    # immutable artifact while allowing one exact, reviewed supersession.
-    orphan = {
-        "id": 10808827739,
-        "digest": "sha256:2eecc3be434d4d3b0e11d601cf70724f2b822899108ddaa58ee9f37cf10eb938",
-        "run_id": 36003599751,
-        "commit": "64b31d9867a3140ebc1835e8bca40cd58f89e557",
-        "request_sha256": "50c97b410f5bd9659e90c3c16c20b6717c70afc919d2a5f057159f406d5c6bb1",
-        "issue_number": 370,
+    # Two immutable Atlas receipts were rejected before authority publication:
+    # #370 had a mismatched gate reason and #375 was younger than the expiry
+    # window. Keep both artifacts and permit only these exact supersessions.
+    orphans = {
+        (370, "50c97b410f5bd9659e90c3c16c20b6717c70afc919d2a5f057159f406d5c6bb1"): {
+            "id": 10808827739,
+            "digest": "sha256:2eecc3be434d4d3b0e11d601cf70724f2b822899108ddaa58ee9f37cf10eb938",
+            "run_id": 36003599751,
+            "commit": "64b31d9867a3140ebc1835e8bca40cd58f89e557",
+        },
+        (375, "fac5dcb9359ebeded5b8d2fd06af4f8c332d4aace282dc6667fd446e80ae10d2"): {
+            "id": 10817955043,
+            "digest": "sha256:8cad1b8c79fef1827c7b506ae772d6a4a493a54c301ea0e3cac0d8dc2c733a3b",
+            "run_id": 36022682478,
+            "commit": "c3eb87071ca1b944599c9f7636f18046b2f325a5",
+        },
     }
-    if request.request_sha256 == orphan["request_sha256"] and number == orphan["issue_number"]:
+    orphan = orphans.get((number, request.request_sha256))
+    if orphan is not None:
         old = [row for row in rows if row.get("id") == orphan["id"]]
         if len(old) == 1 and (
             old[0].get("digest") == orphan["digest"]

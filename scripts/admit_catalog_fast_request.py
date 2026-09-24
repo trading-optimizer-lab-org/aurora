@@ -222,6 +222,13 @@ def _write_replay_decision(
             stream.write(f"{key}={value}\n")
 
 
+def _preserve_unlaunched_issue(decision: CatalogFastLaunchDecisionV1) -> bool:
+    return (
+        decision.state == "BLOCKED" and not decision.launch_required
+        and decision.decided_at <= decision.expires_at
+    )
+
+
 def _materialize_atlas_prepared_plan(
     *,
     bundle_dir: Path,
@@ -939,7 +946,10 @@ def admit_request(
                 profile=checkpoint_profile,
                 authenticated=checkpoint_authentication[0] if checkpoint_authentication else None)
     outputs = {
-        "preserve_issue": "false",
+        # An unlaunched BLOCKED decision cannot be terminalized by authority
+        # until the original request window expires. Leave the issue open for
+        # the reconciler instead of publishing an orphan terminal artifact.
+        "preserve_issue": "true" if _preserve_unlaunched_issue(decision) else "false",
         "checkpoint_recovery_enabled": str(
             decision.launch_required and checkpoint_profile is not None
         ).lower(),
