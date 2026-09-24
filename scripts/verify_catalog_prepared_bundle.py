@@ -98,7 +98,7 @@ _ATLAS_SELECTION_PATH = "plan/atlas_campaign_selection.json"
 _ATLAS_SUMMARY_PATH = "plan/atlas_plan_summary.json"
 _ATLAS_MATRIX_PATH = "plan/atlas_worker_matrices.json"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_MAX_ATLAS_BUNDLE_BYTES = 64 * 1024 * 1024
+_MAX_ATLAS_BUNDLE_BYTES = 256 * 1024 * 1024
 
 
 def _atlas_strict_json(path: Path) -> object:

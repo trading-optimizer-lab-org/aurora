@@ -13,7 +13,10 @@ from typing import Mapping, cast
 import pytest
 
 from aurora.infra.sp500_megarun import catalog_atlas_terminal_adapter as adapter
-from scripts.finalize_catalog_atlas_fast_run import _parser
+from scripts.finalize_catalog_atlas_fast_run import _parser, finalize_atlas_run
+from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1
+from aurora.infra.github_performance.contracts import canonical_sha256
+from tests.test_catalog_cloud_authority import signed_request
 
 
 def _dynamic_prepared() -> adapter.AtlasPreparedReceiptV1:
@@ -270,6 +273,40 @@ def test_cli_requires_only_parent_snapshots_and_two_artifact_roots() -> None:
     assert not hasattr(args, "invocation")
     assert not hasattr(args, "artifacts")
     assert not hasattr(args, "shards_root")
+
+
+def test_unlaunched_atlas_preserves_gate_reason_for_protected_expiry_close(tmp_path: Path) -> None:
+    request = signed_request(campaign_key=adapter.CAMPAIGN_KEY)
+    decided = adapter.datetime(2026, 9, 24, 13, 8, 51, tzinfo=adapter.timezone.utc)
+    decision = CatalogFastLaunchDecisionV1.create(
+        state="BLOCKED", reason_code="CATALOG_PREPARATION_REQUIRED",
+        request_sha256=request.request_sha256,
+        submission_key_sha256=request.submission_key_sha256,
+        campaign_key=request.campaign_key, prepared_receipt_sha256=None,
+        selected_workers=0, launch_required=False, existing_run_id=None,
+        decided_at=decided, expires_at=decided,
+    )
+    context = {
+        "identity": {"engine_id": "atlas_static_v1", "campaign_key": adapter.CAMPAIGN_KEY},
+        "logical_recipe_count": 209906,
+        "request": request.model_dump(mode="json"),
+    }
+    context["content_sha256"] = canonical_sha256(context)
+    context_path = tmp_path / "context.json"
+    decision_path = tmp_path / "decision.json"
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    decision_path.write_text(decision.model_dump_json(), encoding="utf-8")
+    receipt = finalize_atlas_run(
+        repo_root=tmp_path, request_context_path=context_path, decision_path=decision_path,
+        run_path=tmp_path / "missing-run.json", jobs_path=tmp_path / "missing-jobs.json",
+        preflight_root=tmp_path / "missing-preflight", final_root=tmp_path / "missing-final",
+        output_path=tmp_path / "receipt.json", comment_output_path=tmp_path / "comment.json",
+        github_output=tmp_path / "github-output", gate_result="success",
+    )
+    assert receipt.state == "BLOCKED"
+    assert receipt.reason_code == decision.reason_code
+    assert receipt.engine_run_id is None
+    assert receipt.observed_recipe_count == 0
 
 
 def test_adapter_imports_without_pyarrow() -> None:

@@ -17,6 +17,7 @@ from aurora.infra.sp500_megarun.catalog_atlas_cloud_identity import (
 from aurora.infra.sp500_megarun.atlas_execution_contract import build_run_plan, write_plan
 from aurora.infra.sp500_megarun.atlas_campaign_selection import build_campaign_selection
 from scripts import prepare_catalog_atlas_bundle as producer
+from scripts import verify_catalog_prepared_bundle as prepared_verifier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -373,6 +374,17 @@ def test_workflow_is_call_only_cold_and_publishes_commit_definition_keyed_output
         "aurora-catalog-atlas-prepared-v1-${{ steps.prepare.outputs.preparation_key_sha256 }}-"
         "${{ github.run_id }}-${{ github.run_attempt }}"
     )
+    controller = yaml.load(
+        (ROOT / ".github/workflows/catalog-fast-controller.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    controller_restore = next(
+        step for step in controller["jobs"]["gate"]["steps"]
+        if step.get("name") == "Restore the exact current PREPARED bundle"
+    )
+    assert cache_save["with"]["path"] == controller_restore["with"]["path"]
+    assert "--bundle-dir \"$RUNNER_TEMP/prepared-bundle\"" in text
+    assert prepared_verifier._MAX_ATLAS_BUNDLE_BYTES >= 231_681_504
     preflight_outputs = workflow["jobs"]["preflight"]["outputs"]
     assert preflight_outputs["preparation_key_sha256"] == (
         "${{ steps.preflight.outputs.preparation_key_sha256 }}"
