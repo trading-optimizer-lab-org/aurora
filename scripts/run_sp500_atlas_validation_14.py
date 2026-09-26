@@ -161,11 +161,15 @@ def _score_rows(
             continue
         mask = (scored.realized_at >= VALIDATION_START) & (scored.realized_at <= VALIDATION_END)
         dates = scored.realized_at[mask]
-        positions = scored.positions.reindex(dates).to_numpy(dtype=float)
+        positions = scored.positions.shift(1).reindex(dates).to_numpy(dtype=float)
         spy = scored.spy_returns.loc[dates].to_numpy(dtype=float)
         metrics = score_atlas_decisions(positions, spy, dates.to_numpy(), train_end="2020-12-31")
         if metrics.total_years != 10 or [entry["year"] for entry in metrics.annual_rows] != list(range(2011, 2021)):
             raise ValueError("ATLAS_VALIDATION_YEAR_COVERAGE_INVALID")
+        for entry in metrics.annual_rows:
+            annual = scored.score.annual_returns[int(entry["year"])]
+            if abs(float(entry["strategy_return"]) - annual.strategy_return) > 1e-12:
+                raise ValueError("ATLAS_VALIDATION_ANNUAL_RETURN_MISMATCH")
         results.append({
             "strategy_id": row["strategy_id"],
             "train_result_sha256": row["result_sha256"],

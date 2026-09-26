@@ -18,6 +18,18 @@ from aurora.infra.sp500_megarun.strategy_catalog import CatalogComponentV1
 from scripts import run_sp500_atlas_validation_14 as atlas_validation
 
 
+def test_validation_workflow_reserves_exact_run_before_data_download():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/sp500-atlas-validation-14-once.yml"
+    ).read_text("utf-8")
+    assert 'test "$GITHUB_RUN_ATTEMPT" = "1"' in workflow
+    assert 'git/ref/tags/sp500-atlas-validation-14-once' in workflow
+    assert 'ATLAS_VALIDATION_14_RUN_ID=$GITHUB_RUN_ID' in workflow
+    assert 'test "$(jq -r \'.object.sha\' <<< "$reservation")" = "$SCIENTIFIC_COMMIT_SHA"' in workflow
+    assert workflow.index("reservation=$(gh api") < workflow.index("Download closed validation snapshot")
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -157,3 +169,48 @@ def test_train_parity_is_required_before_validation_data(tmp_path):
             [row], {component.configuration_sha256: component}, evaluator, objective,
             pd.DatetimeIndex(ledger.index), allowed_end="2011-01-02", validation=False,
         )
+
+
+def test_validation_annual_rows_use_positions_that_realized_returns():
+    dates = pd.DatetimeIndex(sorted([
+        pd.Timestamp("2010-12-30"),
+        pd.Timestamp("2010-12-31"),
+        *(pd.Timestamp(f"{year}-{month}-03") for year in range(2011, 2021) for month in (1, 7)),
+        pd.Timestamp("2020-12-31"),
+    ]))
+    ledger = pd.DataFrame({"long_return": [0.02 if index % 2 else -0.01 for index in range(len(dates))]}, index=dates)
+    objective = FastTrainObjective(ledger, target_years=tuple(range(2011, 2021)), allowed_end="2020-12-31")
+    component = CatalogComponentV1.create("F001", {"window": 2})
+    signal = [1.0 if index % 3 else -1.0 for index in range(len(dates))]
+
+    def evaluator(_lane, _configuration):
+        return pd.DataFrame({"date": dates, "available_at": dates, "value": signal})
+
+    row = {
+        "strategy_id": "ATLAS1-test",
+        "result_sha256": "f" * 64,
+        "components": [component.configuration_sha256],
+        "composition": {"kind": "identity", "direction": 1},
+    }
+    results = atlas_validation._score_rows(
+        [row], {component.configuration_sha256: component}, evaluator, objective,
+        dates, allowed_end="2020-12-31", validation=True,
+    )
+    assert len(results) == 1
+    assert [entry["year"] for entry in results[0]["annual_rows"]] == list(range(2011, 2021))
+    decisions = atlas_validation.compose_signals(
+        [atlas_validation.feature_frame_to_decisions(evaluator(None, None), allowed_end="2020-12-31").reindex(dates)],
+        row["composition"],
+    )
+    scored = objective.score(decisions)
+    realized = scored.realized_at[scored.realized_at >= pd.Timestamp("2011-01-01")]
+    wrong = atlas_validation.score_atlas_decisions(
+        scored.positions.reindex(realized).to_numpy(dtype=float),
+        scored.spy_returns.loc[realized].to_numpy(dtype=float),
+        realized.to_numpy(),
+        train_end="2020-12-31",
+    )
+    assert any(
+        abs(float(entry["strategy_return"]) - scored.score.annual_returns[int(entry["year"])].strategy_return) > 1e-12
+        for entry in wrong.annual_rows
+    )

@@ -41,6 +41,20 @@ jobs:
           test "$REQUESTED_COMMIT_SHA" = "$SCIENTIFIC_COMMIT_SHA"
           main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
           test "$SCIENTIFIC_COMMIT_SHA" = "$main_sha"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          reservation_sha=''
+          for attempt in $(seq 1 60); do
+            if reservation_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/sp500-atlas-validation-14-once" --jq '.object.sha' 2>/dev/null); then
+              break
+            fi
+            sleep 5
+          done
+          [[ "$reservation_sha" =~ ^[0-9a-f]{40}$ ]]
+          reservation=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$reservation_sha")
+          test "$(jq -r '.tag' <<< "$reservation")" = 'sp500-atlas-validation-14-once'
+          test "$(jq -r '.message' <<< "$reservation")" = "ATLAS_VALIDATION_14_RUN_ID=$GITHUB_RUN_ID"
+          test "$(jq -r '.object.type' <<< "$reservation")" = 'commit'
+          test "$(jq -r '.object.sha' <<< "$reservation")" = "$SCIENTIFIC_COMMIT_SHA"
           prior=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=sp500-atlas-validation-14-once&per_page=1" --jq '.total_count')
           test "$prior" = "0"
 
