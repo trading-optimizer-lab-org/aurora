@@ -42,16 +42,17 @@ jobs:
           main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
           test "$SCIENTIFIC_COMMIT_SHA" = "$main_sha"
           test "$GITHUB_RUN_ATTEMPT" = "1"
+          # Run 36246141693 was reserved but stopped on missing pydantic during import, before run_validation.
           reservation_sha=''
           for attempt in $(seq 1 60); do
-            if reservation_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/sp500-atlas-validation-14-once" --jq '.object.sha' 2>/dev/null); then
+            if reservation_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/sp500-atlas-validation-14-once-v2" --jq '.object.sha' 2>/dev/null); then
               break
             fi
             sleep 5
           done
           [[ "$reservation_sha" =~ ^[0-9a-f]{40}$ ]]
           reservation=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$reservation_sha")
-          test "$(jq -r '.tag' <<< "$reservation")" = 'sp500-atlas-validation-14-once'
+          test "$(jq -r '.tag' <<< "$reservation")" = 'sp500-atlas-validation-14-once-v2'
           test "$(jq -r '.message' <<< "$reservation")" = "ATLAS_VALIDATION_14_RUN_ID=$GITHUB_RUN_ID"
           test "$(jq -r '.object.type' <<< "$reservation")" = 'commit'
           test "$(jq -r '.object.sha' <<< "$reservation")" = "$SCIENTIFIC_COMMIT_SHA"
@@ -72,7 +73,7 @@ jobs:
 
       - name: Install frozen scientific runtime
         run: |
-          python -m pip install --require-hashes -r requirements/dehb-official.lock
+          python -m pip install --require-hashes -r requirements/catalog-optimized.lock
           python -m pip install --no-deps -e .
 
       - name: Download Atlas train reduction

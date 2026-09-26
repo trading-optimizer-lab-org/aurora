@@ -24,10 +24,13 @@ def test_validation_workflow_reserves_exact_run_before_data_download():
         / ".github/workflows/sp500-atlas-validation-14-once.yml"
     ).read_text("utf-8")
     assert 'test "$GITHUB_RUN_ATTEMPT" = "1"' in workflow
-    assert 'git/ref/tags/sp500-atlas-validation-14-once' in workflow
+    assert 'git/ref/tags/sp500-atlas-validation-14-once-v2' in workflow
     assert 'ATLAS_VALIDATION_14_RUN_ID=$GITHUB_RUN_ID' in workflow
     assert 'test "$(jq -r \'.object.sha\' <<< "$reservation")" = "$SCIENTIFIC_COMMIT_SHA"' in workflow
     assert workflow.index("reservation=$(gh api") < workflow.index("Download closed validation snapshot")
+    assert "pip install --require-hashes -r requirements/catalog-optimized.lock" in workflow
+    lock = (Path(__file__).resolve().parents[1] / "requirements/catalog-optimized.lock").read_text("utf-8")
+    assert "pydantic==2.13.4" in lock
 
 
 def _sha256(path: Path) -> str:
