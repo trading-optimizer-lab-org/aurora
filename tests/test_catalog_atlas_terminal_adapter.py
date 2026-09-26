@@ -100,7 +100,7 @@ def test_terminal_accepts_frozen_catalog_hash_forms_and_rejects_tampering(
     plan_dir.mkdir()
     atlas_dir.mkdir()
     (plan_dir / "atlas_prepared_receipt.json").write_text(prepared.model_dump_json(), encoding="utf-8")
-    space = {"validation_opened": False, "locked_opened": False}
+    space: dict[str, bool | str] = {"validation_opened": False, "locked_opened": False}
     space["space_sha256"] = canonical_sha256(space)
     space_path = atlas_dir / "recipe_space.json"
     space_path.write_text(json.dumps(space, sort_keys=True), encoding="utf-8")
