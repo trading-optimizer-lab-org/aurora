@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from types import SimpleNamespace
+from typing import Any, Callable, cast
 import zipfile
 
 import pytest
@@ -325,8 +326,9 @@ def test_non_atlas_authority_hash_mismatch_cannot_use_correction() -> None:
     assert original is not None
     with pytest.raises(ValueError, match="CATALOG_FAST_AUTHORITY_TERMINAL_CONFLICT"):
         resolve_atlas_terminal_correction(
-            client=client, owner=owner, issue_number=323, original=original,
-            expected_sha256="f" * 64, download_archive=download,
+            client=cast(Any, client), owner=owner, issue_number=323, original=original,
+            expected_sha256="f" * 64,
+            download_archive=cast(Callable[[int], bytes], download),
         )
 
 
