@@ -359,6 +359,7 @@ def test_atlas_correction_lookup_requires_protected_publisher_and_exact_hash() -
                          "head_branch": "main", "repository_id": 1232647748,
                          "head_repository_id": 1232647748},
     }
+    artifacts = [artifact]
     run = {
         "id": correction_run, "head_sha": "a" * 40, "head_branch": "main",
         "path": ".github/workflows/catalog-fast-authority-maintenance.yml",
@@ -376,7 +377,7 @@ def test_atlas_correction_lookup_requires_protected_publisher_and_exact_hash() -
 
         def stable_paginated(self, path: str, *, root: str):
             if root == "artifacts":
-                return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=(artifact,)))
+                return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=tuple(artifacts)))
             assert root == "jobs"
             return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=(
                 {"name": "bootstrap", "status": "completed", "conclusion": "success",
@@ -392,6 +393,12 @@ def test_atlas_correction_lookup_requires_protected_publisher_and_exact_hash() -
         client=client, owner=owner, expected_sha256=corrected.receipt_sha256,
         download_archive=lambda _: raw,
     ) == corrected
+    artifacts.append({**artifact, "id": 1002})
+    assert _load_atlas_terminal_correction(
+        client=client, owner=owner, expected_sha256=corrected.receipt_sha256,
+        download_archive=lambda _: raw,
+    ) == corrected
+    artifacts.pop()
     steps[3]["conclusion"] = "failure"
     steps.insert(4, {"name": "Recover missing authority publication", "number": 5,
                      "conclusion": "success"})

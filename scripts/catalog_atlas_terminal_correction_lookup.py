@@ -138,6 +138,6 @@ def _load_atlas_terminal_correction(*, client: _Reader, owner: FastGateOwnerEvid
             matches.append(corrected)
         except (KeyError, TypeError, ValueError, AttributeError, OSError, zipfile.BadZipFile):
             continue
-    if len(matches) != 1:
+    if not matches:
         raise ValueError(code)
     return matches[0]
