@@ -629,6 +629,38 @@ def test_atlas_preparer_exception_requires_reusable_read_only_call(tmp_path: Pat
     }
 
 
+def test_atlas_validation_exception_is_exact_and_read_only(tmp_path: Path) -> None:
+    path = tmp_path / ".github/workflows/sp500-atlas-validation-14-once.yml"
+    path.parent.mkdir(parents=True)
+    payload = {
+        "name": "Atlas-1 validation once",
+        "on": {"workflow_dispatch": {}},
+        "permissions": {"actions": "read", "contents": "read"},
+        "jobs": {
+            "validate": {
+                "runs-on": "ubuntu-24.04",
+                "timeout-minutes": 180,
+                "steps": [{"run": "python -m scripts.run_sp500_atlas_validation_14"}],
+            }
+        },
+    }
+    workflow = write_yaml(path, payload)
+    assert validate_workflow_policy(workflow, tmp_path, {}) == []
+
+    payload["permissions"] = {"actions": "write", "contents": "read"}
+    write_yaml(path, payload)
+    assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
+        item.code for item in validate_workflow_policy(workflow, tmp_path, {})
+    }
+
+    payload["permissions"] = {"actions": "read", "contents": "read"}
+    payload["jobs"]["validate"]["steps"] = [{"run": "python other_script.py"}]
+    write_yaml(path, payload)
+    assert "FUTURE_HEAVY_WORKFLOW_BYPASSES_FRAMEWORK" in {
+        item.code for item in validate_workflow_policy(workflow, tmp_path, {})
+    }
+
+
 def test_repository_allowlist_has_frozen_adoption_metadata() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     allowlist = load_legacy_workflow_allowlist(repo_root=repo_root)

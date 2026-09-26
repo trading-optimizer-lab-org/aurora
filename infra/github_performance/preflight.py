@@ -2355,6 +2355,31 @@ def _is_heavy_workflow(
     )
 
 
+def _is_atlas_validation_once(workflow: Mapping[str, Any], relative: str) -> bool:
+    """The sealed 14-recipe OOS look is not a sharded research campaign."""
+
+    if (
+        relative != ".github/workflows/sp500-atlas-validation-14-once.yml"
+        or set(_catalog_workflow_triggers(workflow)) != {"workflow_dispatch"}
+        or workflow.get("permissions") != {"actions": "read", "contents": "read"}
+    ):
+        return False
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, Mapping) or set(jobs) != {"validate"}:
+        return False
+    job = jobs["validate"]
+    if not isinstance(job, Mapping) or job.get("runs-on") != "ubuntu-24.04" or job.get("strategy"):
+        return False
+    steps = job.get("steps")
+    if not isinstance(steps, Sequence) or isinstance(steps, (str, bytes)):
+        return False
+    return any(
+        isinstance(step, Mapping)
+        and "python -m scripts.run_sp500_atlas_validation_14" in str(step.get("run", ""))
+        for step in steps
+    )
+
+
 def validate_workflow_policy(
     path: Path,
     repo_root: Path,
@@ -2404,6 +2429,7 @@ def validate_workflow_policy(
             and _get(workflow, ("jobs", "calibrate", "uses"))
             == "./.github/workflows/sp500-atlas-calibration.yml"
         )
+        and not _is_atlas_validation_once(workflow, relative)
     ):
         violations.append(
             _violation(
