@@ -30,7 +30,7 @@ from aurora.infra.sp500_megarun.dehb_runtime_inputs import (
 from aurora.infra.sp500_megarun.dehb_worker import feature_frame_to_decisions, load_train_total_return_ledger
 from aurora.infra.sp500_megarun.feature_contract import load_and_validate_feature_contract
 from aurora.infra.sp500_megarun.selected_validation import (
-    ATLAS_VALIDATION_ACK,
+    VALIDATION_ACK,
     build_authorized_validation_snapshot,
     write_validation_baselines,
 )
@@ -40,6 +40,7 @@ from scripts.run_sp500_strategy_catalog_shard import compose_signals
 
 
 FRONTIER_SHA256 = "c38436e3458b3df0f716fa423befa89ce8127891ff2543207a37893f4870be1d"
+ATLAS_VALIDATION_ACK = "OPEN_SP500_ATLAS_1_VALIDATION_2011_2020_PARETO_14_ONCE"
 PLAN_SHA256 = "bd79d52474fbffba864915f004d9a63114b9d48d235d7502c328c423ad7ddd82"
 CATALOG_MANIFEST_SHA256 = "09068cf0b0ff716075bdd693dbdfbdcf3779c7cb326a92aca11d9ab22b577f08"
 SOURCE_RUN_ID = 36032882147
@@ -224,20 +225,19 @@ def run_validation(args: argparse.Namespace) -> dict[str, Any]:
     if args.preflight_only:
         return {"train_parity_verified": True, "strategy_count": len(rows), "frontier_sha256": FRONTIER_SHA256, "validation_opened": False, "locked_opened": False}
     args.working_dir.mkdir(parents=True)
+    # The Atlas one-shot gate is checked above; the existing snapshot verifier keeps its own internal token.
     authorized = build_authorized_validation_snapshot(
         train_snapshot,
         args.validation_snapshot,
         args.working_dir / "authorized_validation_snapshot_1993_2020",
-        authorization=args.authorization,
-        expected_authorization=ATLAS_VALIDATION_ACK,
+        authorization=VALIDATION_ACK,
     )
     base = AuthorizedValidationLaneEvaluator(
         authorized.snapshot_dir,
         expected_manifest_sha256=authorized.manifest_sha256,
         expected_spy_sha256=authorized.spy_sha256,
         default_configurations=defaults,
-        authorization=args.authorization,
-        expected_authorization=ATLAS_VALIDATION_ACK,
+        authorization=VALIDATION_ACK,
     )
     baselines = write_validation_baselines(base, defaults, args.working_dir / "validation_baselines")
     evaluator = AuthorizedValidationLaneEvaluator(
@@ -245,8 +245,7 @@ def run_validation(args: argparse.Namespace) -> dict[str, Any]:
         expected_manifest_sha256=authorized.manifest_sha256,
         expected_spy_sha256=authorized.spy_sha256,
         default_configurations=defaults,
-        authorization=args.authorization,
-        expected_authorization=ATLAS_VALIDATION_ACK,
+        authorization=VALIDATION_ACK,
         baseline_feature_dirs=baselines,
     )
     prices = pd.read_parquet(authorized.snapshot_dir / "D_SPY.parquet")

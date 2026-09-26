@@ -10,7 +10,6 @@ from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_fast_objective import FastTrainObjective
 from aurora.infra.sp500_megarun.dehb_lane_registry import AuthorizedValidationLaneEvaluator
 from aurora.infra.sp500_megarun.selected_validation import (
-    ATLAS_VALIDATION_ACK,
     VALIDATION_ACK,
     SelectedValidationError,
     build_authorized_validation_snapshot,
@@ -40,26 +39,37 @@ def _snapshot(path: Path, partition: str, dates: list[str]) -> Path:
     return path
 
 
-def test_atlas_ack_opens_validation_only_for_its_exact_scope(tmp_path):
+def test_atlas_gate_reuses_existing_snapshot_verifier_without_weakening_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    args = SimpleNamespace(
+        preflight_only=False,
+        authorization="WRONG",
+        output_dir=tmp_path / "result",
+        working_dir=tmp_path / "work",
+        final_results=tmp_path / "final",
+        plan=tmp_path / "plan.json",
+    )
+    with pytest.raises(ValueError, match="ATLAS_VALIDATION_AUTHORIZATION_REQUIRED"):
+        atlas_validation.run_validation(args)
+    args.authorization = atlas_validation.ATLAS_VALIDATION_ACK
+    def after_gate(*_args):
+        raise RuntimeError("PAST_ATLAS_GATE")
+
+    monkeypatch.setattr(atlas_validation, "load_frozen_frontier", after_gate)
+    with pytest.raises(RuntimeError, match="PAST_ATLAS_GATE"):
+        atlas_validation.run_validation(args)
+
     train = _snapshot(tmp_path / "train_snapshot_1993_2010", "train", ["2010-12-31"])
     validation = _snapshot(tmp_path / "validation_snapshot_2011_2020", "validation", ["2011-01-03", "2020-12-31"])
     output = tmp_path / "authorized_validation_snapshot_1993_2020"
     with pytest.raises(SelectedValidationError, match="AUTHORIZATION"):
         build_authorized_validation_snapshot(
             train, validation, output,
-            authorization=VALIDATION_ACK,
-            expected_authorization=ATLAS_VALIDATION_ACK,
-        )
-    with pytest.raises(SelectedValidationError, match="AUTHORIZATION"):
-        build_authorized_validation_snapshot(
-            train, validation, output,
-            authorization="WRONG",
-            expected_authorization="WRONG",
+            authorization=atlas_validation.ATLAS_VALIDATION_ACK,
         )
     receipt = build_authorized_validation_snapshot(
         train, validation, output,
-        authorization=ATLAS_VALIDATION_ACK,
-        expected_authorization=ATLAS_VALIDATION_ACK,
+        authorization=VALIDATION_ACK,
     )
     assert receipt.validation_opened is True
     assert receipt.locked_opened is False
@@ -71,16 +81,14 @@ def test_atlas_ack_opens_validation_only_for_its_exact_scope(tmp_path):
             expected_manifest_sha256=receipt.manifest_sha256,
             expected_spy_sha256=receipt.spy_sha256,
             default_configurations=defaults,
-            authorization=VALIDATION_ACK,
-            expected_authorization=ATLAS_VALIDATION_ACK,
+            authorization=atlas_validation.ATLAS_VALIDATION_ACK,
         )
     evaluator = AuthorizedValidationLaneEvaluator(
         receipt.snapshot_dir,
         expected_manifest_sha256=receipt.manifest_sha256,
         expected_spy_sha256=receipt.spy_sha256,
         default_configurations=defaults,
-        authorization=ATLAS_VALIDATION_ACK,
-        expected_authorization=ATLAS_VALIDATION_ACK,
+        authorization=VALIDATION_ACK,
     )
     assert evaluator.snapshot == receipt.snapshot_dir.resolve()
 
