@@ -91,12 +91,18 @@ def _load_atlas_terminal_correction(*, client: _Reader, owner: FastGateOwnerEvid
                 continue
             steps = writers[0].get("steps", ())
             labels = ("Reverify all original Atlas results", "Publish independently verified Atlas terminal",
-                      "Write current authority edition", "Publish current authority edition",
+                      "Write current authority edition",
                       "Verify initial authority through its production reader")
             selected = [[step for step in steps if step.get("name") == label] for label in labels]
             if any(len(items) != 1 or items[0].get("conclusion") != "success" for items in selected):
                 continue
             if [items[0]["number"] for items in selected] != sorted(items[0]["number"] for items in selected):
+                continue
+            publication = [step for step in steps if step.get("name") in {
+                "Publish current authority edition", "Check current authority publication",
+                "Recover missing authority publication",
+            }]
+            if not any(step.get("conclusion") == "success" for step in publication):
                 continue
             raw = download_archive(artifact["id"])
             if not raw or len(raw) != artifact["size_in_bytes"] or hashlib.sha256(raw).hexdigest() != artifact["digest"][7:]:

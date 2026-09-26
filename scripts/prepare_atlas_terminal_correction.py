@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -127,7 +126,7 @@ def prepare(*, root: Path, gate: Path, preflight: Path, final: Path, old_termina
         or verification.result_science_sha256 != "18e614ffd8ef079fe7f6488db922d8bee33f539d07f37dc2de4bc1309c12df42"):
         raise ValueError(f"ATLAS_CORRECTION_SCIENCE_NOT_VERIFIED:{verification.reason_code}")
     receipt = build_terminal_receipt(request=request, decision=decision, verification=verification,
-                                     created_at=datetime.now(timezone.utc))
+                                     created_at=old.created_at)
     if receipt.state != "SUCCESS" or receipt.reason_code != "CATALOG_RUN_SUCCESS":
         raise ValueError("ATLAS_CORRECTION_RECEIPT_INVALID")
     proof = {
