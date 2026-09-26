@@ -310,7 +310,7 @@ def test_parent_run_in_progress_and_required_matrix_jobs_are_accepted(tmp_path: 
     assert run_id == 209906
 
     monkeypatch.setattr(adapter, "EXPECTED_SHARD_COUNT", 360)
-    rows = [
+    rows: list[dict[str, object]] = [
         {"name": "gate", "conclusion": "success"},
         {"name": "engine", "conclusion": "skipped"},
         {"name": "engine / engine_verify_sealed_plan", "conclusion": "skipped"},

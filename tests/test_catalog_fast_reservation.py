@@ -17,13 +17,15 @@ from aurora.infra.sp500_megarun.catalog_fast_path import (
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateOwnerEvidence,
     _is_expected_workflow_path,
-    _load_atlas_terminal_correction,
     bind_owner_terminal_receipt,
     load_fast_gate_owner,
     load_owner_terminal_receipt,
     verify_fast_gate_owner_metadata,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
+from scripts.catalog_atlas_terminal_correction_lookup import (
+    _load_atlas_terminal_correction, resolve_atlas_terminal_correction,
+)
 
 
 COMMIT = "44d4f5e1bfe0d2d9396b99f44b4684205e737c0e"
@@ -318,10 +320,13 @@ def test_owner_terminal_receipt_keeps_wrong_owner_rejected() -> None:
 
 def test_non_atlas_authority_hash_mismatch_cannot_use_correction() -> None:
     client, owner, download = _terminal_owner_fixture("2026-09-19T10:11:09.728262Z")
+    original = load_owner_terminal_receipt(client=client, owner=owner, issue_number=323,
+                                           download_archive=download)
+    assert original is not None
     with pytest.raises(ValueError, match="CATALOG_FAST_AUTHORITY_TERMINAL_CONFLICT"):
-        load_owner_terminal_receipt(
-            client=client, owner=owner, issue_number=323, download_archive=download,
-            expected_terminal_sha256="f" * 64,
+        resolve_atlas_terminal_correction(
+            client=client, owner=owner, issue_number=323, original=original,
+            expected_sha256="f" * 64, download_archive=download,
         )
 
 
