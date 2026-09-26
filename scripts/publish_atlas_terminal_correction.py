@@ -35,17 +35,17 @@ from scripts.verify_catalog_fast_authority import read_live_edit
 def _verify_uploaded_receipt(*, client: CatalogGitHubReadOnlyClient, run_id: int,
                              artifact_id: int, digest: str, receipt: CatalogTerminalReceiptV2,
                              commit: str) -> None:
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("ATLAS_CORRECTION_UPLOAD_DIGEST_INVALID")
     metadata = _mapping(client.get_json(f"/repos/{REPOSITORY}/actions/artifacts/{artifact_id}")[0], "ATLAS_CORRECTION_UPLOAD_INVALID")
     source = _mapping(metadata.get("workflow_run"), "ATLAS_CORRECTION_UPLOAD_INVALID")
     expected_name = "catalog-terminal-correction-378"
     if (metadata.get("id") != artifact_id or metadata.get("name") != expected_name
-        or metadata.get("digest") != digest or metadata.get("expired") is not False
+        or metadata.get("digest") != f"sha256:{digest}" or metadata.get("expired") is not False
         or (source.get("id"), source.get("head_sha")) != (run_id, commit)):
         raise ValueError("ATLAS_CORRECTION_UPLOAD_INVALID")
     raw = _download_owner_archive(REPOSITORY, os.environ["GH_TOKEN"], artifact_id)
-    if hashlib.sha256(raw).hexdigest() != digest[7:]:
+    if hashlib.sha256(raw).hexdigest() != digest:
         raise ValueError("ATLAS_CORRECTION_UPLOAD_HASH_INVALID")
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         members = archive.infolist()
