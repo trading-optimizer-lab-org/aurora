@@ -21,7 +21,8 @@ jobs:
     timeout-minutes: 180
     env:
       GITHUB_ACTIONS: "true"
-      SCIENTIFIC_COMMIT_SHA: ${{ inputs.commit_sha }}
+      SCIENTIFIC_COMMIT_SHA: ${{ github.sha }}
+      REQUESTED_COMMIT_SHA: ${{ inputs.commit_sha }}
       VALIDATION_ACK: ${{ inputs.validation_ack }}
       OMP_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
@@ -35,7 +36,9 @@ jobs:
         run: |
           set -euo pipefail
           test "$VALIDATION_ACK" = 'OPEN_SP500_ATLAS_1_VALIDATION_2011_2020_PARETO_14_ONCE'
-          [[ "$SCIENTIFIC_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = 'refs/heads/main'
+          [[ "$REQUESTED_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$REQUESTED_COMMIT_SHA" = "$SCIENTIFIC_COMMIT_SHA"
           main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
           test "$SCIENTIFIC_COMMIT_SHA" = "$main_sha"
           prior=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=sp500-atlas-validation-14-once&per_page=1" --jq '.total_count')
@@ -43,7 +46,7 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Verify checkout
