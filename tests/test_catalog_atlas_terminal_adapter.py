@@ -91,6 +91,75 @@ def test_terminal_prepared_receipt_must_match_admission_and_identity(tmp_path: P
         )
 
 
+def test_terminal_accepts_frozen_catalog_hash_forms_and_rejects_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _dynamic_prepared()
+    plan_dir = tmp_path / "plan"
+    atlas_dir = tmp_path / "atlas"
+    plan_dir.mkdir()
+    atlas_dir.mkdir()
+    (plan_dir / "atlas_prepared_receipt.json").write_text(prepared.model_dump_json(), encoding="utf-8")
+    space: dict[str, bool | str] = {"validation_opened": False, "locked_opened": False}
+    space["space_sha256"] = canonical_sha256(space)
+    space_path = atlas_dir / "recipe_space.json"
+    space_path.write_text(json.dumps(space, sort_keys=True), encoding="utf-8")
+    space_file_sha256 = hashlib.sha256(space_path.read_bytes()).hexdigest()
+    manifest = {
+        "catalog_id": adapter.CATALOG_ID,
+        "execution_authorized": False,
+        "validation_opened": False,
+        "locked_opened": False,
+        "artifacts_sha256": {"recipe_space.json": space_file_sha256},
+    }
+    manifest["manifest_sha256"] = canonical_sha256(manifest)
+    manifest_path = atlas_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() != manifest["manifest_sha256"]
+    assert space_file_sha256 != space["space_sha256"]
+    (plan_dir / "atlas_campaign_selection.json").write_text(json.dumps({
+        "requested_recipe_count": adapter.EXPECTED_RECIPE_COUNT,
+        "seed": adapter.EXPECTED_SELECTION_SEED,
+        "selection_sha256": adapter.EXPECTED_SELECTION_SHA256,
+    }), encoding="utf-8")
+    decision = CatalogFastLaunchDecisionV1.create(
+        state="QUEUED", reason_code="CATALOG_FAST_PATH_ADMITTED",
+        request_sha256="a" * 64, submission_key_sha256="a" * 64,
+        campaign_key=adapter.CAMPAIGN_KEY,
+        prepared_receipt_sha256=prepared.receipt_sha256,
+        selected_workers=20, launch_required=True, existing_run_id=None,
+        decided_at=adapter.datetime(2026, 9, 24, tzinfo=adapter.timezone.utc),
+        expires_at=adapter.datetime(2026, 9, 24, 1, tzinfo=adapter.timezone.utc),
+    )
+    monkeypatch.setattr(adapter, "EXPECTED_CATALOG_MANIFEST_SHA256", manifest["manifest_sha256"])
+    monkeypatch.setattr(adapter, "EXPECTED_CATALOG_SPACE_SHA256", space_file_sha256)
+    monkeypatch.setattr(adapter, "load_plan", lambda _: SimpleNamespace(plan_sha256=prepared.plan_sha256))
+    monkeypatch.setattr(adapter, "build_atlas_preparation_identity", lambda *_: prepared.identity)
+    monkeypatch.setattr(adapter, "_validate_freeze", lambda *_: None)
+
+    _, plan_sha256 = adapter._validate_preflight(
+        tmp_path, Path(__file__).parents[1], decision, prepared.identity.protected_commit_sha,
+    )
+    assert plan_sha256 == prepared.plan_sha256
+
+    manifest["catalog_id"] = "tampered"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_CATALOG_HASH_INVALID"):
+        adapter._validate_preflight(
+            tmp_path, Path(__file__).parents[1], decision, prepared.identity.protected_commit_sha,
+        )
+
+    manifest["catalog_id"] = adapter.CATALOG_ID
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    space["space_sha256"] = "0" * 64
+    space_path.write_text(json.dumps(space, sort_keys=True), encoding="utf-8")
+    monkeypatch.setattr(adapter, "EXPECTED_CATALOG_SPACE_SHA256", hashlib.sha256(space_path.read_bytes()).hexdigest())
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_SPACE_HASH_INVALID"):
+        adapter._validate_preflight(
+            tmp_path, Path(__file__).parents[1], decision, prepared.identity.protected_commit_sha,
+        )
+
+
 def _plan() -> SimpleNamespace:
     return SimpleNamespace(
         plan_sha256="a" * 64,
