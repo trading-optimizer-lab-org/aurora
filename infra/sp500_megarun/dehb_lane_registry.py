@@ -519,12 +519,20 @@ class AuthorizedValidationLaneEvaluator(TrainLaneEvaluator):
         expected_spy_sha256: str,
         default_configurations: Mapping[str, Mapping[str, Any]],
         authorization: str,
+        expected_authorization: str | None = None,
         baseline_feature_dirs: Mapping[str, Path] | None = None,
         adapters: Sequence[FamilyAdapter] | None = None,
     ) -> None:
-        from aurora.infra.sp500_megarun.selected_validation import VALIDATION_ACK
+        from aurora.infra.sp500_megarun.selected_validation import (
+            ATLAS_VALIDATION_ACK,
+            VALIDATION_ACK,
+        )
 
-        if authorization != VALIDATION_ACK:
+        expected = VALIDATION_ACK if expected_authorization is None else expected_authorization
+        if (
+            expected not in {VALIDATION_ACK, ATLAS_VALIDATION_ACK}
+            or authorization != expected
+        ):
             raise LaneRegistryError("VALIDATION_AUTHORIZATION_INVALID")
         super().__init__(
             validation_snapshot,

@@ -20,6 +20,7 @@ from aurora.infra.sp500_megarun.dehb_objective import (
 
 
 VALIDATION_ACK = "OPEN_SP500_MEGARUN_VALIDATION_2011_2020_SELECTED_12_ONCE"
+ATLAS_VALIDATION_ACK = "OPEN_SP500_ATLAS_1_VALIDATION_2011_2020_PARETO_14_ONCE"
 TRAIN_END = pd.Timestamp("2010-12-31")
 VALIDATION_START = pd.Timestamp("2011-01-01")
 VALIDATION_END = pd.Timestamp("2020-12-31")
@@ -490,10 +491,14 @@ def build_authorized_validation_snapshot(
     output_dir: Path,
     *,
     authorization: str,
+    expected_authorization: str = VALIDATION_ACK,
 ) -> ValidationSnapshotReceipt:
     """Verify and combine train plus validation solely for signal warm-up."""
 
-    if authorization != VALIDATION_ACK:
+    if (
+        expected_authorization not in {VALIDATION_ACK, ATLAS_VALIDATION_ACK}
+        or authorization != expected_authorization
+    ):
         raise SelectedValidationError("VALIDATION_AUTHORIZATION_INVALID")
     train_root = Path(train_dir).resolve()
     validation_root = Path(validation_dir).resolve()
@@ -584,6 +589,7 @@ def build_authorized_validation_snapshot(
 
 
 __all__ = [
+    "ATLAS_VALIDATION_ACK",
     "LOCKED_START",
     "TRAIN_END",
     "VALIDATION_ACK",
