@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from collections.abc import MutableMapping
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -632,7 +632,7 @@ def test_atlas_preparer_exception_requires_reusable_read_only_call(tmp_path: Pat
 def test_atlas_validation_exception_is_exact_and_read_only(tmp_path: Path) -> None:
     path = tmp_path / ".github/workflows/sp500-atlas-validation-14-once.yml"
     path.parent.mkdir(parents=True)
-    payload = {
+    payload: dict[str, Any] = {
         "name": "Atlas-1 validation once",
         "on": {"workflow_dispatch": {}},
         "permissions": {"actions": "read", "contents": "read"},
