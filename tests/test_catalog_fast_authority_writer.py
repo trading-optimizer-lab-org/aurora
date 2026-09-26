@@ -147,3 +147,42 @@ def test_unlaunched_finalize_writer_does_not_write_non_exact_candidate() -> None
             read_edit=lambda: fixture.edit, write_body=writes.append, unlaunched_terminal=True,
         )
     assert writes == []
+
+
+def test_terminal_correction_writer_requires_exact_reconcile_transition() -> None:
+    from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityStateV1
+    from aurora.infra.sp500_megarun.catalog_fast_authority_github import write_current_fast_authority
+
+    request = _request()
+    current = FastAuthorityStateV1.bootstrap(campaigns=()).reserve(
+        request=request, issue_number=280, run_id=100,
+    ).terminalize(request=request, run_id=100, terminal_receipt_sha256="c" * 64)
+    candidate = current.correct_terminal(
+        request=request, issue_number=280, run_id=100,
+        prior_terminal_sha256="c" * 64, corrected_terminal_sha256="d" * 64,
+    )
+    fixture = publication_transport(state=current, phase="reconcile")
+    issue = fixture.edit["data"]["repository"]["issue"]
+    writes: list[str] = []
+
+    def write_body(body: str) -> None:
+        writes.append(body)
+        issue["body"] = body
+        issue["userContentEdits"]["nodes"][0]["id"] = "E_written"
+
+    with pytest.raises(ValueError, match="CATALOG_FAST_TERMINAL_CORRECTION_PRIOR_INVALID"):
+        write_current_fast_authority(
+            current=current, candidate=candidate, expected_edit_id="E_current", anchor=fixture.anchor,
+            run_id=123, run_attempt=1, job_id=789, phase="reconcile", commit="a" * 40,
+            read_edit=lambda: fixture.edit, write_body=write_body,
+            terminal_correction_prior_sha256="e" * 64,
+        )
+    assert writes == []
+    publication = write_current_fast_authority(
+        current=current, candidate=candidate, expected_edit_id="E_current", anchor=fixture.anchor,
+        run_id=123, run_attempt=1, job_id=789, phase="reconcile", commit="a" * 40,
+        read_edit=lambda: fixture.edit, write_body=write_body,
+        terminal_correction_prior_sha256="c" * 64,
+    )
+    assert len(writes) == 1
+    assert publication.state == candidate

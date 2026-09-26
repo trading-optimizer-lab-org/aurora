@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from types import SimpleNamespace
+from typing import Any, Callable, cast
 import zipfile
 
 import pytest
@@ -12,6 +13,7 @@ from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_fast_path import (
     CatalogFastLaunchDecisionV1,
     CatalogTerminalReceiptV1,
+    CatalogTerminalReceiptV2,
 )
 from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateOwnerEvidence,
@@ -22,6 +24,9 @@ from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     verify_fast_gate_owner_metadata,
 )
 from aurora.infra.sp500_megarun.catalog_request_contract import CatalogRunRequestV1
+from scripts.catalog_atlas_terminal_correction_lookup import (
+    _load_atlas_terminal_correction, resolve_atlas_terminal_correction,
+)
 
 
 COMMIT = "44d4f5e1bfe0d2d9396b99f44b4684205e737c0e"
@@ -312,6 +317,121 @@ def test_owner_terminal_receipt_keeps_wrong_owner_rejected() -> None:
         load_owner_terminal_receipt(
             client=client, owner=owner, issue_number=323, download_archive=download,
         )
+
+
+def test_non_atlas_authority_hash_mismatch_cannot_use_correction() -> None:
+    client, owner, download = _terminal_owner_fixture("2026-09-19T10:11:09.728262Z")
+    original = load_owner_terminal_receipt(client=client, owner=owner, issue_number=323,
+                                           download_archive=download)
+    assert original is not None
+    with pytest.raises(ValueError, match="CATALOG_FAST_AUTHORITY_TERMINAL_CONFLICT"):
+        resolve_atlas_terminal_correction(
+            client=cast(Any, client), owner=owner, issue_number=323, original=original,
+            expected_sha256="f" * 64,
+            download_archive=cast(Callable[[int], bytes], download),
+        )
+
+
+def test_atlas_correction_lookup_requires_protected_publisher_and_exact_hash() -> None:
+    _, owner, _ = _terminal_owner_fixture("2026-09-19T10:11:09.728262Z")
+    corrected = CatalogTerminalReceiptV2.create(
+        state="SUCCESS", reason_code="CATALOG_RUN_SUCCESS",
+        request_sha256=owner.decision.request_sha256,
+        submission_key_sha256=owner.decision.submission_key_sha256,
+        campaign_key=owner.decision.campaign_key,
+        prepared_receipt_sha256=owner.decision.prepared_receipt_sha256,
+        engine_run_id=owner.run_id,
+        run_url=f"https://github.com/trading-optimizer-lab-org/aurora/actions/runs/{owner.run_id}",
+        expected_recipe_count=209906, observed_recipe_count=209906,
+        timing={}, recovered_block_ids=None, failure_class=None,
+        result_science_sha256="18e614ffd8ef079fe7f6488db922d8bee33f539d07f37dc2de4bc1309c12df42",
+        created_at=NOW,
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("catalog-terminal-receipt-v1.json", corrected.model_dump_json())
+    raw = buffer.getvalue()
+    correction_run = 999
+    artifact = {
+        "id": 1001, "name": "catalog-terminal-correction-378", "expired": False,
+        "digest": "sha256:" + hashlib.sha256(raw).hexdigest(), "size_in_bytes": len(raw),
+        "workflow_run": {"id": correction_run, "head_sha": "a" * 40,
+                         "head_branch": "main", "repository_id": 1232647748,
+                         "head_repository_id": 1232647748},
+    }
+    artifacts = [artifact]
+    run = {
+        "id": correction_run, "head_sha": "a" * 40, "head_branch": "main",
+        "path": ".github/workflows/catalog-fast-authority-maintenance.yml",
+        "event": "workflow_dispatch", "status": "completed", "conclusion": "success",
+        "repository": {"id": 1232647748}, "run_attempt": 1,
+    }
+    steps = [{"name": name, "number": index, "conclusion": "success"} for index, name in enumerate((
+        "Reverify all original Atlas results", "Publish independently verified Atlas terminal",
+        "Write current authority edition", "Publish current authority edition",
+        "Verify initial authority through its production reader",
+    ), 1)]
+
+    class Client:
+        repository = "trading-optimizer-lab-org/aurora"
+
+        def stable_paginated(self, path: str, *, root: str):
+            if root == "artifacts":
+                return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=tuple(artifacts)))
+            assert root == "jobs"
+            return SimpleNamespace(stable=True, collection=SimpleNamespace(complete=True, rows=(
+                {"name": "bootstrap", "status": "completed", "conclusion": "success",
+                 "run_id": correction_run, "run_attempt": 1, "head_sha": "a" * 40,
+                 "steps": steps},
+            )))
+
+        def get_json(self, path: str):
+            return run, None
+
+    client = Client()
+    assert _load_atlas_terminal_correction(
+        client=client, owner=owner, expected_sha256=corrected.receipt_sha256,
+        download_archive=lambda _: raw,
+    ) == corrected
+    artifacts.append({**artifact, "id": 1002})
+    assert _load_atlas_terminal_correction(
+        client=client, owner=owner, expected_sha256=corrected.receipt_sha256,
+        download_archive=lambda _: raw,
+    ) == corrected
+    artifacts.pop()
+    steps[3]["conclusion"] = "failure"
+    steps.insert(4, {"name": "Recover missing authority publication", "number": 5,
+                     "conclusion": "success"})
+    steps[5]["number"] = 6
+    assert _load_atlas_terminal_correction(
+        client=client, owner=owner, expected_sha256=corrected.receipt_sha256,
+        download_archive=lambda _: raw,
+    ) == corrected
+    steps[4]["conclusion"] = "failure"
+    with pytest.raises(ValueError, match="CATALOG_FAST_ATLAS_TERMINAL_CORRECTION_INVALID"):
+        _load_atlas_terminal_correction(client=client, owner=owner,
+                                        expected_sha256=corrected.receipt_sha256,
+                                        download_archive=lambda _: raw)
+    steps[3]["conclusion"] = "skipped"
+    steps[4]["conclusion"] = "skipped"
+    steps[5]["conclusion"] = "skipped"
+    assert _load_atlas_terminal_correction(
+        client=client, owner=owner, expected_sha256=corrected.receipt_sha256,
+        download_archive=lambda _: raw,
+    ) == corrected
+    steps[3]["conclusion"] = "failure"
+    with pytest.raises(ValueError, match="CATALOG_FAST_ATLAS_TERMINAL_CORRECTION_INVALID"):
+        _load_atlas_terminal_correction(client=client, owner=owner,
+                                        expected_sha256=corrected.receipt_sha256,
+                                        download_archive=lambda _: raw)
+    steps[3]["conclusion"] = "skipped"
+    steps[4]["conclusion"] = "success"
+    steps[5]["conclusion"] = "success"
+    run["head_branch"] = "unprotected"
+    with pytest.raises(ValueError, match="CATALOG_FAST_ATLAS_TERMINAL_CORRECTION_INVALID"):
+        _load_atlas_terminal_correction(client=client, owner=owner,
+                                        expected_sha256=corrected.receipt_sha256,
+                                        download_archive=lambda _: raw)
 
 
 def test_pinned_unlaunched_terminal_binds_as_existing_without_science() -> None:

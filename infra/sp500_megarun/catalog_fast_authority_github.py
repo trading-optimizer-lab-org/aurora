@@ -245,6 +245,7 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     unlaunched_terminal: bool = False,
     recovery_proof: CheckpointRecoveryOwnerProofV1 | None = None,
     unreserved_proof=None,
+    terminal_correction_prior_sha256: str | None = None,
     now: datetime | None = None,
 ) -> FastAuthorityEditBindingV1:
     """Mutate under the workflow's shared writer lock, then bind the observed edit.
@@ -261,6 +262,8 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
     if recovery_proof is not None and phase not in {"intake-signed", "gate"}:
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
     if unreserved_proof is not None and (phase != "intake-signed" or recovery_proof is None):
+        raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
+    if terminal_correction_prior_sha256 is not None and phase != "reconcile":
         raise ValueError("CATALOG_FAST_AUTHORITY_WRITER_PHASE_INVALID")
     if phase in _INTAKE_PHASES:
         old_emissions = {row.intent_id: row for row in current.emissions}
@@ -319,6 +322,14 @@ def write_current_fast_authority(*, current: FastAuthorityStateV1, candidate: Fa
         else:
             expected = current.terminalize(request=row.request, run_id=run_id,
                 terminal_receipt_sha256=row.terminal_receipt_sha256)
+    elif terminal_correction_prior_sha256 is not None:
+        if row.terminal_receipt_sha256 is None:
+            raise ValueError("CATALOG_FAST_TERMINAL_CORRECTION_CANDIDATE_INVALID")
+        expected = current.correct_terminal(
+            request=row.request, run_id=row.owner_run_id, issue_number=row.owner_issue_number,
+            prior_terminal_sha256=terminal_correction_prior_sha256,
+            corrected_terminal_sha256=row.terminal_receipt_sha256,
+        )
     else:
         if row.legacy_closure_evidence_sha256 is None or row.terminal_receipt_sha256 is not None:
             raise ValueError("CATALOG_FAST_AUTHORITY_RECONCILIATION_CANDIDATE_INVALID")

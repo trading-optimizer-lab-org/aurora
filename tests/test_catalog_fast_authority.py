@@ -55,6 +55,34 @@ def test_terminal_requires_owner_and_preserves_high_water() -> None:
     assert terminal.reserve(request=_request(), issue_number=282, run_id=102) == terminal
 
 
+def test_terminal_correction_preserves_owner_and_rejects_wrong_prior() -> None:
+    request = _request()
+    original = FastAuthorityStateV1.bootstrap(campaigns=()).reserve(
+        request=request, issue_number=280, run_id=100,
+    ).terminalize(request=request, run_id=100, terminal_receipt_sha256="c" * 64)
+    corrected = original.correct_terminal(
+        request=request, issue_number=280, run_id=100,
+        prior_terminal_sha256="c" * 64, corrected_terminal_sha256="d" * 64,
+    )
+    assert corrected.revision == original.revision + 1
+    assert corrected.previous_state_sha256 == original.state_sha256
+    assert corrected.campaigns[0].owner_issue_number == 280
+    assert corrected.campaigns[0].owner_run_id == 100
+    assert corrected.campaigns[0].request == request
+    assert corrected.campaigns[0].terminal_receipt_sha256 == "d" * 64
+    assert corrected.correct_terminal(request=request, issue_number=280, run_id=100,
+                                      prior_terminal_sha256="c" * 64,
+                                      corrected_terminal_sha256="d" * 64) == corrected
+    with pytest.raises(ValueError, match="CATALOG_FAST_TERMINAL_CORRECTION_PRIOR_INVALID"):
+        original.correct_terminal(request=request, issue_number=280, run_id=100,
+                                  prior_terminal_sha256="e" * 64,
+                                  corrected_terminal_sha256="d" * 64)
+    with pytest.raises(ValueError, match="CATALOG_FAST_TERMINAL_CORRECTION_OWNER_INVALID"):
+        original.correct_terminal(request=request, issue_number=281, run_id=100,
+                                  prior_terminal_sha256="c" * 64,
+                                  corrected_terminal_sha256="d" * 64)
+
+
 @pytest.mark.parametrize("edit,node", [("edit-restored", "ledger-node"), ("edit-1", "other-ledger")])
 def test_old_publication_cannot_validate_recreated_body(edit: str, node: str) -> None:
     state = FastAuthorityStateV1.bootstrap(campaigns=())

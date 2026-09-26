@@ -71,6 +71,7 @@ from aurora.infra.sp500_megarun.catalog_fast_reservation import (
     FastGateAliasEvidence, FastGateOwnerEvidence, load_fast_gate_owner, load_owner_terminal_receipt,
 )
 from scripts.verify_catalog_prepared_bundle import verify_atlas_prepared_bundle
+from scripts.catalog_atlas_terminal_correction_lookup import resolve_atlas_terminal_correction
 
 
 _REPOSITORY = "trading-optimizer-lab-org/aurora"
@@ -698,8 +699,13 @@ def admit_request(
                         download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
                     )
                     if terminal_receipt is not None and pinned_terminal_sha256 is not None and terminal_receipt.receipt_sha256 != pinned_terminal_sha256:
+                        original_terminal_receipt = terminal_receipt
                         terminal_receipt = None
-                        raise ValueError("CATALOG_FAST_AUTHORITY_TERMINAL_CONFLICT")
+                        terminal_receipt = resolve_atlas_terminal_correction(
+                            client=client, owner=owner, issue_number=owner_issue_number,
+                            original=original_terminal_receipt, expected_sha256=pinned_terminal_sha256,
+                            download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                        )
                 except (CatalogGitHubSnapshotError, ValueError, OSError, subprocess.SubprocessError) as exc:
                     reason = str(exc).split(":", 1)[0]
                     if not re.fullmatch(r"CATALOG_[A-Z0-9_]+", reason):
