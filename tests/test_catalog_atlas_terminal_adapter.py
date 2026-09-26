@@ -325,6 +325,16 @@ def test_parent_run_in_progress_and_required_matrix_jobs_are_accepted(tmp_path: 
     assert len(adapter._validate_jobs({"jobs": [
         row for row in rows if cast(Mapping[str, object], row)["name"] != "engine"
     ]})) == 366
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_FINALIZE_JOB_INVALID"):
+        adapter._validate_jobs({"jobs": rows}, completed_source=True)
+    completed_rows = [{**row, "conclusion": "success"} if row["name"] == "finalize" else row for row in rows]
+    assert len(adapter._validate_jobs({"jobs": completed_rows}, completed_source=True)) == 367
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_FINALIZE_JOB_INVALID"):
+        adapter._validate_jobs({"jobs": completed_rows})
+    with pytest.raises(adapter.AtlasTerminalEvidenceError, match="ATLAS_TERMINAL_JOB_EVIDENCE_MISSING"):
+        adapter._validate_jobs({"jobs": [
+            row for row in completed_rows if row["name"] != "finalize"
+        ]}, completed_source=True)
 
 
 def test_cli_requires_only_parent_snapshots_and_two_artifact_roots() -> None:

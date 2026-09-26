@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 from datetime import datetime
 import json
+import re
 
 from pydantic import Field, field_validator, model_serializer, model_validator
 
@@ -715,6 +716,25 @@ class FastAuthorityStateV1(_AuthorityContent):
             return self
         return self._replace(FastAuthorityCampaignV1.model_validate({
             **old.model_dump(mode="json"), "terminal_receipt_sha256": terminal_receipt_sha256,
+        }))
+
+    def correct_terminal(self, *, request: CatalogRunRequestV1, run_id: int,
+                         issue_number: int, prior_terminal_sha256: str,
+                         corrected_terminal_sha256: str) -> "FastAuthorityStateV1":
+        """Replace one proven-bad receipt without changing ownership or lineage."""
+        if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in
+               (prior_terminal_sha256, corrected_terminal_sha256)) or prior_terminal_sha256 == corrected_terminal_sha256:
+            raise ValueError("CATALOG_FAST_TERMINAL_CORRECTION_INPUT_INVALID")
+        old = next((row for row in self.campaigns if row.request.campaign_key == request.campaign_key), None)
+        if (old is None or old.request != request or old.owner_run_id != run_id
+            or old.owner_issue_number != issue_number or old.legacy_closure_evidence_sha256 is not None):
+            raise ValueError("CATALOG_FAST_TERMINAL_CORRECTION_OWNER_INVALID")
+        if old.terminal_receipt_sha256 == corrected_terminal_sha256:
+            return self
+        if old.terminal_receipt_sha256 != prior_terminal_sha256:
+            raise ValueError("CATALOG_FAST_TERMINAL_CORRECTION_PRIOR_INVALID")
+        return self._replace(FastAuthorityCampaignV1.model_validate({
+            **old.model_dump(mode="json"), "terminal_receipt_sha256": corrected_terminal_sha256,
         }))
 
     def to_body(self) -> str:

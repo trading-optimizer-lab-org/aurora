@@ -696,6 +696,7 @@ def admit_request(
                     terminal_receipt = load_owner_terminal_receipt(
                         client=client, owner=owner, issue_number=owner_issue_number,
                         download_archive=lambda artifact_id: _download_owner_archive(repository, token, artifact_id),
+                        expected_terminal_sha256=pinned_terminal_sha256,
                     )
                     if terminal_receipt is not None and pinned_terminal_sha256 is not None and terminal_receipt.receipt_sha256 != pinned_terminal_sha256:
                         terminal_receipt = None

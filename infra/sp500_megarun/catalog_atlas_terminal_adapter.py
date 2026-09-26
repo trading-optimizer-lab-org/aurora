@@ -251,7 +251,7 @@ def _job_base_name(name: object) -> str:
     return ""
 
 
-def _validate_jobs(value: object) -> tuple[Mapping[str, Any], ...]:
+def _validate_jobs(value: object, *, completed_source: bool = False) -> tuple[Mapping[str, Any], ...]:
     rows = _job_rows(value)
     expected_single = {"preflight", "reduce"}
     successful_single: set[str] = set()
@@ -290,10 +290,9 @@ def _validate_jobs(value: object) -> tuple[Mapping[str, Any], ...]:
             continue
         if base == "finalize":
             seen_finalize += 1
-            # The finalizer is the current job.  It is allowed to be absent
-            # from a paginated snapshot, but never to report a terminal result
-            # before this verifier has emitted its receipt.
-            if seen_finalize > 1 or conclusion is not None:
+            # Live finalization has no conclusion yet. Historical correction
+            # may only inspect a completed, successful source finalizer.
+            if seen_finalize > 1 or conclusion != ("success" if completed_source else None):
                 raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_FINALIZE_JOB_INVALID")
             continue
         if not base:
@@ -312,7 +311,7 @@ def _validate_jobs(value: object) -> tuple[Mapping[str, Any], ...]:
             matrix_rows.append(row)
     # GitHub does not guarantee that a skipped reusable-workflow caller is
     # present in the jobs snapshot. Its absence is safe; a non-skipped one is not.
-    if successful_single != expected_single or seen_gate != 1:
+    if successful_single != expected_single or seen_gate != 1 or (completed_source and seen_finalize != 1):
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_JOB_EVIDENCE_MISSING")
     if len(matrix_rows) != EXPECTED_SHARD_COUNT:
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_MATRIX_JOB_COVERAGE_INVALID")
@@ -649,6 +648,7 @@ def verify_atlas_terminal_evidence(
     gate_result: str | None = None,
     expected_plan_sha256: str | None = None,
     final_results_artifact: str = "sp500-atlas-final-results",
+    completed_source: bool = False,
 ) -> tuple[Mapping[str, Any], CatalogRunRequestV1, CatalogFastLaunchDecisionV1, AtlasTerminalVerification]:
     context, request, decision, expected = _validate_request_and_decision(context_path, decision_path)
     run, run_id, run_url, head_sha = _parse_run(run_path)
@@ -656,7 +656,9 @@ def verify_atlas_terminal_evidence(
     try:
         if context.get("protected_commit_sha") != head_sha:
             raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_COMMIT_BINDING_INVALID")
-        jobs = _validate_jobs(read_json(jobs_path, "ATLAS_TERMINAL_JOBS_INVALID"))
+        if completed_source and (run.get("status"), run.get("conclusion")) != ("completed", "success"):
+            raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_SOURCE_RUN_NOT_SUCCESS")
+        jobs = _validate_jobs(read_json(jobs_path, "ATLAS_TERMINAL_JOBS_INVALID"), completed_source=completed_source)
         if final_results_artifact != "sp500-atlas-final-results":
             raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_FINAL_ARTIFACT_NAME_INVALID")
         timing["preparation_jobs_window_seconds"] = _span_seconds(jobs, ("preflight",))
