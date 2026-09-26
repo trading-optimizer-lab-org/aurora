@@ -4,8 +4,8 @@ Este documento registra **todos** los workflows presentes durante la migración 
 
 ## Resultado
 
-- Workflows inventariados: **188**.
-- Hash canónico del inventario final: `86c1808ee3a9d99bfbe9cb3a0c7dd97d70dad649d21d61245dbd0125851b4087`.
+- Workflows inventariados: **189**.
+- Hash canónico del inventario final: `58fa0a065ceed0365351f8ed0a555370bc3c333c4f03b772360c7f8db3e5af11`.
 - Estado final del validador de topología: **READY**.
 - Campañas activas: `sp500-optimized-catalog-v1` mediante `optimized_catalog_v1` y `sp500-atlas-v1` mediante `atlas_static_v1`.
 - Atlas-1 solo acepta la llamada protegida del controlador para el catálogo congelado de 209.906 estrategias; los demás wrappers históricos siguen sin entrada pública.
@@ -128,6 +128,7 @@ Este documento registra **todos** los workflows presentes durante la migración 
 | .github/workflows/sp500-atlas-postrun.yml | workflow_call, workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
 | .github/workflows/sp500-atlas-run.yml | workflow_call, workflow_dispatch | yes | atlas_static_v1 | sp500-atlas-v1 | workflow_call | protected 209.906-strategy engine; legacy mode remains internal-only | Atlas sealed engine and repository topology tests |
 | .github/workflows/sp500-atlas-segment.yml | workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
+| .github/workflows/sp500-atlas-validation-14-once.yml | not present | no | - | - | workflow_dispatch | one-shot validation of the frozen 14 Pareto recipes on 2011-2020; 2021+ remains locked | Atlas validation tests and repository topology receipt |
 | .github/workflows/sp500-autonomous-discovery.yml | workflow_dispatch | no | - | - | workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
 | .github/workflows/sp500-catalog-optimization-qualification.yml | workflow_dispatch | yes | - | - | workflow_call | removed public trigger; retained inactive internal compatibility | legacy launcher has no public trigger |
 | .github/workflows/sp500-dehb-cache-conflict-diagnostic.yml | push, workflow_dispatch | no | - | - | push, workflow_dispatch | outside catalog execution scope; inventoried with no change | repository topology receipt |
