@@ -91,18 +91,27 @@ def _load_atlas_terminal_correction(*, client: _Reader, owner: FastGateOwnerEvid
                 continue
             steps = writers[0].get("steps", ())
             labels = ("Reverify all original Atlas results", "Publish independently verified Atlas terminal",
-                      "Write current authority edition",
-                      "Verify initial authority through its production reader")
+                      "Write current authority edition")
             selected = [[step for step in steps if step.get("name") == label] for label in labels]
             if any(len(items) != 1 or items[0].get("conclusion") != "success" for items in selected):
                 continue
             if [items[0]["number"] for items in selected] != sorted(items[0]["number"] for items in selected):
                 continue
+            verified = [step for step in steps if step.get("name") ==
+                        "Verify initial authority through its production reader"]
+            if len(verified) != 1 or verified[0].get("number", 0) <= selected[-1][0]["number"]:
+                continue
             publication = [step for step in steps if step.get("name") in {
                 "Publish current authority edition", "Check current authority publication",
                 "Recover missing authority publication",
             }]
-            if not any(step.get("conclusion") == "success" for step in publication):
+            if verified[0].get("conclusion") == "success":
+                if not any(step.get("conclusion") == "success" for step in publication):
+                    continue
+            elif verified[0].get("conclusion") == "skipped":
+                if not publication or any(step.get("conclusion") != "skipped" for step in publication):
+                    continue
+            else:
                 continue
             raw = download_archive(artifact["id"])
             if not raw or len(raw) != artifact["size_in_bytes"] or hashlib.sha256(raw).hexdigest() != artifact["digest"][7:]:

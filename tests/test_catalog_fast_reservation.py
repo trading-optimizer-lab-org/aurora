@@ -405,7 +405,21 @@ def test_atlas_correction_lookup_requires_protected_publisher_and_exact_hash() -
         _load_atlas_terminal_correction(client=client, owner=owner,
                                         expected_sha256=corrected.receipt_sha256,
                                         download_archive=lambda _: raw)
+    steps[3]["conclusion"] = "skipped"
+    steps[4]["conclusion"] = "skipped"
+    steps[5]["conclusion"] = "skipped"
+    assert _load_atlas_terminal_correction(
+        client=client, owner=owner, expected_sha256=corrected.receipt_sha256,
+        download_archive=lambda _: raw,
+    ) == corrected
+    steps[3]["conclusion"] = "failure"
+    with pytest.raises(ValueError, match="CATALOG_FAST_ATLAS_TERMINAL_CORRECTION_INVALID"):
+        _load_atlas_terminal_correction(client=client, owner=owner,
+                                        expected_sha256=corrected.receipt_sha256,
+                                        download_archive=lambda _: raw)
+    steps[3]["conclusion"] = "skipped"
     steps[4]["conclusion"] = "success"
+    steps[5]["conclusion"] = "success"
     run["head_branch"] = "unprotected"
     with pytest.raises(ValueError, match="CATALOG_FAST_ATLAS_TERMINAL_CORRECTION_INVALID"):
         _load_atlas_terminal_correction(client=client, owner=owner,
