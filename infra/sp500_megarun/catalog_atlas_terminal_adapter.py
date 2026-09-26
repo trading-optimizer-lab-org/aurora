@@ -484,11 +484,13 @@ def _validate_preflight(
     space_path = _relative(preflight_root / "atlas", "recipe_space.json", "ATLAS_TERMINAL_CATALOG_INVALID")
     manifest = _mapping(read_json(manifest_path, "ATLAS_TERMINAL_CATALOG_INVALID"), "ATLAS_TERMINAL_CATALOG_INVALID")
     space = _mapping(read_json(space_path, "ATLAS_TERMINAL_CATALOG_INVALID"), "ATLAS_TERMINAL_CATALOG_INVALID")
-    if _sha256_file(manifest_path) != EXPECTED_CATALOG_MANIFEST_SHA256 or manifest.get("manifest_sha256") != EXPECTED_CATALOG_MANIFEST_SHA256:
+    if manifest.get("manifest_sha256") != EXPECTED_CATALOG_MANIFEST_SHA256:
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_CATALOG_HASH_INVALID")
     if _canonical({key: value for key, value in manifest.items() if key != "manifest_sha256"}) != manifest.get("manifest_sha256"):
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_CATALOG_HASH_INVALID")
-    if _sha256_file(space_path) != EXPECTED_CATALOG_SPACE_SHA256 or space.get("space_sha256") != EXPECTED_CATALOG_SPACE_SHA256:
+    if _sha256_file(space_path) != EXPECTED_CATALOG_SPACE_SHA256:
+        raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_SPACE_HASH_INVALID")
+    if _canonical({key: value for key, value in space.items() if key != "space_sha256"}) != space.get("space_sha256"):
         raise AtlasTerminalEvidenceError("ATLAS_TERMINAL_SPACE_HASH_INVALID")
     _false_boundaries(manifest, "ATLAS_TERMINAL_BOUNDARY_OPEN")
     _false_boundaries(space, "ATLAS_TERMINAL_BOUNDARY_OPEN")
