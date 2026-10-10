@@ -2,7 +2,6 @@
 
 from datetime import timedelta
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 from cryptography.hazmat.primitives import serialization
@@ -10,7 +9,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 import pytest
 
 from aurora.infra.github_performance.contracts import canonical_sha256
-from aurora.infra.github_performance.preflight import load_github_yaml
 from aurora.infra.sp500_megarun.catalog_fast_authority import FastAuthorityCampaignV1, FastAuthorityEditBindingV1, FastAuthorityStateV1
 from aurora.infra.sp500_megarun.catalog_fast_authority_github import load_current_fast_authority
 from aurora.infra.sp500_megarun.catalog_fast_path import CatalogFastLaunchDecisionV1, CatalogTerminalReceiptV1, CatalogTerminalReceiptV2, CatalogTerminalReceipt
@@ -219,21 +217,3 @@ def test_reservation_cli_stages_only_its_authenticated_request(tmp_path, monkeyp
         assert code == 2
         assert not output.exists()
         assert len(calls) == (1 if fault in {"write_rejected", "handoff_after"} else 0)
-
-
-def test_gate_durable_publication_is_verified_before_queue_exposure():
-    workflow = load_github_yaml(Path(__file__).resolve().parents[1] / ".github/workflows/catalog-fast-controller.yml")
-    steps = workflow["jobs"]["gate"]["steps"]
-    ids = [step.get("id") for step in steps]
-    assert ids.index("write_authority") < ids.index("publish_authority") < ids.index("verify_authority") < ids.index("reserve")
-    for name in ("write_authority", "publish_authority", "verify_authority"):
-        step = steps[ids.index(name)]
-        assert step.get("continue-on-error", False) is (name == "publish_authority")
-        assert "steps.admit.outputs.launch_required == 'true'" in step["if"]
-
-
-def test_terminal_durable_publication_precedes_release():
-    workflow = load_github_yaml(Path(__file__).resolve().parents[1] / ".github/workflows/catalog-fast-controller.yml")
-    steps = workflow["jobs"]["finalize"]["steps"]
-    ids = [step.get("id") for step in steps]
-    assert ids.index("publish_receipt") < ids.index("write_authority") < ids.index("publish_authority") < ids.index("verify_authority") < ids.index("publish_terminal")

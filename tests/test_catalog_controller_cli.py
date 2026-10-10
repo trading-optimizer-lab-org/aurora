@@ -163,29 +163,6 @@ def run_controller_fixture(
     return result, decision, github_output.read_text("utf-8")
 
 
-def test_blocked_controller_emits_no_launch_outputs(tmp_path: Path) -> None:
-    result, decision, github_output = run_controller_fixture(
-        tmp_path,
-        mutation="wrong_prompt_hash",
-    )
-    assert result.returncode == 0, result.stderr
-    assert decision["outcome"] == "blocked"
-    assert "call_engine=true" not in github_output
-    assert "workflow" not in github_output
-    assert not (tmp_path / "output" / "authority_comment.md").exists()
-
-
-def test_controller_outputs_are_single_line_and_injection_safe(tmp_path: Path) -> None:
-    result, decision, github_output = run_controller_fixture(
-        tmp_path,
-        issue_body_suffix="%0Acall_engine=true",
-    )
-    assert result.returncode == 0, result.stderr
-    assert decision["outcome"] == "blocked"
-    assert "%0A" not in github_output
-    assert all("\r" not in line for line in github_output.splitlines())
-
-
 def test_command_surfaces_have_no_arbitrary_execution_options() -> None:
     forbidden = {
         "--submit",

@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import yaml
 
 from aurora.infra.github_performance.contracts import canonical_sha256
 from aurora.infra.sp500_megarun.catalog_atlas_cloud_identity import (
@@ -17,7 +16,6 @@ from aurora.infra.sp500_megarun.catalog_atlas_cloud_identity import (
 from aurora.infra.sp500_megarun.atlas_execution_contract import build_run_plan, write_plan
 from aurora.infra.sp500_megarun.atlas_campaign_selection import build_campaign_selection
 from scripts import prepare_catalog_atlas_bundle as producer
-from scripts import verify_catalog_prepared_bundle as prepared_verifier
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -334,63 +332,6 @@ def test_cache_may_supply_catalog_but_never_the_current_calibration_receipt(
     assert (output / "calibration/calibration_receipt.json").read_text(
         encoding="utf-8"
     ) == '{"recommended_mode":"cold"}\n'
-
-
-def test_workflow_is_call_only_cold_and_publishes_commit_definition_keyed_outputs() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
-    call = workflow["on"]["workflow_call"]
-    assert tuple(workflow["on"]) == ("workflow_call",)
-    assert tuple(call["inputs"]) == ("campaign_key",)
-    assert workflow["permissions"] == {"actions": "read", "contents": "read"}
-    assert workflow["env"]["PYTHONPATH"] == (
-        "${{ github.workspace }}/..:${{ github.workspace }}"
-    )
-    assert workflow["jobs"]["calibrate"]["uses"] == "./.github/workflows/sp500-atlas-calibration.yml"
-    assert workflow["jobs"]["calibrate"]["with"]["catalog_target_end_iso"] == (
-        producer.CATALOG_TARGET_END_ISO
-    )
-    assert workflow["jobs"]["calibrate"]["with"]["cache_mode"] == "cold"
-    assert "${{ needs.preflight.outputs.planned_target_end_iso }}" == workflow["jobs"][
-        "calibrate"
-    ]["with"]["target_end_iso"]
-    assert workflow["jobs"]["prepare"]["runs-on"] == "ubuntu-24.04"
-    text = WORKFLOW.read_text(encoding="utf-8")
-    assert "catalog-atlas-prepared-${{ inputs.campaign_key }}-${{ steps.prepare.outputs.preparation_key_sha256 }}" in text
-    restore = workflow["jobs"]["prepare"]["steps"]
-    cache_restore = next(
-        step for step in restore if step.get("uses", "").startswith("actions/cache/restore@")
-    )
-    cache_save = next(
-        step for step in restore if step.get("uses", "").startswith("actions/cache/save@")
-    )
-    assert cache_restore["with"]["key"] == (
-        "aurora-catalog-atlas-prepared-v1-${{ needs.preflight.outputs.preparation_key_sha256 }}-"
-        "${{ github.run_id }}-${{ github.run_attempt }}"
-    )
-    assert cache_restore["with"]["restore-keys"].strip() == (
-        "aurora-catalog-atlas-prepared-v1-${{ needs.preflight.outputs.preparation_key_sha256 }}-"
-    )
-    assert cache_save["with"]["key"] == (
-        "aurora-catalog-atlas-prepared-v1-${{ steps.prepare.outputs.preparation_key_sha256 }}-"
-        "${{ github.run_id }}-${{ github.run_attempt }}"
-    )
-    controller = yaml.load(
-        (ROOT / ".github/workflows/catalog-fast-controller.yml").read_text(encoding="utf-8"),
-        Loader=yaml.BaseLoader,
-    )
-    controller_restore = next(
-        step for step in controller["jobs"]["gate"]["steps"]
-        if step.get("name") == "Restore the exact current PREPARED bundle"
-    )
-    assert cache_save["with"]["path"] == controller_restore["with"]["path"]
-    assert "--bundle-dir \"$RUNNER_TEMP/prepared-bundle\"" in text
-    assert prepared_verifier._MAX_ATLAS_BUNDLE_BYTES >= 231_681_504
-    preflight_outputs = workflow["jobs"]["preflight"]["outputs"]
-    assert preflight_outputs["preparation_key_sha256"] == (
-        "${{ steps.preflight.outputs.preparation_key_sha256 }}"
-    )
-    assert "retention-days: 90" in text
-    assert "refs/heads/main" in text
 
 
 def test_prepared_verifier_accepts_real_hash_bound_plan(

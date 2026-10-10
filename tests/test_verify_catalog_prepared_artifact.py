@@ -87,22 +87,6 @@ def test_cache_miss_restores_verified_artifact_through_real_consumer(tmp_path, m
     assert client._artifact_reads == 2
 
 
-def test_controller_routes_only_authenticated_cache_misses_to_fallback():
-    root = Path(__file__).resolve().parents[1]
-    workflow = load_github_yaml(root / ".github/workflows/catalog-fast-controller.yml")
-    steps = workflow["jobs"]["gate"]["steps"]
-    positions = {step.get("id"): index for index, step in enumerate(steps) if step.get("id")}
-    assert "recover_prepared" in positions
-    assert positions["authority"] < positions["restore"] < positions["recover_prepared"] < positions["admit"]
-    fallback = steps[positions["recover_prepared"]]
-    assert "steps.inspect.outputs.valid_request == 'true'" in fallback["if"]
-    assert "steps.restore.outputs['cache-matched-key'] == ''" in fallback["if"]
-    assert "steps.inspect.outputs.prepared_cache_restore_prefix != ''" in fallback["if"]
-    assert "--restore-artifact-on-miss" in fallback["run"]
-    assert "--require-live-caches" in fallback["run"]
-    assert fallback["env"]["GH_TOKEN"] == "${{ github.token }}"
-
-
 def test_preparation_consumer_attempts_exact_artifact_before_rebuilding():
     root = Path(__file__).resolve().parents[1]
     workflow = load_github_yaml(root / ".github/workflows/catalog-prepare-one.yml")

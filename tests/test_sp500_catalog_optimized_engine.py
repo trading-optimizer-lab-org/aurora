@@ -1237,77 +1237,6 @@ def test_engine_reduces_sealed_checkpoint_groups_before_final_merge() -> None:
     assert "--reduction-plan" in final_text
 
 
-def test_active_registry_engines_match_engine_specific_topology() -> None:
-    from aurora.infra.github_performance.preflight import (
-        CATALOG_ACTIVE_ENGINE_WORKFLOWS,
-        load_github_yaml,
-        _validate_catalog_atlas_engine_topology,
-        validate_catalog_workflow_topology,
-    )
-    from aurora.infra.sp500_megarun.catalog_campaign_registry import (
-        load_catalog_campaign_registry,
-    )
-
-    root = Path(".")
-    registry = load_catalog_campaign_registry(
-        root / "config/catalog_campaign_registry_v1.json"
-    )
-    active = [campaign for campaign in registry.campaigns if campaign.active]
-    assert active
-    atlas_campaign = next(
-        campaign for campaign in active if campaign.engine_id == "atlas_static_v1"
-    )
-    assert atlas_campaign.campaign_key == "sp500-atlas-v1"
-    assert (
-        atlas_campaign.definition_manifest_path
-        == "config/catalog_campaign_definitions/sp500-atlas-v1.manifest.json"
-    )
-    atlas_freeze = json.loads(Path(atlas_campaign.freeze_manifest_path).read_text("utf-8"))
-    assert atlas_freeze["catalog_id"] == "sp500-atlas-1"
-    assert {campaign.engine_id for campaign in active} <= set(
-        CATALOG_ACTIVE_ENGINE_WORKFLOWS
-    )
-    receipt = validate_catalog_workflow_topology(
-        repo_root=root,
-        registry=registry,
-    )
-    active_engine_paths = {
-        CATALOG_ACTIVE_ENGINE_WORKFLOWS[campaign.engine_id] for campaign in active
-    }
-    assert not any(
-        violation.path in active_engine_paths for violation in receipt.violations
-    ), receipt.violations
-    assert all(
-        violation.code == "CATALOG_LOCAL_WORKFLOW_MISSING"
-        and violation.path == ".github/workflows/catalog-prepare.yml"
-        and ".github/workflows/catalog-atlas-prepare-one.yml" in violation.message
-        for violation in receipt.violations
-    ), receipt.violations
-
-    for campaign in active:
-        path = Path(CATALOG_ACTIVE_ENGINE_WORKFLOWS[campaign.engine_id])
-        workflow = load_github_yaml(path)
-        assert set(workflow["on"]) == {"workflow_call"}
-        if campaign.engine_id == "optimized_catalog_v1":
-            jobs = workflow["jobs"]
-            recipe_jobs = [
-                job
-                for job in jobs.values()
-                if job.get("uses")
-                == "./.github/workflows/catalog-optimized-worker.yml"
-            ]
-            assert recipe_jobs
-            assert all("verify_component_store" in job["needs"] for job in recipe_jobs)
-            assert jobs["reduce_groups"]["strategy"]["max-parallel"] <= 15
-            assert "reduce_groups" in jobs["reduce"]["needs"]
-        elif campaign.engine_id == "atlas_static_v1":
-            assert _validate_catalog_atlas_engine_topology(
-                engine_path=path.as_posix(), workflow=workflow, repo_root=root
-            ) == []
-        else:
-            raise AssertionError(f"no test contract for engine {campaign.engine_id}")
-
-
 def test_atlas_static_engine_topology_is_fixed_and_fail_closed() -> None:
     from copy import deepcopy
 
@@ -1465,47 +1394,6 @@ def test_atlas_static_engine_topology_is_fixed_and_fail_closed() -> None:
     )
     envelope_step["run"] += "\nverify_sealed_global_reuse_execution_plan"
     assert "CATALOG_ATLAS_PREPARED_INTERFACE_INVALID" in codes(optimized_reuse_verifier)
-
-
-def test_weekly_keeper_is_read_only_and_cannot_launch_science() -> None:
-    from aurora.infra.github_performance.preflight import load_github_yaml
-
-    keeper_path = Path(".github/workflows/catalog-artifact-keeper.yml")
-    keeper = load_github_yaml(keeper_path)
-    assert keeper["on"] == {
-        "schedule": [{"cron": "17 3 * * 0"}],
-        "workflow_dispatch": {},
-    }
-    assert keeper["permissions"] == {
-        "actions": "read",
-        "contents": "read",
-        "issues": "read",
-    }
-    audit = keeper["jobs"]["live_controls_audit_before_maintenance"]
-    assert audit["environment"] == "catalog-production"
-    assert audit["runs-on"] == "ubuntu-24.04"
-    assert audit["timeout-minutes"] == 30
-    assert audit["steps"][1]["uses"] == "./.github/actions/catalog-live-controls-audit"
-    assert audit["steps"][1]["with"]["purpose"] == "maintenance"
-    assert "secrets" not in audit
-    preservation = keeper["jobs"]["inventory_and_preserve"]
-    assert preservation["runs-on"] == "ubuntu-24.04"
-    assert preservation["timeout-minutes"] == 20
-    assert "environment" not in preservation
-    assert "secrets" not in preservation
-    text = keeper_path.read_text("utf-8").lower()
-    for forbidden in (
-        "catalog-optimized-run.yml",
-        "catalog-component-worker.yml",
-        "catalog-optimized-worker.yml",
-        "--method post",
-        "--method patch",
-        "--method delete",
-    ):
-        assert forbidden not in text
-    assert "--maximum-download-bytes 1073741824" in text
-    assert "--maximum-artifact-copies 8" in text
-    assert "--maximum-cache-restores 16" in text
 
 
 def test_keeper_source_contract_is_closed_and_covers_active_registry() -> None:

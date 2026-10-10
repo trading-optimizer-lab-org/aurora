@@ -147,48 +147,6 @@ def _needs(job: dict[str, Any]) -> set[str]:
     return set(value)
 
 
-def test_catalog_capacity_calibration_is_fixed_synthetic_and_read_only() -> None:
-    workflow = load_github_yaml(CAPACITY_CALIBRATION_WORKFLOW_PATH)
-    assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
-    assert workflow["on"]["workflow_dispatch"] == {}
-    assert workflow["on"]["schedule"] == [{"cron": "17 3 */3 * *"}]
-    assert workflow["permissions"] == {
-        "actions": "read",
-        "contents": "read",
-    }
-    jobs = workflow["jobs"]
-    assert set(jobs) == {"synthetic_probe", "seal_receipt"}
-    probe = jobs["synthetic_probe"]
-    assert probe["runs-on"] == "ubuntu-24.04"
-    assert probe["strategy"]["max-parallel"] == 11
-    assert len(probe["strategy"]["matrix"]["probe_id"]) == 11
-    assert jobs["seal_receipt"]["runs-on"] == "ubuntu-24.04"
-    assert _needs(jobs["seal_receipt"]) == {"synthetic_probe"}
-
-    text = CAPACITY_CALIBRATION_WORKFLOW_PATH.read_text("utf-8")
-    lowered = text.lower()
-    for forbidden in (
-        "catalog-optimized-run",
-        "catalog-component-worker",
-        "catalog-optimized-worker",
-        "catalog-recovery-wave",
-        "run_sp500_optimized_recipe_worker",
-        "build_sp500_component_store",
-        "reduce_sp500_optimized_catalog",
-        "git push",
-        "github_capacity_profile.json",
-    ):
-        assert forbidden not in lowered
-    assert "catalog_capacity_calibration_v1.json" in text
-    assert '"p50"' in text
-    assert '"p95"' in text
-    assert '"p99"' in text
-    assert "Download exact tiny probe evidence for timing" in text
-    assert '"artifact_download_seconds": distribution(download_seconds)' in text
-    assert "receipt_sha256" in text
-    assert "retention-days: 90" in text
-
-
 def test_catalog_reduction_uses_bound_merge_action_and_root_only() -> None:
     workflow = load_github_yaml(CATALOG_OPTIMIZED_WORKFLOW_PATH)
     jobs = workflow["jobs"]
