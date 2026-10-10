@@ -31,10 +31,10 @@ jobs:
 
       - name: Property suite (thorough profile)
         env:
-          QF_DATA_DIR: ${{ runner.temp }}/qf_data
+          AU_DATA_DIR: ${{ runner.temp }}/aurora_data
           HYPOTHESIS_PROFILE: thorough
         run: |
-          pytest tests/ -m "not slow and not integration" \
+          python -m pytest tests/ -m "not slow and not integration" \
             -k "property or hypothesis" \
             --tb=short \
             --hypothesis-show-statistics

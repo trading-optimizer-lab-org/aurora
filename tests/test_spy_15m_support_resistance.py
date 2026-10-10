@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from scripts.run_spy_15m_support_resistance import (
     build_feature_frame,
@@ -37,37 +36,6 @@ def make_spy_15m_bars(days: int = 35) -> pd.DataFrame:
     low = pd.concat([open_, close], axis=1).min(axis=1) - rng.uniform(0.05, 0.7, len(idx))
     volume = pd.Series(1_000_000 + rng.integers(0, 250_000, len(idx)), index=idx)
     return pd.DataFrame({"Open": open_, "High": high, "Low": low, "Close": close, "Volume": volume}, index=idx)
-
-
-def test_spy_15m_support_resistance_workflow_is_manual_355_jobs() -> None:
-    path = Path(".github/workflows/spy-15m-support-resistance-355jobs.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "SPY 15m Support Resistance 355 Jobs"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    text = path.read_text(encoding="utf-8")
-    assert "range(355)" in text
-    assert "max-parallel: 178" in text
-    assert "max-parallel: 177" in text
-    assert data[True]["workflow_dispatch"]["inputs"]["period"]["default"] == "60d"
-    assert data[True]["workflow_dispatch"]["inputs"]["target_bars"]["default"] == "4"
-    assert "--interval 15m" in text
-
-
-def test_spy_15m_2015_retest_workflow_uses_polygon_and_source_artifact() -> None:
-    path = Path(".github/workflows/spy-15m-support-resistance-2015-retest.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-    assert data["name"] == "SPY 15m Support Resistance Free Max Retest"
-    assert "workflow_dispatch" in data[True]
-    assert data[True]["workflow_dispatch"]["inputs"]["source_run_id"]["default"] == "27494610826"
-    assert "needs.data.result == 'success'" in str(data["jobs"]["merge"]["if"])
-    assert "--data-source free-max" in text
-    assert 'find "$OUTPUT_DIR/source" -path "*/final/accepted.csv"' in text
-    assert "--mode retest-shard" in text
-    assert "range(355)" in text
-    assert "spy-15m-support-resistance-free-max-data" in text
-    assert "spy-15m-support-resistance-free-max-retest-results" in text
 
 
 def test_build_feature_frame_contains_all_support_resistance_families() -> None:

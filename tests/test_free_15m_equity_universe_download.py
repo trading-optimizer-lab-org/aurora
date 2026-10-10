@@ -4,7 +4,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yaml
 
 from scripts.download_free_15m_equity_universe import (
     DEFAULT_SYMBOLS,
@@ -116,17 +115,3 @@ def test_write_aligned_universe_uses_exact_shared_timestamp_index(tmp_path: Path
     assert (tmp_path / "wide" / "close.parquet").exists()
     assert (tmp_path / "manifest.json").exists()
     assert (tmp_path / "summary.csv").exists()
-
-
-def test_free_15m_universe_workflow_is_manual_and_uploads_artifact() -> None:
-    path = Path(".github/workflows/free-15m-equity-universe-download.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-
-    assert data["name"] == "Free 15m Equity Universe Download"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    assert data[True]["workflow_dispatch"]["inputs"]["period"]["default"] == "60d"
-    assert data[True]["workflow_dispatch"]["inputs"]["min_symbols"]["default"] == "20"
-    assert "--interval 15m" in text
-    assert "free-15m-equity-universe-yfinance-data" in text

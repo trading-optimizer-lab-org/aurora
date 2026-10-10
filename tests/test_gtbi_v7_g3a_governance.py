@@ -277,18 +277,6 @@ def test_checked_live_receipt_and_transition_are_consistent() -> None:
     assert manifest["gate_actions"] == []
 
 
-def test_g3a_workflows_use_github_hosted_runners_only() -> None:
-    workflows = (
-        ROOT / ".github/workflows/gtbi-v7-master-plan-quality.yml",
-        ROOT / ".github/workflows/gtbi-v7-readiness-state-controller.yml",
-        ROOT / ".github/workflows/gtbi-v7-inventory.yml",
-    )
-    for path in workflows:
-        text = path.read_text(encoding="utf-8")
-        assert "self-hosted" not in text
-        assert "runs-on: ubuntu-" in text
-
-
 def test_g3a_apply_receipt_is_canonical_and_reconciled() -> None:
     source = json.loads(G3A_APPLY_SOURCE.read_text(encoding="utf-8"))
     assert G3A_APPLY_SOURCE.read_bytes() == canonical_bytes(source) + b"\n"

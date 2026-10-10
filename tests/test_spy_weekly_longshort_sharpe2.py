@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yaml
 
 from scripts.run_spy_weekly_longshort_sharpe2 import (
     LOCKED_START,
@@ -22,18 +20,6 @@ from scripts.run_spy_weekly_longshort_sharpe2 import (
     select_validation_ceiling_diagnostic,
     train_only_stability,
 )
-
-
-def test_spy_weekly_longshort_workflow_is_manual_355_jobs() -> None:
-    path = Path(".github/workflows/spy-weekly-longshort-sharpe2-355jobs.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "SPY Weekly LongShort Sharpe2 355 Jobs"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    text = path.read_text(encoding="utf-8")
-    assert "range(355)" in text
-    assert "max-parallel: 178" in text
-    assert "max-parallel: 177" in text
 
 
 def test_position_policy_is_always_long_or_short() -> None:

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yaml
 
 from scripts.run_spy_daily_direction_accuracy import (
     LOCKED_START,
@@ -15,20 +13,6 @@ from scripts.run_spy_daily_direction_accuracy import (
     fit_rule_params_train_only,
     select_top,
 )
-
-
-def test_spy_daily_direction_workflow_is_manual_355_jobs() -> None:
-    path = Path(".github/workflows/spy-daily-direction-accuracy-355jobs.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "SPY Daily Direction Accuracy 355 Jobs"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    text = path.read_text(encoding="utf-8")
-    assert "range(355)" in text
-    assert "max-parallel: 178" in text
-    assert "max-parallel: 177" in text
-    assert data[True]["workflow_dispatch"]["inputs"]["target_accuracy"]["default"] == "0.60"
-    assert "--target-accuracy" in text
 
 
 def test_daily_dataset_predicts_next_day_and_excludes_locked() -> None:

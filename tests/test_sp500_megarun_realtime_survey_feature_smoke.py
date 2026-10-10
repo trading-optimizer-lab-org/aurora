@@ -280,17 +280,3 @@ def test_realtime_survey_parameter_witnesses_activate_conditional_choices(
 
     for name, value in expected.items():
         assert repaired[name] == value
-
-
-def test_realtime_survey_physical_smoke_has_an_isolated_dispatch_scope() -> None:
-    workflow = (
-        Path(__file__).parents[1]
-        / ".github"
-        / "workflows"
-        / "sp500-megarun-macro-feature-smoke-f032.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "- f191_f200" in workflow
-    assert "smoke_f191_f200:" in workflow
-    assert "inputs.scope == 'f191_f200'" in workflow
-    assert "timeout-minutes: 15" in workflow

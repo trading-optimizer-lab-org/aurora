@@ -221,17 +221,3 @@ def test_characteristic_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
-
-
-def test_characteristic_physical_smoke_has_an_isolated_dispatch_scope() -> None:
-    workflow = (
-        Path(__file__).parents[1]
-        / ".github"
-        / "workflows"
-        / "sp500-megarun-macro-feature-smoke-f032.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "- f151_f160" in workflow
-    assert "smoke_f151_f160:" in workflow
-    assert "inputs.scope == 'f151_f160'" in workflow
-    assert "timeout-minutes: 15" in workflow

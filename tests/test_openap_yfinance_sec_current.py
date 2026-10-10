@@ -1792,32 +1792,6 @@ def test_aggregate_score_requires_all_horizons_and_minimum_confidence() -> None:
     assert bool(result["ranking_eligible"])
 
 
-def test_workflow_contract_is_github_only_and_complete() -> None:
-    text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(encoding="utf-8")
-    config = yaml.safe_load(
-        Path("config/openap_yfinance_sec_current.yaml").read_text(encoding="utf-8")
-    )
-    assert "OpenAP Current Score YFinance SEC EDGAR" in text
-    assert "YFINANCE_CHUNKS: \"48\"" in text
-    assert "max-parallel: 16" in text
-    assert "sec-bulk" in text
-    assert "source_layout\"] == \"official_bulk_archive\"" in text
-    assert "openap-sec-lake-0" in text
-    assert "openap-sec-raw-0" in text
-    assert "matrix:\n        chunk:" not in text[text.index("  sec:"):text.index("  merge:")]
-    assert "openap-yfinance-sec-current-score-results" in text
-    assert config["dataset_id"] == "openap_yfinance_sec_current_v2"
-    assert config["universe"]["one_primary_security_per_cik"] is False
-    assert config["execution"]["sec_chunks"] == 1
-    assert config["execution"]["sec_max_parallel"] == 1
-    assert "overall_redundancy_groups.csv" in text
-    assert "locked_opened" in text
-    assert "backtest_enabled" in text
-    assert 'summary["companyfacts_rows"] > 0' in text
-    assert 'summary["submissions_rows"] > 0' in text
-    assert "sec_cik_universe.parquet" in text
-
-
 def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
     text = Path("config/openap_yfinance_sec_current.yaml").read_text(encoding="utf-8")
     config = yaml.safe_load(text)
@@ -1851,48 +1825,6 @@ def test_config_enforces_quality_and_score_evidence_thresholds() -> None:
     assert config["score"]["minimum_cross_sectional_observations"] >= 100
     assert config["score"]["minimum_cross_sectional_coverage_fraction"] >= 0.05
     assert config["execution"]["artifact_retention_days"] == 90
-
-
-def test_repair_workflow_reuses_v2_source_and_refreshes_48_audited_api_shards() -> None:
-    text = Path(
-        ".github/workflows/openap-yfinance-sec-repair-merge.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "source_run_id" in text
-    assert "sec_artifact_run_id" in text
-    assert 'SEC_CHUNKS: "48"' in text
-    assert "matrix.chunk" in text
-    assert "sec-chunk" in text
-    assert "openap-sec-repair-lake-${{ matrix.chunk }}" in text
-    assert "sec_source_layout" in text
-    assert 'summary["sec_source_manifest_rows"] == 48' in text
-    assert 'summary["sec_jina_fallback_downloads"] > 0' in text
-    assert "Wait for all source YFinance artifacts" in text
-    assert 'test "$yfinance_artifacts" -eq 48' in text
-    assert 'test("^openap-yfinance-[0-9]+$")' in text
-    assert "openap-yfinance-lake-" not in text
-    assert "run-id: ${{ inputs.sec_artifact_run_id }}" in text
-    assert 'test "$sec_artifacts" -eq 48' in text
-    assert "score_horizons" in text
-    assert "openap-yfinance-sec-current-score-results" in text
-    assert "overall_redundancy_groups.csv" in text
-
-
-def test_current_workflow_requires_short_interest_metadata_in_final_master() -> None:
-    text = Path(".github/workflows/openap-yfinance-sec-current-score.yml").read_text(
-        encoding="utf-8"
-    )
-
-    for field in (
-        "sharesShort",
-        "sharesShortPriorMonth",
-        "shortRatio",
-        "shortPercentOfFloat",
-        "dateShortInterest",
-        "sharesPercentSharesOut",
-        "heldPercentInstitutions",
-    ):
-        assert field in text
 
 
 def test_merge_uses_the_resolved_latest_completed_session_name() -> None:

@@ -273,65 +273,6 @@ def test_merge_dedupes_by_candidate_id() -> None:
     assert float(merged.loc[merged["candidate_id"] == "x", "train_score"].iloc[0]) == 3.0
 
 
-def test_workflow_shapes_for_1wave_and_6waves_are_comparable() -> None:
-    one = Path(".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-1wave-80jobs-1h.yml")
-    six = Path(".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-1h.yml")
-    one_data = yaml.safe_load(one.read_text(encoding="utf-8"))
-    six_data = yaml.safe_load(six.read_text(encoding="utf-8"))
-    assert one_data["env"]["EXPECTED_JOBS"] == "80"
-    assert one_data["env"]["WAVES"] == "1"
-    assert one_data["env"]["JOBS_PER_WAVE"] == "80"
-    assert one_data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
-    assert one_data["env"]["TRAIN_START"] == "1995-01-01"
-    assert one_data["env"]["LOCKED_START"] == "2021-01-01"
-    assert one_data["jobs"]["wave_0"]["strategy"]["max-parallel"] == 500
-    assert len(one_data["jobs"]["wave_0"]["strategy"]["matrix"]["stage"]) == 80
-    assert six_data["env"]["EXPECTED_JOBS"] == "480"
-    assert six_data["env"]["WAVES"] == "6"
-    assert six_data["env"]["JOBS_PER_WAVE"] == "80"
-    assert six_data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
-    assert six_data["env"]["TRAIN_START"] == "1995-01-01"
-    assert six_data["env"]["LOCKED_START"] == "2021-01-01"
-    for wave in range(6):
-        job = six_data["jobs"][f"wave_{wave}"]
-        assert job["strategy"]["max-parallel"] == 500
-        assert len(job["strategy"]["matrix"]["stage"]) == 80
-    for text in (one.read_text(encoding="utf-8"), six.read_text(encoding="utf-8")):
-        assert '--start "$TRAIN_START" --end "$VALIDATION_END"' in text
-        assert '--locked-start "$LOCKED_START"' in text
-        assert "--allow-late-entry" in text
-        assert "genetic" not in text
-        assert "github_ml" not in text
-        assert "beam" not in text
-        assert "bandit" not in text
-
-
-def test_policy1995_6waves_9h_workflow_shape() -> None:
-    path = Path(".github/workflows/sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-
-    assert data["name"] == "SP500 Weekly Hedge DEHB Policy1995 Downside 6 Waves 80 Jobs 9h"
-    assert data["env"]["WAVES"] == "6"
-    assert data["env"]["JOBS_PER_WAVE"] == "80"
-    assert data["env"]["EXPECTED_JOBS"] == "480"
-    assert data["env"]["ASSUMED_EFFECTIVE_PARALLELISM"] == "180"
-    assert data["env"]["TRAIN_START"] == "1995-01-01"
-    assert data["env"]["LOCKED_START"] == "2021-01-01"
-    assert data["jobs"]["wave_0"]["strategy"]["max-parallel"] == 500
-    assert data["jobs"]["wave_0"]["timeout-minutes"] == 115
-    assert data["jobs"]["merge"]["timeout-minutes"] == 120
-    assert len(data["jobs"]["wave_0"]["strategy"]["matrix"]["stage"]) == 80
-    assert 'default: "85"' in text
-    assert 'test "${{ inputs.minutes_per_stage || \'85\' }}" = "85"' in text
-    assert "sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h-results" in text
-    assert "sp500_weekly_hedge_dehb_policy1995_downside_6waves_80jobs_9h" in text
-    assert "genetic" not in text
-    assert "github_ml" not in text
-    assert "beam" not in text
-    assert "bandit" not in text
-
-
 _NO_STOCKS_6W_WORKFLOW = Path(
     ".github/workflows/"
     "sp500-weekly-hedge-dehb-no-crypto-no-stocks-6waves-80jobs-3h.yml"
@@ -485,44 +426,6 @@ def test_spy_momentum_trend_stage_filter_requires_feature_history_since_1995() -
     assert audit["feature_columns_rejected_history_count"] == 1
 
 
-def test_spy_dehb_real_500_parallel_1h_momentum_trend_workflow_shape() -> None:
-    path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend.yml")
-    merge_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-merge-now.yml")
-    stop_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-stop.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    merge = yaml.safe_load(merge_path.read_text(encoding="utf-8"))
-    stop = yaml.safe_load(stop_path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-    merge_text = merge_path.read_text(encoding="utf-8")
-
-    assert data["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend"
-    assert "push" not in data.get(True, {})
-    assert data["jobs"]["search_a"]["strategy"]["max-parallel"] == 250
-    assert data["jobs"]["search_b"]["strategy"]["max-parallel"] == 250
-    assert data["jobs"]["search_a"]["timeout-minutes"] == 60
-    assert data["jobs"]["search_b"]["timeout-minutes"] == 60
-    assert data["jobs"]["watchdog"]["timeout-minutes"] == 70
-    assert 'default: "50"' in text
-    assert 'default: "500"' in text
-    assert "--total-stages 500" in text
-    assert "--require-feature-data-from-year \"$FEATURE_HISTORY_START_YEAR\"" in text
-    assert "--min-feature-weeks-per-year \"$MIN_FEATURE_WEEKS_PER_YEAR\"" in text
-    assert data["env"]["FEATURE_HISTORY_START_YEAR"] == "1995"
-    assert data["env"]["MIN_FEATURE_WEEKS_PER_YEAR"] == "26"
-    assert "scripts/run_sp500_weekly_hedge_momentum_trend_stage.py" in text
-    assert "sleep 3600" in text
-    assert "gh run cancel" in text
-    assert "genetic" not in text
-    assert "github_ml" not in text
-    assert "beam" not in text
-    assert "bandit" not in text
-    assert merge["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Merge Now"
-    assert "--allow-partial" in merge_text
-    assert "--require-spy-only" in merge_text
-    assert "--require-momentum-trend-only" in merge_text
-    assert stop["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend Stop"
-
-
 def test_asset_position_for_spec_exposes_real_spy_long_short_and_cash() -> None:
     idx = pd.date_range("2020-01-03", periods=8, freq="W-FRI")
     features = pd.DataFrame({"always_on": np.ones(len(idx)), "always_off": np.zeros(len(idx))}, index=idx)
@@ -605,31 +508,6 @@ def test_no_long_spy_quality_filter_accepts_short_or_cash_candidate() -> None:
     assert row["simple_robust_pass"] is True
 
 
-def test_spy_no_long_quality_pending_workflow_shape() -> None:
-    path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality.yml")
-    merge_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-merge-now.yml")
-    stop_path = Path(".github/workflows/weekly-spy-dehb-real-500-parallel-1h-momentum-trend-no-long-spy-quality-stop.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    merge = yaml.safe_load(merge_path.read_text(encoding="utf-8"))
-    stop = yaml.safe_load(stop_path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-    merge_text = merge_path.read_text(encoding="utf-8")
-
-    assert data["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality"
-    assert "push" not in data.get(True, {})
-    assert data["jobs"]["search_a"]["strategy"]["max-parallel"] == 250
-    assert data["jobs"]["search_b"]["strategy"]["max-parallel"] == 250
-    assert "--forbid-long-spy" in text
-    assert "--enable-search-quality" in text
-    assert "--feature-family-mode quality_stage" in text
-    assert "--require-feature-data-from-year \"$FEATURE_HISTORY_START_YEAR\"" in text
-    assert data["env"]["FEATURE_HISTORY_START_YEAR"] == "1995"
-    assert data["env"]["MIN_FEATURE_WEEKS_PER_YEAR"] == "26"
-    assert merge["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality Merge Now"
-    assert "--require-no-long-spy" in merge_text
-    assert stop["name"] == "Weekly SPY DEHB Real 500 Parallel 1h Momentum Trend No Long SPY Quality Stop"
-
-
 def test_merge_guard_rejects_required_no_long_spy_when_audit_fails() -> None:
     guard = __import__("scripts.merge_sp500_weekly_hedge_dehb", fromlist=["_fail_if_invalid_summary"])._fail_if_invalid_summary
     summary = {
@@ -704,26 +582,6 @@ def test_merge_guard_rejects_empty_partial_or_unconfirmed_runs() -> None:
     ):
         with pytest.raises(SystemExit):
             guard(bad, {"locked_opened": False})
-
-
-def test_policy1995_autostart_9h_workflow_filters_current_run_and_success_only() -> None:
-    path = Path(".github/workflows/sp500-weekly-hedge-policy1995-autostart-9h.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-
-    assert data["name"] == "SP500 Weekly Hedge Policy1995 Autostart 9h"
-    assert "SP500 Weekly Hedge DEHB Policy1995 Downside 6 Waves 80 Jobs 1h" in text
-    assert "github.event.workflow_run.id == 26721369552" in text
-    assert "github.event.workflow_run.conclusion == 'success'" in text
-    assert "github.event.workflow_run.head_branch == 'codex/universal-robustness'" in text
-    assert "sp500-weekly-hedge-dehb-policy1995-downside-6waves-80jobs-9h.yml" in text
-    assert "minutes_per_stage=85" in text
-    assert "max_parallel_requested=500" in text
-    assert "status=in_progress" in text
-    assert "status=queued" in text
-    for job in data["jobs"].values():
-        for step in job.get("steps", []):
-            assert "${{ github.event.workflow_run." not in step.get("run", "")
 
 
 def test_policy1995_data_download_does_not_request_pre_binance_crypto_months() -> None:

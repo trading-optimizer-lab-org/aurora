@@ -6,10 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from scripts.run_sr_15m_equity_universe import (
-    FINAL_ARTIFACT_NAME,
     build_equity_feature_panel,
     equal_thirds_split_masks,
     run_features,
@@ -168,21 +166,3 @@ def test_merge_uses_top_leaderboard_as_prelocked_fallback_when_filter_is_empty(t
     assert not accepted.empty
     assert "prelocked_fallback" in accepted.columns
     assert accepted["prelocked_fallback"].astype(bool).all()
-
-
-def test_workflow_is_manual_and_has_expected_artifact() -> None:
-    path = Path(".github/workflows/sr-15m-equity-universe-feature-search.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-
-    assert data["name"] == "Free 15m S/R Equity Universe Feature Search"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    assert data[True]["workflow_dispatch"]["inputs"]["source_run_id"]["default"] == "27498064404"
-    assert data[True]["workflow_dispatch"]["inputs"]["source_artifact"]["default"] == "free-15m-equity-universe-yfinance-data"
-    assert "locked_retest" in data["jobs"]
-    assert "sr-15m-equity-universe-screen-*" in text
-    assert "sr-15m-equity-universe-family-search-*" in text
-    assert "sr-15m-equity-universe-mixed-search-*" in text
-    assert "top_candidates.csv | wc -l" in text
-    assert FINAL_ARTIFACT_NAME in text

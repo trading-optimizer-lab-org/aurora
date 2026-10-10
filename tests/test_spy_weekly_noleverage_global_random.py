@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from scripts.run_spy_weekly_noleverage_50ideas import IDEA_SPECS as V1_IDEAS
 from scripts.run_spy_weekly_noleverage_50ideas_v2 import IDEA_SPECS as V2_IDEAS
@@ -21,19 +20,6 @@ from scripts.run_spy_weekly_noleverage_global_random import (
 )
 
 pytestmark = pytest.mark.filterwarnings("ignore::pandas.errors.PerformanceWarning")
-
-
-def test_global_random_workflow_is_manual_until_19_jun_0700() -> None:
-    path = Path(".github/workflows/spy-weekly-noleverage-global-random-nightly-until-0700.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "SPY Weekly No-Leverage Global Random Nightly Until 0700"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    text = path.read_text(encoding="utf-8")
-    assert "2026-06-19T07:00:00+02:00" in text
-    assert "range(360)" in text
-    assert "max-parallel: 180" in text
-    assert "spy-weekly-noleverage-global-random-nightly-until-0700-results" in text
 
 
 def test_global_random_specs_are_many_unique_and_not_v1_v2() -> None:

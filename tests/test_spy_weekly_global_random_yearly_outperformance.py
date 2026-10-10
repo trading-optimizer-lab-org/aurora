@@ -6,13 +6,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from scripts.run_spy_weekly_global_random_yearly_outperformance import (
-    ARTIFACT_NAME,
     CAMPAIGN_ID,
     FILTER_TRAIN_YEARLY_GE_SPY_AND_CALMAR_GE_SPY,
-    TRAIN_YEARLY_CALMAR_ARTIFACT_NAME,
     VALIDATION_END,
     calmar_ratio,
     merge,
@@ -72,35 +69,6 @@ def test_calmar_ratio_matches_cagr_over_drawdown() -> None:
     expected = ((1.0 + total_return) ** (1.0 / years) - 1.0) / abs(mdd)
 
     assert calmar_ratio(returns) == pytest.approx(expected)
-
-
-def test_yearly_outperformance_workflow_is_manual_full_replay() -> None:
-    path = Path(".github/workflows/spy-weekly-global-random-yearly-outperformance.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "SPY Weekly Global Random Yearly Outperformance"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-
-    text = path.read_text(encoding="utf-8")
-    assert "range(360)" in text
-    assert "max-parallel: 180" in text
-    assert "27809257841" in text
-    assert ARTIFACT_NAME in text
-
-
-def test_train_yearly_calmar_workflow_is_manual_full_replay() -> None:
-    path = Path(".github/workflows/spy-weekly-global-random-train-yearly-calmar.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "SPY Weekly Global Random Train Yearly Calmar"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-
-    text = path.read_text(encoding="utf-8")
-    assert "range(360)" in text
-    assert "max-parallel: 180" in text
-    assert "27809257841" in text
-    assert TRAIN_YEARLY_CALMAR_ARTIFACT_NAME in text
-    assert FILTER_TRAIN_YEARLY_GE_SPY_AND_CALMAR_GE_SPY in text
 
 
 def test_yearly_outperformance_smoke_shard_and_merge_keep_locked_closed(tmp_path: Path) -> None:

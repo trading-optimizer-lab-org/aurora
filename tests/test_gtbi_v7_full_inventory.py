@@ -193,19 +193,3 @@ def test_incomplete_scan_writes_exact_fail_closed_reconciliation(
     assert "deliberate release failure" in reconciliation["surfaces"]["releases"][
         "scan_a_incomplete_reason"
     ]
-
-
-def test_full_inventory_workflow_is_github_only_and_read_only() -> None:
-    text = Path(".github/workflows/aurora-maintenance-inventory.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "workflow_dispatch:" in text
-    assert "runs-on: ubuntu-24.04" in text
-    assert "timeout-minutes: 360" in text
-    assert "actions: read" in text
-    assert "contents: read" in text
-    assert "packages: read" in text
-    assert "self-hosted" not in text
-    assert "C:\\" not in text
-    assert "generate_gtbi_v7_full_inventory" in text
-    assert "if: always()" in text

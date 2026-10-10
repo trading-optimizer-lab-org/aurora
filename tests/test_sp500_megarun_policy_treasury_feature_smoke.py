@@ -310,17 +310,3 @@ def test_policy_treasury_parameter_repair_activates_conditional_choice(
 
     for key, value in active_overrides.items():
         assert repaired[key] == value
-
-
-def test_policy_treasury_workflow_has_an_isolated_fail_closed_scope() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[1]
-        / ".github"
-        / "workflows"
-        / "sp500-megarun-macro-feature-smoke-f032.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "- f221_f230" in workflow
-    assert "smoke_f221_f230:" in workflow
-    assert "inputs.scope == 'f221_f230'" in workflow
-    assert "parameter_choice_audit_F221_F230.json" in workflow

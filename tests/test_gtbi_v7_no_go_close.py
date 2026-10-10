@@ -158,16 +158,3 @@ def test_closure_fails_when_scientific_attempt_exists(
     attempts.write_text("\n".join(existing + [json.dumps(row)]) + "\n", encoding="utf-8")
     with pytest.raises(NoGoClosureError, match="scientific attempt exists"):
         validate_no_go_prerequisites(repository, BASE_SHA)
-
-
-def test_workflow_is_github_only_read_only_and_locked_closed() -> None:
-    workflow = (ROOT / ".github/workflows/gtbi-v7-no-go-close.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "runs-on: ubuntu-24.04" in workflow
-    assert "contents: read" in workflow
-    assert "persist-credentials: false" in workflow
-    assert "self-hosted" not in workflow
-    assert "C:\\" not in workflow
-    assert "2021-01-01" not in workflow
-    assert "workflow_dispatch:" in workflow

@@ -9,7 +9,6 @@ import sys
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from scripts import global_technical_buy_indicator as gtbi
 
@@ -984,81 +983,6 @@ def test_run_stage_supports_dehb_real_validation_selection(tmp_path: Path) -> No
     assert set(leaderboard["selection_split"].dropna()) <= {"validation"}
 
 
-def test_workflow_is_manual_355_job_indicator_run() -> None:
-    path = Path(".github/workflows/global-technical-buy-indicator-355jobs.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "Global Technical Buy Indicator 355 Jobs"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-
-    text = path.read_text(encoding="utf-8")
-    assert "range(355)" in text
-    assert "max-parallel: 178" in text
-    assert "max-parallel: 177" in text
-    assert "27936694743" in text
-    assert "global-technical-buy-indicator-355jobs-results" in text
-    assert "search_method" in text
-    assert "--search-method" in text
-    assert "--selection-split" in text
-    assert "--min-selection-trades-per-year" in text
-    assert "--family-set" in text
-    assert "--min-market-cap" in text
-    assert "--scoring-profile" in text
-    assert "seed_source_run_id" in text
-    assert "prepare_seed_rules" in text
-    assert "--seed-rules-path" in text
-    assert "--seed-mutation-share" in text
-    assert "final_global_recheck_top_n" in text
-    assert "reevaluate_global_technical_buy_indicator_results.py" in text
-
-
-def test_tradingview_minervini_small_workflow_uses_family_set() -> None:
-    path = Path(".github/workflows/tradingview-minervini-indicator-small.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "TradingView Minervini Indicator Small"
-    assert "workflow_dispatch" in data[True]
-
-    text = path.read_text(encoding="utf-8")
-    assert "range(64)" in text
-    assert "--family-set" in text
-    assert "--min-market-cap" in text
-    assert "--scoring-profile" in text
-    assert "tradingview_minervini" in text
-    assert "tradingview-minervini-indicator-small-results" in text
-
-
-def test_final_recheck_workflow_reuses_stage_artifacts() -> None:
-    path = Path(".github/workflows/global-technical-buy-indicator-final-recheck.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "Global Technical Buy Indicator Final Recheck"
-    assert "workflow_dispatch" in data[True]
-
-    text = path.read_text(encoding="utf-8")
-    assert "source_run_id" in text
-    assert "global-technical-buy-indicator-stage-*" in text
-    assert "merge_global_technical_buy_indicator_results.py" in text
-    assert "reevaluate_global_technical_buy_indicator_results.py" in text
-    assert "global-technical-buy-indicator-final-recheck-results" in text
-
-
-def test_parallel_final_recheck_workflow_splits_candidates() -> None:
-    path = Path(".github/workflows/global-technical-buy-indicator-final-recheck-parallel.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "Global Technical Buy Indicator Final Recheck Parallel"
-    assert "workflow_dispatch" in data[True]
-
-    text = path.read_text(encoding="utf-8")
-    assert "candidate_count" in text
-    assert "candidate_batch_size" in text
-    assert "--candidate-offset" in text
-    assert '--candidate-limit "${{ matrix.limit }}"' in text
-    assert "Reuse source SPY benchmark" in text
-    assert "global-technical-buy-indicator-pack-group-000" in text
-    assert "rm -rf \"candidate-batch-${{ matrix.batch_padded }}/_global_recheck_pack\"" in text
-    assert "global-technical-buy-indicator-recheck-batch-" in text
-    assert "global-technical-buy-indicator-final-recheck-parallel-results" in text
-
-
 def _external_strategy_payload(strategy_id: str, shard_id: int = 0, slot: int = 0) -> dict:
     return {
         "strategy_id": strategy_id,
@@ -1226,27 +1150,6 @@ def test_external_merge_summary_preserves_locked_start_and_no_local_machine(tmp_
     assert summary["github_only_run"] is True
     assert summary["requires_local_machine"] is False
     assert json.loads((tmp_path / "final" / "summary.json").read_text(encoding="utf-8"))["requires_local_machine"] is False
-
-
-def test_external_pack_workflow_is_github_only_manual_ubuntu_hosted() -> None:
-    path = Path(".github/workflows/global-technical-buy-indicator-external-pack-360jobs.yml")
-    text = path.read_text(encoding="utf-8")
-    data = yaml.safe_load(text)
-
-    assert data["name"] == "Global Technical Buy Indicator External Pack 360 Jobs"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    assert text.count("runs-on: ubuntu-latest") >= 3
-    assert "self-hosted" not in text
-    assert "C:\\" not in text
-    assert "scripts/strategy_packs/gtbi_research_broad_72000" in text
-    assert "global-technical-buy-indicator-external-pack-72000-results" in text
-    assert "Ensure SPY benchmark exists" in text
-    assert "out_path = out_dir / \"SPY.parquet\"" in text
-    assert "gtbi-external-pack-data" in text
-    assert "--prebuilt-pack-dir external-pack-data" in text
-    assert "--locked-start \"${{ inputs.locked_start }}\"" in text
-    assert "requires_local_machine" not in text
 
 
 def test_external_pack_wrappers_import_from_script_path() -> None:

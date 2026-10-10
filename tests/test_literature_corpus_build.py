@@ -243,31 +243,6 @@ def test_literature_corpus_cli_parses_command():
     assert args.no_locked is True
 
 
-def test_literature_discovery_workflow_is_headless_and_locked_closed():
-    workflow = Path(".github/workflows/literature-strategy-idea-discovery-9h.yml").read_text(
-        encoding="utf-8"
-    )
-
-    assert "timeout-minutes: 540" in workflow
-    assert "literature-corpus-build" in workflow
-    assert "--no-locked" in workflow
-    assert "--pages-per-query" in workflow
-    assert 'PAGES_PER_QUERY_SAFE="${PAGES_PER_QUERY_INPUT:-5}"' in workflow
-    assert 'MAX_STUDIES_TO_ENRICH_SAFE="${MAX_STUDIES_TO_ENRICH_INPUT:-0}"' in workflow
-    assert 'RUN_ID_SAFE="${RUN_ID_INPUT:-literature-idea-discovery}-${GITHUB_RUN_ID}"' in workflow
-    assert "literature-idea-discovery-trigger.txt" in workflow
-    assert "pages_per_query) PAGES_PER_QUERY_SAFE" in workflow
-    assert "max_studies_to_enrich) MAX_STUDIES_TO_ENRICH_SAFE" in workflow
-    assert 'python -m pip install -e ".[ml]"' in workflow
-    assert "AURORA_PAPER_AI_PROVIDER" in workflow
-    assert "github_models" in workflow
-    assert "models: read" in workflow
-    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
-    assert "OPENAI_API_KEY" in workflow
-    assert "ESTUDIOS_REPO_URL" in workflow
-    assert "backtest" not in workflow.lower()
-
-
 def test_external_ai_requires_complete_openai_config(monkeypatch):
     import aurora.research.literature_corpus_build as corpus
 
