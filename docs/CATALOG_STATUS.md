@@ -67,10 +67,16 @@ All removed files remain in git history before this change.
 The engine expects a sealed plan that the removed controller used to produce,
 so it cannot be launched as-is. A new catalog run needs a small
 `workflow_dispatch` entry point that builds the plan and calls
-`catalog-optimized-run.yml`. The campaign definition manifests under
-`config/catalog_campaign_definitions/` include the removed controller
-workflow in their provenance closure, so they must be regenerated too. Build
-that only when there is a genuinely new catalog to evaluate.
+`catalog-optimized-run.yml`. Preparation (`catalog-prepare-one.yml` via
+`scripts/prepare_catalog_campaign.py`) also fails today:
+`PROTOCOL_COMMON_PATHS` in `infra/sp500_megarun/catalog_execution_protocol.py`
+still lists the seven removed files (the live-controls action and the
+ledger-guard, fast-controller, prepare, reconciler, run-controller and
+watchdog workflows), so `execution_protocol_sha256()` raises
+`CATALOG_EXECUTION_PROTOCOL_FILE_INVALID`. Update that list as part of the new
+entry point; it changes the execution protocol hash. The campaign definition
+manifests do not reference the removed workflows. Build all of this only when
+there is a genuinely new catalog to evaluate.
 
 The frozen train runtime input pack
 (`sp500-megarun-dehb-runtime-inputs-31418682679`) and its feature smoke
