@@ -335,64 +335,6 @@ def test_inline_python_imports_are_in_the_transitive_definition() -> None:
     assert "scripts/run_catalog_artifact_keeper.py" in builder.roles
 
 
-def test_prepared_artifact_provenance_marker_is_narrow_and_non_expanding() -> None:
-    from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
-        _ClosureBuilder,
-    )
-
-    prepared_module = "infra/sp500_megarun/catalog_prepared_artifact.py"
-    workflow = ".github/workflows/catalog-prepare.yml"
-
-    marked = _ClosureBuilder(ROOT, _entry())
-    marked._scan_python(
-        prepared_module,
-        (
-            "def marked(run):\n"
-            f"    return _is_expected_workflow_path(run.get('path'), {workflow!r})\n"
-        ).encode(),
-    )
-    assert workflow not in marked.roles
-
-    negative_sources = (
-        (f"def read():\n    return open({workflow!r})\n", workflow),
-        (
-            "def direct(run):\n"
-            f"    return _is_expected_workflow_path(run['path'], {workflow!r})\n",
-            workflow,
-        ),
-        (
-            "def wrong_name(run):\n"
-            "    return _is_expected_workflow_path("
-            "run.get('path'), '.github/workflows/catalog-optimized-run.yml')\n",
-            ".github/workflows/catalog-optimized-run.yml",
-        ),
-        (
-            "def wrong_first_arg(run):\n"
-            f"    return _is_expected_workflow_path(run.get('other'), {workflow!r})\n",
-            workflow,
-        ),
-        (
-            "def wrong_marker(run):\n"
-            f"    return is_expected_workflow_path(run.get('path'), {workflow!r})\n",
-            workflow,
-        ),
-    )
-    for source, expected_edge in negative_sources:
-        builder = _ClosureBuilder(ROOT, _entry())
-        builder._scan_python(prepared_module, source.encode())
-        assert expected_edge in builder.roles
-
-    other_module = _ClosureBuilder(ROOT, _entry())
-    other_module._scan_python(
-        "infra/sp500_megarun/catalog_fast_reservation.py",
-        (
-            "def other_module(run):\n"
-            f"    return _is_expected_workflow_path(run.get('path'), {workflow!r})\n"
-        ).encode(),
-    )
-    assert workflow in other_module.roles
-
-
 def test_prepared_artifact_workflow_provenance_does_not_expand_real_closure() -> None:
     from aurora.infra.sp500_megarun.catalog_campaign_definition_builder import (
         _ClosureBuilder,

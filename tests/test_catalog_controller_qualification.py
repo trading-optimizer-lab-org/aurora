@@ -412,6 +412,21 @@ def test_cat_020_enforced() -> None:
     _assert_scenario("Q-012")
 
 
+def test_cat_021_enforced() -> None:
+    # Q-035 asserted the retired controller topology; check the pinning
+    # rule directly on the remaining catalog and Atlas workflows instead.
+    uses = re.compile(r"^\s*(?:-\s*)?uses:\s*['\"]?([^'\"\s#]+)", re.MULTILINE)
+    pinned = re.compile(r"[^@]+@[0-9a-f]{40}")
+    for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+        if "catalog" not in path.name and "atlas" not in path.name:
+            continue
+        external = [
+            ref for ref in uses.findall(path.read_text(encoding="utf-8"))
+            if not ref.startswith("./")
+        ]
+        assert all(pinned.fullmatch(ref) for ref in external), path.name
+
+
 def test_cat_022_enforced() -> None:
     _assert_scenario("Q-074")
 
