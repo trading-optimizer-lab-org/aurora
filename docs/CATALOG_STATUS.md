@@ -2,8 +2,8 @@
 
 **Status: FROZEN (2026-10-10).** The request, controller and governance
 workflows were removed, so no catalog run can be requested or launched. The
-evaluation engine workflows are kept, dormant. `catalog-prepare` only runs on
-manual dispatch. The campaign registry is unchanged (its `active` flags are
+evaluation engine workflows are kept, dormant. `catalog-prepare` (which ran
+on every push to `main`) was removed. The campaign registry is unchanged (its `active` flags are
 read by the engine's unit tests), but nothing consumes it to start a run.
 
 ## Why it was frozen
@@ -57,8 +57,7 @@ All removed files remain in git history before this change.
 
 - Engine: `catalog-optimized-run`, `catalog-optimized-worker`,
   `catalog-component-worker`, `catalog-recovery-wave`,
-  `catalog-optimized-verify-only`, `catalog-prepare` (manual only),
-  `catalog-prepare-one`, `catalog-atlas-prepare-one`, reference oracle and
+  `catalog-optimized-verify-only`, `catalog-prepare-one`, `catalog-atlas-prepare-one`, reference oracle and
   worker, determinism and equivalence diagnostics, `sp500-atlas-*`.
 - Python code under `infra/sp500_megarun/` and `scripts/`, with its unit tests.
 - Catalog definitions under `config/sp500_megarun_strategy_catalog_v1/`.

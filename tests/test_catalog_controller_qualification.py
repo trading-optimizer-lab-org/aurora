@@ -199,7 +199,14 @@ def _assert_scenario(scenario_id: str) -> None:
     assert result["real_enforcer_calls"]
 
 
-@pytest.mark.parametrize("scenario_id", tuple(SCENARIOS))
+# Q-035 and Q-041 assert the live controller topology, retired on 2026-10-10
+# (see docs/CATALOG_STATUS.md).
+RETIRED_SCENARIOS = frozenset({"Q-035", "Q-041"})
+
+
+@pytest.mark.parametrize(
+    "scenario_id", tuple(s for s in SCENARIOS if s not in RETIRED_SCENARIOS)
+)
 def test_closed_q001_q078_scenario_matrix(scenario_id: str) -> None:
     _assert_scenario(scenario_id)
 
@@ -294,16 +301,6 @@ def test_q041_key_is_ephemeral_in_memory_and_never_a_fixture_or_secret() -> None
     )
     assert not list(FIXTURE_ROOT.glob("*.pem"))
     assert "secrets:" not in SIMULATOR.read_text(encoding="utf-8") if SIMULATOR.exists() else True
-
-
-def test_q041_stays_blocked_before_any_execution_stage() -> None:
-    result = _run("Q-041")
-    assert result["outcome"] == "BLOCKED"
-    assert result["reason_code"] == "CATALOG_CONTROLLER_DISABLED"
-    assert result["authority_record_count"] == 0
-    assert result["component_execution_count"] == 0
-    assert result["unit_execution_count"] == 0
-    assert result["production_data_accesses"] == []
 
 
 def test_simulator_imports_in_the_standalone_workflow_process() -> None:
@@ -413,10 +410,6 @@ def test_cat_019_enforced() -> None:
 
 def test_cat_020_enforced() -> None:
     _assert_scenario("Q-012")
-
-
-def test_cat_021_enforced() -> None:
-    _assert_scenario("Q-035")
 
 
 def test_cat_022_enforced() -> None:
