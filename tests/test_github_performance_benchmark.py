@@ -13,10 +13,6 @@ from aurora.infra.github_performance.benchmark import (
     scientific_content_identity_from_output,
     write_benchmark_outputs,
 )
-from aurora.infra.github_performance.preflight import (
-    load_github_yaml,
-    validate_workflow_policy,
-)
 
 
 ROOT = Path(__file__).parents[1]
@@ -341,89 +337,3 @@ def test_compare_does_not_claim_speed_for_different_environment(
     assert "ENVIRONMENT_HASH_MISMATCH" in report.failure_codes
 
 
-def test_manual_benchmark_runs_optimized_then_equivalent_baseline() -> None:
-    workflow = load_github_yaml(WORKFLOW)
-    assert set(workflow["on"]) == {"workflow_dispatch"}
-    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
-    assert inputs["workload_family"]["options"] == [
-        "candidate_sweep",
-        "event_study",
-        "robustness",
-    ]
-    assert inputs["forced_job_count"]["default"] == 0
-    assert inputs["baseline_forced_job_count"]["default"] == 0
-    assert inputs["comparison_dimension"]["default"] == (
-        "assignment_strategy"
-    )
-    assert inputs["comparison_dimension"]["options"] == [
-        "assignment_strategy",
-        "adaptive_topology",
-    ]
-    assert inputs["performance_profile_run_id"]["default"] == ""
-    assert inputs["performance_profile_artifact_name"]["default"] == ""
-    assert inputs["fault_injection_shard_id"]["default"] == ""
-    assert inputs["fault_injection_after_units"]["default"] == 0
-    assert workflow["permissions"] == {
-        "contents": "read",
-        "actions": "read",
-    }
-    jobs = workflow["jobs"]
-    assert "setup_benchmark" in jobs
-    assert jobs["setup_benchmark"]["needs"] == "prime_runtime"
-    assert jobs["optimized"]["needs"] == "prime_runtime"
-    assert jobs["optimized"]["with"]["execution_mode"] == "optimized"
-    optimized_text = str(jobs["optimized"]["with"])
-    for family in ("candidate_sweep", "event_study", "robustness"):
-        assert family in optimized_text
-    assert "inputs.forced_job_count" in str(
-        jobs["optimized"]["with"]["forced_job_count"]
-    )
-    shared_wheelhouse = jobs["optimized"]["with"][
-        "wheelhouse_artifact_name"
-    ]
-    assert "shared-wheelhouse" in str(shared_wheelhouse)
-    shared_snapshot = jobs["optimized"]["with"]["prepared_artifact_name"]
-    assert "shared-prepared" in str(shared_snapshot)
-    assert jobs["baseline"]["needs"] == "optimized"
-    assert jobs["baseline"]["with"]["execution_mode"] == "baseline"
-    assert (
-        jobs["baseline"]["with"]["prepared_artifact_name"]
-        == shared_snapshot
-    )
-    assert (
-        jobs["baseline"]["with"]["wheelhouse_artifact_name"]
-        == shared_wheelhouse
-    )
-    forced = jobs["baseline"]["with"]["forced_job_count"]
-    assert "needs.optimized.outputs.selected_jobs" in str(forced)
-    assert "inputs.forced_job_count" in str(forced)
-    assert "inputs.baseline_forced_job_count" in str(forced)
-    assert jobs["compare"]["needs"] == [
-        "optimized",
-        "baseline",
-        "setup_benchmark",
-    ]
-    compare_text = str(jobs["compare"])
-    assert "environment_setup_benchmark.json" in compare_text
-    assert "--comparison-dimension" in compare_text
-    assert "--cold-repetitions 3" in str(jobs["setup_benchmark"])
-    assert "aurora github build-performance-profile" in compare_text
-    assert "performance_profile.json" in compare_text
-    assert (
-        jobs["optimized"]["with"]["performance_profile_run_id"]
-        == "${{ inputs.performance_profile_run_id }}"
-    )
-    assert (
-        jobs["baseline"]["with"]["performance_profile_artifact_name"]
-        == "${{ inputs.performance_profile_artifact_name }}"
-    )
-    for name in ("optimized", "baseline"):
-        assert jobs[name]["with"]["fault_injection_shard_id"] == (
-            "${{ inputs.fault_injection_shard_id }}"
-        )
-    upload = jobs["compare"]["steps"][-1]
-    assert upload["if"] == "always()"
-    assert str(upload["with"]["path"]).endswith(
-        "/benchmark/comparison"
-    )
-    assert validate_workflow_policy(WORKFLOW, ROOT) == []

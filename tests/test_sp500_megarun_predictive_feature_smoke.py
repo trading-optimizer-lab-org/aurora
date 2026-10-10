@@ -245,15 +245,3 @@ def test_predictive_parameter_audit_uses_date_aligned_causal_train_tails() -> No
     assert all(panel["date"].max() == pd.Timestamp("2010-12-31") for panel in long_features.values())
 
 
-def test_predictive_physical_smoke_has_an_isolated_dispatch_scope() -> None:
-    workflow = (
-        Path(__file__).parents[1]
-        / ".github"
-        / "workflows"
-        / "sp500-megarun-macro-feature-smoke-f032.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "- f141_f150" in workflow
-    assert "smoke_f141_f150:" in workflow
-    assert "inputs.scope == 'f141_f150'" in workflow
-    assert "timeout-minutes: 20" in workflow

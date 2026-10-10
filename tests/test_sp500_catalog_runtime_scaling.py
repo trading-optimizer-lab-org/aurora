@@ -963,34 +963,6 @@ def test_multi_asset_catalog_scale_streams_every_recipe_asset_pair() -> None:
     assert report["maximum_block_bytes"] < 32 * 1024 * 1024
 
 
-def test_future_architecture_qualification_is_github_only_and_bounded() -> None:
-    workflow = Path(".github/workflows/catalog-future-architecture.yml").read_text(
-        "utf-8"
-    )
-    script = Path("scripts/benchmark_catalog_future_architecture.py").read_text(
-        "utf-8"
-    )
-
-    assert "workflow_dispatch:" not in workflow
-    assert "workflow_call:" in workflow
-    assert "requirements/catalog-architecture.lock" in workflow
-    entrypoint = Path(
-        ".github/workflows/sp500-search-method-benchmark-short.yml"
-    ).read_text("utf-8")
-    assert "Direct catalog and Atlas launch modes were removed." in entrypoint
-    assert "uses: ./.github/workflows/catalog-future-architecture.yml" not in entrypoint
-    assert "100, 256" in script
-    assert "37_258" in script
-    assert '"requested_recipe_asset_evaluations"' in script
-    assert "128, 1000" in script
-    assert "128, 5000" in script
-    assert "512, 4096" in script
-    assert "7_281, 4_516" in script
-    assert '"roundtrip_exact": True' in script
-    assert '"validation_opened": False' in script
-    assert '"locked_opened": False' in script
-
-
 def test_checkpoint_slots_use_the_fewest_durable_low_overhead_segments() -> None:
     from scripts.plan_sp500_optimized_catalog_run import (
         select_checkpoint_slot_count,

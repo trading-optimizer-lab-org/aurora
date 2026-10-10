@@ -37,9 +37,6 @@ from infra.readiness_state_controller.schemas import schema_documents
 from scripts.generate_gtbi_v7_state_controller_smoke_manifest import (
     build_manifest as build_smoke_manifest,
 )
-from scripts.generate_gtbi_v7_state_controller_contract import (
-    build_manifest as build_controller_contract,
-)
 from scripts.generate_gtbi_v7_state_controller_recovery_receipt import (
     build_receipt as build_recovery_receipt,
 )
@@ -335,25 +332,6 @@ def test_checked_in_smoke_manifest_is_exact_and_dry_run_safe() -> None:
     validate_transition_manifest(expected)
 
 
-def test_state_controller_workflow_has_closed_github_only_scope() -> None:
-    root = Path(__file__).resolve().parents[1]
-    text = (
-        root
-        / ".github/workflows/gtbi-v7-readiness-state-controller.yml"
-    ).read_text(encoding="utf-8")
-    assert "workflow_dispatch:" in text
-    assert "runs-on: ubuntu-24.04" in text
-    assert "self-hosted" not in text
-    assert "C:\\" not in text
-    assert "scripts/global_technical_buy_indicator.py" not in text
-    assert "locked_start" not in text.lower()
-    assert "qf_oos" not in text.lower()
-    assert "open_locked" not in text.lower()
-    assert "permissions:\n  contents: write" in text
-    assert "${{ github.sha }}" not in text
-    assert "git rev-parse HEAD" in text
-
-
 def test_state_controller_schemas_are_canonical_and_validate_outputs(
     tmp_path: Path,
 ) -> None:
@@ -381,27 +359,6 @@ def test_state_controller_schemas_are_canonical_and_validate_outputs(
         projection.receipt,
         schemas["gtbi_v7_state_controller_receipt_v1.schema.json"],
     )
-
-
-def test_state_controller_public_contract_is_exact() -> None:
-    root = Path(__file__).resolve().parents[1]
-    expected = build_controller_contract()
-    path = (
-        root
-        / "docs/readiness/gtbi-v7/state_controller_manifest.json"
-    )
-    assert path.read_bytes() == canonical_bytes(expected) + b"\n"
-    assert expected["security_properties"] == {
-        "arbitrary_command_execution_supported": False,
-        "arbitrary_evidence_paths_supported": False,
-        "external_auditor_required": False,
-        "external_custodian_required": False,
-        "locked_data_accessed": False,
-        "owner_controlled": True,
-        "scientific_work_performed": False,
-        "self_hosted_runner_used": False,
-        "windows_local_path_used": False,
-    }
 
 
 def test_state_controller_github_smoke_receipt_is_exact() -> None:

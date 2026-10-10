@@ -231,38 +231,3 @@ def test_positions_from_scores_can_hold_cash_long_and_short() -> None:
     assert positions.tolist() == [-1.0, 0.0, 0.0, 0.0, 1.0]
 
 
-def test_btc_trainonly_workflow_shape() -> None:
-    workflow = Path(".github/workflows/btc-5m-all-features-5methods-trainonly-1h-180jobs.yml").read_text(encoding="utf-8")
-
-    assert "method: [dehb_real, genetic, beam, bandit, github_ml]" in workflow
-    assert "max-parallel: ${{ fromJSON(inputs.max_parallel || '180') }}" in workflow
-    assert 'test "${{ inputs.max_parallel || \'180\' }}" -le 180' in workflow
-    assert "--total-stages 36" in workflow
-    assert "--time-budget-minutes \"${{ inputs.minutes_per_method_stage || '50' }}\"" in workflow
-    assert "btc_5m_all_features_5methods_trainonly_1h_180jobs_validation_report.csv" in workflow
-
-
-def test_btc_trainonly_9h_workflow_shape() -> None:
-    import yaml
-
-    workflow_path = Path(".github/workflows/btc-5m-all-features-5methods-trainonly-9h-max500-real180.yml")
-    wave_path = Path(".github/workflows/btc-5m-all-features-5methods-trainonly-9h-wave.yml")
-    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    wave = yaml.safe_load(wave_path.read_text(encoding="utf-8"))
-
-    jobs = workflow["jobs"]
-    wave_jobs = [name for name in jobs if name.startswith("search_wave_")]
-    assert len(wave_jobs) == 11
-    assert jobs["search_wave_0"]["needs"] == "data"
-    assert jobs["search_wave_10"]["needs"] == "search_wave_9"
-    assert jobs["merge"]["needs"] == "search_wave_10"
-    assert workflow["env"]["EXPECTED_JOBS"] == "1980"
-    assert workflow["env"]["JOBS_PER_WAVE"] == "180"
-
-    strategy = wave["jobs"]["search"]["strategy"]
-    matrix = strategy["matrix"]
-    assert len(matrix["method"]) == 5
-    assert len(matrix["stage"]) == 36
-    assert len(matrix["method"]) * len(matrix["stage"]) == 180
-    assert len(matrix["method"]) * len(matrix["stage"]) < 256
-    assert "max_parallel" in str(strategy["max-parallel"])

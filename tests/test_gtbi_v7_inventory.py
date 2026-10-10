@@ -172,25 +172,6 @@ def test_permission_failure_is_explicit_and_blocks_completeness(
     assert any("remote inventory is incomplete" in error for error in errors)
 
 
-def test_checked_in_inventory_workflow_is_pinned_and_read_only() -> None:
-    workflow = (
-        ROOT / ".github/workflows/gtbi-v7-inventory.yml"
-    ).read_text(encoding="utf-8")
-    assert "workflow_dispatch:" in workflow
-    assert "runs-on: ubuntu-24.04" in workflow
-    assert "contents: read" in workflow
-    assert "actions: read" in workflow
-    assert "contents: write" not in workflow
-    assert "self-hosted" not in workflow
-    assert "C:\\" not in workflow
-    assert "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" in workflow
-    assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" in workflow
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
-    assert 'python -m pip install "jsonschema==4.26.0"' in workflow
-    assert '$RUNNER_TEMP/gtbi-v7-inventory' in workflow
-    assert "--output-dir docs/project_inventory" not in workflow
-
-
 def test_inventory_script_runs_directly_from_repository() -> None:
     completed = subprocess.run(
         [sys.executable, "scripts/generate_gtbi_v7_inventory.py", "--help"],

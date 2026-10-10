@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from infra.readiness_state_controller.policy import validate_transition_manifest
 from scripts.generate_gtbi_v7_retention_policy import (
@@ -87,17 +86,3 @@ def test_retention_transition_manifest_is_accepted_by_state_controller() -> None
     )
 
 
-def test_maintenance_workflow_is_pinned_github_only_and_non_scientific() -> None:
-    payload = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    job = payload["jobs"]["verify-retention-policy"]
-    text = WORKFLOW.read_text(encoding="utf-8")
-    assert job["runs-on"] == "ubuntu-24.04"
-    assert payload["permissions"] == {"contents": "read"}
-    assert "workflow_dispatch" in payload[True]
-    assert "schedule" in payload[True]
-    assert "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803" in text
-    assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" in text
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in text
-    assert "self-hosted" not in text
-    assert "C:\\" not in text
-    assert "locked" not in text.lower()

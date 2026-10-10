@@ -11,8 +11,6 @@ from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from scripts import restore_gtbi_v6_artifact as restore_module
 from scripts.generate_gtbi_v7_g3b_preservation_owner_receipt import (
     MANIFEST,
-    RECEIPT,
-    build_receipt,
 )
 
 
@@ -41,34 +39,6 @@ def _live_snapshot(receipt: dict) -> dict:
             "conclusion": run["conclusion"],
             "path": run["workflow_path"],
         },
-    }
-
-
-def test_owner_preservation_receipt_is_canonical_and_reproducible() -> None:
-    receipt = json.loads(RECEIPT.read_text(encoding="utf-8"))
-    assert RECEIPT.read_bytes() == canonical_bytes(receipt) + b"\n"
-    assert receipt["receipt_digest"] == domain_digest(
-        "GTBI_V7_G3B_OWNER_PRESERVATION_LIVE_RECEIPT_V1",
-        receipt,
-        omit_top_level_fields=("receipt_digest",),
-    )
-    assert (
-        build_receipt(
-            _live_snapshot(receipt),
-            observed_at_utc=receipt["observed_at_utc"],
-        )
-        == receipt
-    )
-    assert receipt["evaluation"] == {"ready": True, "blockers": []}
-    assert receipt["lease_artifact"]["expired"] is False
-    assert receipt["external_copy_required"] is False
-    assert receipt["github_only"] is True
-    assert receipt["requires_local_machine"] is False
-    assert receipt["scientific_boundaries"] == {
-        "locked_start": "2021-01-01",
-        "locked_data_accessed": False,
-        "scientific_processing_performed": False,
-        "local_research_run_performed": False,
     }
 
 

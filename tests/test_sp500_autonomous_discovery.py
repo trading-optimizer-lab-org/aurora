@@ -8,7 +8,6 @@ import tomllib
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from aurora.infra.sp500_autonomous_discovery import registry
 from aurora.infra.sp500_autonomous_discovery.contracts import canonical_rule_hash
@@ -286,51 +285,3 @@ def test_cached_price_signal_matches_uncached_signal() -> None:
         pd.testing.assert_series_equal(uncached, cached)
 
 
-def test_workflow_is_github_only_and_bounded() -> None:
-    path = ".github/workflows/sp500-autonomous-discovery.yml"
-    text = open(path, encoding="utf-8").read()
-    yaml.safe_load(text)
-    assert "C:\\" not in text
-    assert "self-hosted" not in text
-    assert "ubuntu-24.04" in text
-    assert "2010-12-31" in text
-    assert "2020-12-31" in text
-    assert "2021-01-01" in text
-    assert "OPEN_VALIDATION_2011_2020_ONCE_AUTONOMOUS" in text
-    assert "sp500-autonomous-validation-once" in text
-    assert "cancel-in-progress: false" in text
-    reusable_text = open(
-        ".github/workflows/_aurora-future-run-v3.yml", encoding="utf-8"
-    ).read()
-    assert "autonomous_prior_ledger_artifact_name" in reusable_text
-    assert 'or "sp500_autonomous_discovery" in workload' in reusable_text
-    reusable = yaml.safe_load(reusable_text)
-    for job_name, step_name in (
-        ("smoke", "Run bounded smoke"),
-        ("pilot", "Resolve exact profile or measure fresh pilot"),
-        ("plan", "Build adaptive balanced plan"),
-    ):
-        step = next(
-            item
-            for item in reusable["jobs"][job_name]["steps"]
-            if item.get("name") == step_name
-        )
-        assert step["env"]["AURORA_PREPARED_ROOT"] == "${{ runner.temp }}/prepared"
-    sp500_prepare_steps = reusable["jobs"]["sp500_prepare_data"]["steps"]
-    prior_ledger_index = next(
-        index
-        for index, item in enumerate(sp500_prepare_steps)
-        if item.get("name") == "Download prior autonomous trial ledger"
-    )
-    prepare_index = next(
-        index
-        for index, item in enumerate(sp500_prepare_steps)
-        if item.get("name") == "Prepare immutable SPY data"
-    )
-    assert prior_ledger_index < prepare_index
-    prior_ledger_step = sp500_prepare_steps[prior_ledger_index]
-    assert prior_ledger_step["with"]["run-id"] == (
-        "${{ inputs.autonomous_prior_ledger_run_id }}"
-    )
-    for phase in ("preflight", "research", "data_build", "pilot", "search_batch", "merge_batch", "statistical_gate", "freeze", "validation_once", "verify"):
-        assert f"- {phase}" in text

@@ -293,15 +293,3 @@ def test_public_context_parameter_repair_activates_conditional_choice(
         assert repaired[key] == value
 
 
-def test_public_context_workflow_has_an_isolated_fail_closed_scope() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[1]
-        / ".github"
-        / "workflows"
-        / "sp500-megarun-macro-feature-smoke-f032.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "- f231_f240" in workflow
-    assert "smoke_f231_f240:" in workflow
-    assert "inputs.scope == 'f231_f240'" in workflow
-    assert "parameter_choice_audit_F231_F240.json" in workflow

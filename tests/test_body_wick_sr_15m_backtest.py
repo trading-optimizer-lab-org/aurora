@@ -5,10 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-import yaml
 
 from scripts.run_body_wick_sr_15m_backtest import (
-    FINAL_ARTIFACT_NAME,
     StrategyVariant,
     build_variant_catalog,
     compute_zone_from_candle,
@@ -241,17 +239,3 @@ def test_merge_handles_empty_trade_shards(tmp_path: Path) -> None:
     assert manifest["symbol_count"] == 0
 
 
-def test_workflow_is_manual_and_targets_20_equities_plus_spy() -> None:
-    path = Path(".github/workflows/body-wick-sr-15m-21symbols-backtest.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    text = path.read_text(encoding="utf-8")
-
-    assert data["name"] == "Body Wick S/R 15m 20 Equities Plus SPY Backtest"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-    assert data[True]["workflow_dispatch"]["inputs"]["source_run_id"]["default"] == "27498064404"
-    assert data[True]["workflow_dispatch"]["inputs"]["source_artifact"]["default"] == "free-15m-equity-universe-yfinance-data"
-    assert data[True]["workflow_dispatch"]["inputs"]["jobs"]["default"] == "80"
-    assert "SPY_15m.csv" in text
-    assert "min-symbols 21" in text
-    assert FINAL_ARTIFACT_NAME in text

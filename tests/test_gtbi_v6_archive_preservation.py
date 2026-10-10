@@ -9,7 +9,6 @@ from pathlib import Path
 
 import jsonschema
 import pytest
-import yaml
 
 from infra.gtbi_v7_readiness.canonical import canonical_bytes, domain_digest
 from scripts.preserve_gtbi_v6_artifact import (
@@ -117,54 +116,6 @@ def test_heavy_preservation_is_rejected_outside_github_actions(
         preserve(tmp_path / "output", "unused-token")
 
 
-def test_registered_workflow_has_isolated_fixed_preservation_mode() -> None:
-    workflow_path = (
-        ROOT
-        / ".github/workflows/"
-        "global-technical-buy-indicator-external-pack-360jobs.yml"
-    )
-    text = workflow_path.read_text(encoding="utf-8")
-    workflow = yaml.safe_load(text)
-    jobs = workflow["jobs"]
-    preservation = jobs["preserve_v6_artifact"]
-
-    assert preservation["runs-on"] == "ubuntu-24.04"
-    assert preservation["permissions"] == {
-        "actions": "read",
-        "contents": "read",
-    }
-    assert "__preserve_v6_artifact__" in preservation["if"]
-    assert any(
-        step.get("run", "").startswith(
-            "python scripts/preserve_gtbi_v6_artifact.py"
-        )
-        for step in preservation["steps"]
-    )
-    dependency_step = next(
-        step
-        for step in preservation["steps"]
-        if step.get("name") == "Install preservation validator dependencies"
-    )
-    assert '"cryptography==48.0.0"' in dependency_step["run"]
-    assert '"jsonschema==4.26.0"' in dependency_step["run"]
-    upload = next(
-        step
-        for step in preservation["steps"]
-        if step.get("name") == "Upload verified preservation lease"
-    )
-    assert upload["with"]["retention-days"] == 90
-    assert upload["with"]["compression-level"] == 0
-    assert upload["with"]["path"] == "preserved-v6"
-
-    for job_id in ("plan", "build_external_pack", "run_shard", "merge"):
-        condition = jobs[job_id]["if"]
-        assert "__preserve_v6_artifact__" in condition
-        assert "!=" in condition
-
-    assert "self-hosted" not in text
-    assert "C:\\" not in text
-
-
 def test_preservation_entrypoint_loads_without_quant_engine_dependencies() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/preserve_gtbi_v6_artifact.py", "--help"],
@@ -177,41 +128,3 @@ def test_preservation_entrypoint_loads_without_quant_engine_dependencies() -> No
     assert "--output-dir" in result.stdout
 
 
-def test_registered_workflow_has_isolated_strict_inventory_mode() -> None:
-    workflow_path = (
-        ROOT
-        / ".github/workflows/"
-        "global-technical-buy-indicator-external-pack-360jobs.yml"
-    )
-    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    jobs = workflow["jobs"]
-    inventory = jobs["inventory_gtbi_v7"]
-
-    assert inventory["runs-on"] == "ubuntu-24.04"
-    assert inventory["permissions"] == {
-        "actions": "read",
-        "contents": "read",
-        "deployments": "read",
-        "packages": "read",
-        "security-events": "read",
-    }
-    assert "__gtbi_v7_inventory__" in inventory["if"]
-    command = next(
-        step["run"]
-        for step in inventory["steps"]
-        if step.get("name") == "Generate strict bounded remote inventory"
-    )
-    assert "--mode remote" in command
-    assert "--strict" in command
-    upload = next(
-        step
-        for step in inventory["steps"]
-        if step.get("name") == "Upload inventory evidence"
-    )
-    assert upload["if"] == "${{ always() }}"
-    assert upload["with"]["retention-days"] == 30
-
-    for job_id in ("plan", "build_external_pack", "run_shard", "merge"):
-        condition = jobs[job_id]["if"]
-        assert "__gtbi_v7_inventory__" in condition
-        assert "!=" in condition

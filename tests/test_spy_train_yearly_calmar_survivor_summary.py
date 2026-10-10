@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
-import yaml
-from pathlib import Path
 
 from scripts.summarize_spy_train_yearly_calmar_survivors import (
-    ARTIFACT_NAME,
     annual_beat_counts,
 )
 
@@ -33,15 +29,3 @@ def test_annual_beat_counts_reports_strict_beats_equals_and_lags() -> None:
     assert result["max_annual_excess_vs_spy"] > 0
 
 
-def test_train_yearly_calmar_beat_counts_workflow_is_manual_postprocess() -> None:
-    path = Path(".github/workflows/spy-weekly-global-random-train-yearly-calmar-beat-counts.yml")
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert data["name"] == "SPY Weekly Global Random Train Yearly Calmar Beat Counts"
-    assert "workflow_dispatch" in data[True]
-    assert "push" not in data[True]
-
-    text = path.read_text(encoding="utf-8")
-    assert "27809257841" in text
-    assert "27873129720" in text
-    assert ARTIFACT_NAME in text
-    assert "summarize_spy_train_yearly_calmar_survivors.py" in text

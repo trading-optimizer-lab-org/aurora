@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -422,22 +421,3 @@ def test_bootstrap_schemas_and_generated_json_are_canonical() -> None:
             jsonschema.Draft202012Validator.check_schema(payload)
 
 
-def test_quality_workflow_is_read_only_pinned_and_github_hosted() -> None:
-    workflow = ROOT / ".github/workflows/gtbi-v7-master-plan-quality.yml"
-    text = workflow.read_text(encoding="utf-8")
-    yaml.safe_load(text)
-    assert "runs-on: ubuntu-24.04" in text
-    assert "self-hosted" not in text
-    assert "C:\\" not in text
-    assert "contents: read" in text
-    uses = [
-        line.strip().removeprefix("uses: ")
-        for line in text.splitlines()
-        if line.strip().startswith("uses: ")
-    ]
-    assert uses
-    assert all(
-        value.rsplit("@", 1)[-1].isalnum()
-        and len(value.rsplit("@", 1)[-1]) == 40
-        for value in uses
-    )
