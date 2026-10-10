@@ -1,7 +1,8 @@
-## CATALOG_RUN_PROTOCOL_REQUIRED
+## CATALOG_FROZEN
 
-Before preparing, launching, monitoring, recovering, or reporting any catalog
-run, read `docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md` completely. A model may
-only create a strict catalog request. It may not dispatch, cancel, retry, edit,
-or bypass a catalog workflow. The GitHub catalog controller is the sole
-execution authority. Missing evidence means BLOCKED.
+The SPY strategy catalog is frozen (2026-10-10). Read `docs/CATALOG_STATUS.md`
+before doing anything catalog-related. The request path (intent issues,
+controller, reconciler, watchdog) was removed, so the prompts under
+`docs/runbooks/` no longer launch anything. Do not create catalog intent
+issues. A new catalog run needs an explicit request from the repository owner
+and a new entry point, as described in `docs/CATALOG_STATUS.md`.

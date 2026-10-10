@@ -164,13 +164,6 @@ def test_prompt_policy_is_closed_complete_and_points_to_real_tests() -> None:
     _validate_policy(_json(POLICY))
 
 
-def test_agents_requires_the_catalog_runbook() -> None:
-    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert "docs/runbooks/CATALOG_RUN_MASTER_PROMPT.md" in agents
-    assert "CATALOG_RUN_MASTER_PROMPT_V5_3_ARCHIVE.md" not in agents
-    assert "CATALOG_RUN_PROTOCOL_REQUIRED" in agents
-
-
 def test_policy_validator_rejects_missing_extra_and_duplicate_ids() -> None:
     policy = _json(POLICY)
     missing = deepcopy(policy)

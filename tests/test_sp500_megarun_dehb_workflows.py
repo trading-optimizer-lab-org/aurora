@@ -26,15 +26,6 @@ def _load(path: Path) -> dict[str, Any]:
     return dict(load_github_yaml(path))
 
 
-def test_worker_downloads_only_three_peer_artifacts_per_cache_run() -> None:
-    text = WORKER_ACTION.read_text(encoding="utf-8")
-
-    assert "list_sp500_megarun_dehb_cache_peer_jobs.py" in text
-    assert 'test "${#peer_jobs[@]}" -eq 3' in text
-    assert '--name "sp500-dehb-worker-$peer_job"' in text
-    assert "--evaluation-cache-root" in text
-
-
 def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:
     from aurora.infra.sp500_megarun.dehb_campaign_contract import (
         load_and_validate_campaign_contract,

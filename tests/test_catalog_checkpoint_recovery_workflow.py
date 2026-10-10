@@ -268,29 +268,6 @@ def test_workflow_preserves_legacy_route_and_opt_in_uses_normal_resume_root() ->
     assert "reduction_only != 'true'" in str(reduce["if"])
 
 
-def test_full_prepared_transport_reuses_authenticated_preparation_outside_gate() -> None:
-    gate = load_github_yaml(ROOT / ".github/workflows/catalog-fast-controller.yml")["jobs"]["gate"]
-    assert not any(step.get("with", {}).get("path") == "${{ runner.temp }}/prepared-bundle"
-                   and "upload-artifact" in step.get("uses", "") for step in gate["steps"])
-    assert "gate_first_step_epoch + 55" in gate["steps"][0]["run"]
-    reduce = _workflow()["jobs"]["reduce"]
-    download = _step(reduce, name="Restore the authenticated original checkpoint PREPARED artifact")
-    assert download["if"] == "${{ needs.engine_verify_sealed_plan.outputs.checkpoint_recovery_enabled == 'true' }}"
-    assert "scripts/verify_catalog_prepared_bundle.py" in download["run"]
-    assert "--restore-artifact-on-miss" in download["run"]
-    assert "--campaign-key sp500-optimized-catalog-v1" in download["run"]
-    assert '--bundle "$RUNNER_TEMP/checkpoint-recovery-prepared"' in download["run"]
-    assert download["env"]["GH_TOKEN"] == "${{ github.token }}"
-    assert download["env"]["CATALOG_PROTECTED_COMMIT_SHA"] == "${{ github.sha }}"
-    steps = reduce["steps"]
-    assert steps.index(_step(reduce, name="Activate sealed offline runtime")) < steps.index(download)
-    restore = _step(reduce, step_id="checkpoint_restore")
-    assert steps.index(download) < steps.index(restore)
-    assert "GH_TOKEN" not in restore["env"]
-    assert "--prepared-bundle" in restore["run"]
-    assert "--output-dir" not in restore["run"]
-
-
 @pytest.mark.parametrize("defect", [
     None, "tamper", "foreignmanifest", "receipt", "identity", "absentprofile",
     "missinganchor", "currentplan", "source", "commit", "science",

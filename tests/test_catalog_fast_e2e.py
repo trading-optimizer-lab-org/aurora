@@ -680,38 +680,6 @@ def test_controlled_exception_keeps_deliberate_marker_in_existing_receipt(
     )
 
 
-def test_protected_workflows_wire_gate_to_initial_worker_only() -> None:
-    controller = (_ROOT / ".github/workflows/catalog-fast-controller.yml").read_text()
-    run = (_ROOT / ".github/workflows/catalog-optimized-run.yml").read_text()
-    worker = (_ROOT / ".github/workflows/catalog-optimized-worker.yml").read_text()
-    recovery = (_ROOT / ".github/workflows/catalog-recovery-wave.yml").read_text()
-    assert "canary_gate_artifact" in controller
-    assert "Download the authenticated canary gate context" in run
-    assert "canary_acceptance_token" in run
-    assert '"policy_sha256": canonical_sha256(policy)' in run
-    source = (_ROOT / "scripts/run_sp500_optimized_recipe_worker.py").read_text()
-    assert "canary-acceptance-token" in worker
-    assert "catalog_fast_canary_acceptance" in source
-    assert "ConnectionResetError" in source
-    assert "canary_acceptance" not in recovery
-
-    from aurora.infra.github_performance.preflight import load_github_yaml
-
-    parsed = load_github_yaml(_ROOT / ".github/workflows/catalog-optimized-run.yml")
-    for component_job in (
-        "build_components_a",
-        "build_components_b",
-        "materialize_cached_components_a",
-        "materialize_cached_components_b",
-    ):
-        assert not any(
-            name.startswith("canary_")
-            for name in parsed["jobs"][component_job].get("with", {})
-        )
-    for recipe_job in ("evaluate_a", "evaluate_b", "evaluate_c"):
-        assert parsed["jobs"][recipe_job]["with"]["canary_fault_enabled"]
-
-
 def test_inspect_output_uses_request_property_not_a_dumped_field(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

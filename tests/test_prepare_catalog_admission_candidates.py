@@ -781,18 +781,6 @@ def test_candidate_documents_never_embed_issue_text_or_absolute_paths(tmp_path: 
     assert "[AURORA CATALOG RUN REQUEST]" not in target.read_text("utf-8")
 
 
-def test_execution_protocol_common_manifest_is_closed_and_complete() -> None:
-    assert len(_PROTOCOL_COMMON_PATHS) == len(set(_PROTOCOL_COMMON_PATHS))
-    assert _CRITICAL_COMMON_PROTOCOL_PATHS <= set(_PROTOCOL_COMMON_PATHS)
-    assert ".github/actions/catalog-live-controls-audit/action.yml" in _PROTOCOL_COMMON_PATHS
-    assert ".github/workflows/catalog-live-controls-audit.yml" not in _PROTOCOL_COMMON_PATHS
-    for relative in _PROTOCOL_COMMON_PATHS:
-        assert relative == Path(relative).as_posix()
-        assert not Path(relative).is_absolute()
-        assert ".." not in Path(relative).parts
-        assert (ROOT / relative).is_file(), relative
-
-
 def test_execution_protocol_hash_changes_for_any_sealed_common_file(
     tmp_path: Path,
 ) -> None:

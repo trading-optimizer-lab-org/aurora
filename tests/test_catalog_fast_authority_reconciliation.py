@@ -623,16 +623,3 @@ def test_reconciliation_rejects_invalid_actor_and_altered_artifact() -> None:
     artifact["digest"] = "sha256:" + "0" * 64
     with pytest.raises(ValueError, match="CATALOG_FAST_RECONCILIATION_ARTIFACT_INVALID"):
         _validate_artifact(artifact, config["gate"]["artifact"])
-
-
-def test_maintenance_choice_is_compared_through_the_existing_job_environment() -> None:
-    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/catalog-fast-authority-maintenance.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "          - bootstrap\n          - reconcile" in workflow
-    assert "CATALOG_AUTHORITY_MAINTENANCE_OPERATION: ${{ inputs.operation }}" in workflow
-    assert 'if [[ "$CATALOG_AUTHORITY_MAINTENANCE_OPERATION" == "reconcile" ]]; then' in workflow
-    assert 'if [[ "${{ inputs.operation }}" == "reconcile" ]]; then' not in workflow
-    assert workflow.count("${{ inputs.operation }}") == 1
-    assert "publish_catalog_fast_authority_bootstrap.py" in workflow
-    assert "reconcile_catalog_fast_authority.py" in workflow

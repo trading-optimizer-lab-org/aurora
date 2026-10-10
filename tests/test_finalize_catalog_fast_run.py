@@ -4,11 +4,9 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-from types import SimpleNamespace
 import pytest
 
 from aurora.infra.github_performance.contracts import canonical_sha256
-from aurora.infra.github_performance.preflight import load_github_yaml
 from aurora.infra.sp500_megarun.catalog_fast_path import (
     parse_catalog_terminal_receipt, decide_fast_catalog_launch,
 )
@@ -211,46 +209,3 @@ def test_publication_failure_reports_primary_outcome_and_preserves_written_recei
         receipt = parse_catalog_terminal_receipt(json.loads(terminal.read_text()))
         assert receipt.state == 'BLOCKED'
         assert receipt.reason_code == diagnostic['primary_reason_code']
-
-
-@pytest.mark.parametrize(("gate_result", "reserved", "existing", "expected"), [
-    ("success", "false", "", True), ("failure", "true", "", True),
-    ("cancelled", "true", "", True), ("failure", "false", "", False),
-    ("skipped", "false", "", False), ("failure", "true", "123", False),
-])
-def test_verified_reservation_can_finalize_after_gate_failure(gate_result, reserved, existing, expected):
-    root = Path(__file__).resolve().parents[1]
-    workflow = load_github_yaml(root / ".github/workflows/catalog-fast-controller.yml")
-    expression = workflow["jobs"]["finalize"]["if"].removeprefix("${{").removesuffix("}}")
-    expression = expression.replace("&&", " and ").replace("||", " or ")
-    outputs = SimpleNamespace(valid_request="true", admission_completed="true", existing_run_id=existing,
-        preserve_issue="false", authority_reserved=reserved)
-    needs = SimpleNamespace(gate=SimpleNamespace(result=gate_result, outputs=outputs))
-    assert eval(expression, {"__builtins__": {}}, {"always": lambda: True, "needs": needs}) is expected
-
-
-def test_workflow_allows_missing_outcome_to_reach_real_finalizer() -> None:
-    # Complementary workflow contract; the test above checks the real receipt.
-    # Real GitHub job execution is still required by T13.
-    root = Path(__file__).resolve().parents[1]
-    workflow = load_github_yaml(root / ".github/workflows/catalog-fast-controller.yml")
-    steps = workflow["jobs"]["finalize"]["steps"]
-    download = next(step for step in steps if step.get("name") == "Download the unique engine outcome")
-    assert download.get("continue-on-error") is True
-    science_download = next(step for step in steps if step.get("name") == "Download terminal science only for a successful engine candidate")
-    assert science_download.get("continue-on-error") is True
-    terminal = next(step for step in steps if step.get("id") == "terminal")
-    assert "scripts/finalize_catalog_fast_run.py" in terminal["run"]
-
-
-def test_admission_and_terminal_writers_share_only_the_control_lock() -> None:
-    root = Path(__file__).resolve().parents[1]
-    workflow = load_github_yaml(root / ".github/workflows/catalog-fast-controller.yml")
-    jobs = workflow["jobs"]
-    admission = jobs["gate"]["concurrency"]
-    terminal = jobs["finalize"].get("concurrency")
-    assert terminal == admission
-    assert terminal["cancel-in-progress"] is False
-    assert terminal["queue"] == "max"
-    assert workflow["concurrency"]["group"] != terminal["group"]
-    assert jobs["engine"].get("concurrency", {}).get("group") != terminal["group"]

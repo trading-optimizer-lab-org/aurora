@@ -305,21 +305,3 @@ def test_run_outcome_extracts_all_recovery_stage_results_from_workflow(tmp_path:
     }
     stages = payload["stage_results"]
     assert {name for name in recovery_stages if stages.get(name) != "skipped"} == set()
-
-
-def test_historical_request_read_is_scoped_to_reducer_and_call_chain() -> None:
-    workflow = load_github_yaml(WORKFLOW)
-    assert workflow["permissions"].get("issues", "none") == "none"
-    assert workflow["jobs"]["reduce"]["permissions"] == {
-        "actions": "read", "contents": "read", "issues": "read",
-    }
-    for filename, job in (
-        ("catalog-fast-controller.yml", "engine"),
-        ("catalog-run-controller.yml", "engine_optimized_catalog_v1"),
-        ("catalog-prepare-one.yml", "prepare_engine"),
-        ("catalog-prepare.yml", "prepare"),
-    ):
-        caller = load_github_yaml(ROOT / ".github/workflows" / filename)
-        assert caller["jobs"][job]["permissions"] == {
-            "actions": "read", "contents": "read", "issues": "read",
-        }
