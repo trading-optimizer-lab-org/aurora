@@ -229,5 +229,3 @@ def test_positions_from_scores_can_hold_cash_long_and_short() -> None:
     positions = positions_from_scores(np.array([-2.0, -0.1, 0.0, 0.1, 2.0]), threshold=0.5)
 
     assert positions.tolist() == [-1.0, 0.0, 0.0, 0.0, 1.0]
-
-

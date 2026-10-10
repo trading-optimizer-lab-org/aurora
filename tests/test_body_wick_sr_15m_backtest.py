@@ -237,5 +237,3 @@ def test_merge_handles_empty_trade_shards(tmp_path: Path) -> None:
     manifest = json.loads((tmp_path / "out" / "final" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["variant_count"] == 1
     assert manifest["symbol_count"] == 0
-
-

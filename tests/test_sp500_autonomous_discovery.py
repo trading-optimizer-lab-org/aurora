@@ -283,5 +283,3 @@ def test_cached_price_signal_matches_uncached_signal() -> None:
         uncached = candidate_decisions(candidate, data).decisions
         cached = candidate_decisions(candidate, data, feature_frame=features).decisions
         pd.testing.assert_series_equal(uncached, cached)
-
-

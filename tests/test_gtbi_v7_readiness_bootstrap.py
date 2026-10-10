@@ -419,5 +419,3 @@ def test_bootstrap_schemas_and_generated_json_are_canonical() -> None:
         assert path.read_bytes() == canonical_bytes(payload) + b"\n"
         if path.name.endswith(".schema.json"):
             jsonschema.Draft202012Validator.check_schema(payload)
-
-

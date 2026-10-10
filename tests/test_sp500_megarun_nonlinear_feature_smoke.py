@@ -127,5 +127,3 @@ def test_nonlinear_parameter_audit_uses_lane_specific_causal_train_tails() -> No
     assert long["spy"]["date"].isin(long["calendar"]["date"]).all()
     assert short["spy"]["date"].ge(pd.Timestamp("2003-01-02")).all()
     assert long["spy"]["date"].ge(pd.Timestamp("2003-01-02")).all()
-
-

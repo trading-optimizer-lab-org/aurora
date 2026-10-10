@@ -27,5 +27,3 @@ def test_annual_beat_counts_reports_strict_beats_equals_and_lags() -> None:
     assert result["lagged_years"] == "2021"
     assert result["min_annual_excess_vs_spy"] < 0
     assert result["max_annual_excess_vs_spy"] > 0
-
-

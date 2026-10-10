@@ -115,5 +115,3 @@ def test_write_aligned_universe_uses_exact_shared_timestamp_index(tmp_path: Path
     assert (tmp_path / "wide" / "close.parquet").exists()
     assert (tmp_path / "manifest.json").exists()
     assert (tmp_path / "summary.csv").exists()
-
-

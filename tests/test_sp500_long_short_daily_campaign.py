@@ -2494,5 +2494,3 @@ def test_smoke_reduction_cannot_create_train_freeze(tmp_path: Path) -> None:
     assert summary["maximum_date"] == "2009-09-30"
     assert summary["validation_opened"] is False
     assert not (tmp_path / "train_selection_freeze.json").exists()
-
-

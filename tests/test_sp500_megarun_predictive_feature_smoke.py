@@ -243,5 +243,3 @@ def test_predictive_parameter_audit_uses_date_aligned_causal_train_tails() -> No
     assert long_panels["spy"]["date"].isin(long_panels["cboe"]["date"]).all()
     assert all(panel["date"].max() == pd.Timestamp("2010-12-31") for panel in short_features.values())
     assert all(panel["date"].max() == pd.Timestamp("2010-12-31") for panel in long_features.values())
-
-

@@ -235,5 +235,3 @@ def test_cross_asset_parameter_witnesses_activate_conditional_choices(
 
     for name, value in expected.items():
         assert repaired[name] == value
-
-

@@ -53,5 +53,3 @@ def test_inventory_registry_has_no_unknown_decisions() -> None:
         rows = list(csv.DictReader(handle))
     assert rows
     assert all(row["decision"] != "unknown" for row in rows)
-
-

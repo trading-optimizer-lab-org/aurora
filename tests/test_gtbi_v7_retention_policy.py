@@ -84,5 +84,3 @@ def test_retention_transition_manifest_is_accepted_by_state_controller() -> None
         for action in manifest["task_actions"]
         for path in action["evidence_paths"]
     )
-
-

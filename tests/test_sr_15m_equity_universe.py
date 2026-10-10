@@ -166,5 +166,3 @@ def test_merge_uses_top_leaderboard_as_prelocked_fallback_when_filter_is_empty(t
     assert not accepted.empty
     assert "prelocked_fallback" in accepted.columns
     assert accepted["prelocked_fallback"].astype(bool).all()
-
-

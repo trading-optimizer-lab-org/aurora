@@ -158,5 +158,3 @@ def test_closure_fails_when_scientific_attempt_exists(
     attempts.write_text("\n".join(existing + [json.dumps(row)]) + "\n", encoding="utf-8")
     with pytest.raises(NoGoClosureError, match="scientific attempt exists"):
         validate_no_go_prerequisites(repository, BASE_SHA)
-
-

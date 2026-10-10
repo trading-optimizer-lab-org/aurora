@@ -221,5 +221,3 @@ def test_characteristic_smoke_cli_accepts_contract(
     )
 
     assert cli.main() == 0
-
-

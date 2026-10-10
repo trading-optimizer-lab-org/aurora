@@ -50,5 +50,3 @@ def test_reference_fixture_is_deterministic_and_never_crosses_locked() -> None:
         VALIDATION_OBSERVATIONS
     )
     assert str(frame_a["date"].max().date()) == "2020-12-31"
-
-

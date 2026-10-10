@@ -52,5 +52,3 @@ def test_initial_matrix_outputs_fit_below_github_job_output_limit() -> None:
 
     assert [len(matrices[shard]["include"]) for shard in "ABC"] == [120, 120, 120]
     assert estimated_utf16_bytes < 1_000_000
-
-

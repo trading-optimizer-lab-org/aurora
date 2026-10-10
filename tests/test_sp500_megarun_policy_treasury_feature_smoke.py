@@ -310,5 +310,3 @@ def test_policy_treasury_parameter_repair_activates_conditional_choice(
 
     for key, value in active_overrides.items():
         assert repaired[key] == value
-
-

@@ -224,5 +224,3 @@ def test_global_factor_parameter_witnesses_activate_conditional_choices(
 
     for name, value in expected.items():
         assert repaired[name] == value
-
-

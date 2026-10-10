@@ -193,5 +193,3 @@ def test_incomplete_scan_writes_exact_fail_closed_reconciliation(
     assert "deliberate release failure" in reconciliation["surfaces"]["releases"][
         "scan_a_incomplete_reason"
     ]
-
-

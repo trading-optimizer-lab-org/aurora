@@ -335,5 +335,3 @@ def test_compare_does_not_claim_speed_for_different_environment(
     assert report.timing_comparable is False
     assert report.speedup == 0.0
     assert "ENVIRONMENT_HASH_MISMATCH" in report.failure_codes
-
-
