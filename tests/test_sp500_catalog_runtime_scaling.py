@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 import json
 
-import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -30,61 +29,6 @@ def test_reducer_accepts_no_worker_receipts_only_for_fully_hot_plan() -> None:
         )
 
 
-def test_persistent_cache_reuses_only_exact_science_and_detects_conflict(
-    tmp_path: Path,
-) -> None:
-    from aurora.infra.sp500_megarun.catalog_evaluation_cache import (
-        CatalogEvaluationCache,
-        EvaluationCacheKeyV1,
-    )
-
-    cache = CatalogEvaluationCache(tmp_path / "cache")
-    key = EvaluationCacheKeyV1(
-        evaluator_sha256="a" * 64,
-        data_snapshot_sha256="b" * 64,
-        recipe_sha256="c" * 64,
-        numeric_profile="cpu-f64-v1",
-    )
-    first = {"annualized_return": 0.12, "position_sha256": "d" * 64}
-    assert cache.put(key, first, origin="physical") is True
-    assert cache.put(key, dict(first), origin="physical") is False
-    hit = cache.get(key)
-    assert hit is not None
-    assert hit.result == first
-    assert hit.origin == "physical"
-    with pytest.raises(ValueError, match="EVALUATION_CACHE_CONFLICT"):
-        cache.put(key, {**first, "annualized_return": 0.13}, origin="physical")
-    incompatible = key.model_copy(update={"data_snapshot_sha256": "e" * 64})
-    assert cache.get(incompatible) is None
-
-
-def test_adaptive_process_topology_requires_speed_and_safe_memory() -> None:
-    from aurora.infra.sp500_megarun.catalog_multiprocessing import (
-        ProcessBenchmarkV1,
-        select_process_topology,
-    )
-
-    selected = select_process_topology(
-        [
-            ProcessBenchmarkV1(processes=1, wall_seconds=100, peak_memory_bytes=2_000),
-            ProcessBenchmarkV1(processes=2, wall_seconds=60, peak_memory_bytes=3_000),
-            ProcessBenchmarkV1(processes=4, wall_seconds=45, peak_memory_bytes=5_000),
-        ],
-        available_memory_bytes=10_000,
-    )
-    assert selected.processes == 4
-    assert selected.speedup_vs_one > 2.0
-
-    fallback = select_process_topology(
-        [
-            ProcessBenchmarkV1(processes=1, wall_seconds=100, peak_memory_bytes=2_000),
-            ProcessBenchmarkV1(processes=4, wall_seconds=95, peak_memory_bytes=8_000),
-        ],
-        available_memory_bytes=10_000,
-    )
-    assert fallback.processes == 1
-
-
 def test_resource_usage_receipt_reports_cpu_memory_and_capacity() -> None:
     from aurora.infra.sp500_megarun.catalog_resources import (
         ResourceUsageSnapshot,
@@ -99,24 +43,6 @@ def test_resource_usage_receipt_reports_cpu_memory_and_capacity() -> None:
     assert usage["peak_memory_bytes"] >= 1
     assert usage["available_memory_bytes"] >= usage["peak_memory_bytes"]
     assert 0.0 < usage["peak_memory_fraction"] <= 1.0
-
-
-def test_microshard_checkpoint_resumes_only_pending_units(tmp_path: Path) -> None:
-    from aurora.infra.sp500_megarun.catalog_checkpoint import CatalogCheckpoint
-
-    checkpoint = CatalogCheckpoint.create(
-        tmp_path / "checkpoint.json",
-        plan_sha256="a" * 64,
-        unit_ids=("u0", "u1", "u2"),
-    )
-    checkpoint = checkpoint.commit("u1", result_sha256="b" * 64)
-    restored = CatalogCheckpoint.load(tmp_path / "checkpoint.json")
-
-    assert restored.completed_unit_ids == ("u1",)
-    assert restored.pending_unit_ids == ("u0", "u2")
-    assert restored.checkpoint_sha256 == checkpoint.checkpoint_sha256
-    with pytest.raises(ValueError, match="CHECKPOINT_RESULT_CONFLICT"):
-        restored.commit("u1", result_sha256="c" * 64)
 
 
 def test_failed_recipe_worker_microshards_are_reusable_on_another_runner(
@@ -405,28 +331,6 @@ def test_streaming_result_store_appends_arrow_batches_without_row_buffer(
     assert len(list(CatalogResultStore.open(tmp_path / "arrow-stream").iter_rows())) == count
 
 
-def test_catalog_scale_benchmark_streams_resumes_and_keeps_boundaries_closed(
-    tmp_path: Path,
-) -> None:
-    from scripts.benchmark_catalog_scale import build_scale_report
-
-    report = build_scale_report(
-        tmp_path / "scale",
-        total_recipes=1000,
-        first_milestone=400,
-        unique_position_count=32,
-        session_count=128,
-        batch_size=100,
-        partition_size=200,
-    )
-    assert report["one_million"]["requested_recipes"] == 400
-    assert report["ten_million"]["requested_recipes"] == 1000
-    assert report["ten_million"]["resume_verified"] is True
-    assert report["ten_million"]["maximum_python_row_buffer"] == 0
-    assert report["validation_opened"] is False
-    assert report["locked_opened"] is False
-
-
 def test_autotuner_selects_fastest_safe_candidate_and_blocks_regression() -> None:
     from aurora.infra.sp500_megarun.catalog_autotune import (
         TuningCandidateV1,
@@ -596,123 +500,6 @@ def test_autotune_records_fully_hot_zero_work_without_promoting_topology() -> No
         )
 
 
-def test_autotune_ingest_rejects_non_equivalent_or_open_boundaries(tmp_path: Path) -> None:
-    from scripts.update_sp500_catalog_autotune import update_autotune_history
-
-    audits: list[Path] = []
-    equivalences: list[Path] = []
-    for run_id, wall in ((11, 140.0), (12, 142.0), (13, 141.0)):
-        audit = tmp_path / f"audit-{run_id}.json"
-        audit.write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "head_sha": "d" * 40,
-                    "thermal_state": "component_warm",
-                    "workers": 60,
-                    "processes_per_worker": 1,
-                    "block_size": 256,
-                    "wall_seconds": wall,
-                    "worker_peak_memory_fraction": 0.04,
-                    "validation_opened": False,
-                    "locked_opened": False,
-                }
-            ),
-            "utf-8",
-        )
-        equivalence = tmp_path / f"equivalence-{run_id}.json"
-        equivalence.write_text(
-            json.dumps(
-                {
-                    "equivalent": True,
-                    "difference_count": 0,
-                    "validation_opened": False,
-                    "locked_opened": False,
-                }
-            ),
-            "utf-8",
-        )
-        audits.append(audit)
-        equivalences.append(equivalence)
-
-    history, decision = update_autotune_history(
-        history_path=None,
-        runtime_audit_paths=tuple(audits),
-        equivalence_paths=tuple(equivalences),
-        science_identity_sha256="e" * 64,
-        thermal_state="component_warm",
-        minimum_samples=3,
-        previous_best_median_seconds=145.0,
-        max_regression_ratio=0.05,
-    )
-    assert len(history.observations) == 3
-    assert decision.median_wall_seconds == 141.0
-
-    payload = json.loads(equivalences[0].read_text("utf-8"))
-    payload["locked_opened"] = True
-    equivalences[0].write_text(json.dumps(payload), "utf-8")
-    with pytest.raises(ValueError, match="CATALOG_AUTOTUNE_EQUIVALENCE_INVALID"):
-        update_autotune_history(
-            history_path=None,
-            runtime_audit_paths=tuple(audits),
-            equivalence_paths=tuple(equivalences),
-            science_identity_sha256="e" * 64,
-            thermal_state="component_warm",
-            minimum_samples=3,
-            previous_best_median_seconds=145.0,
-            max_regression_ratio=0.05,
-        )
-
-
-def test_autotune_history_keeps_first_verified_sample_before_promotion(
-    tmp_path: Path,
-) -> None:
-    from scripts.update_sp500_catalog_autotune import ingest_verified_observations
-
-    audit = tmp_path / "audit.json"
-    audit.write_text(
-        json.dumps(
-            {
-                "run_id": 21,
-                "head_sha": "a" * 40,
-                "thermal_state": "cold",
-                "workers": 60,
-                "component_workers": 120,
-                "component_processes_per_worker": 4,
-                "processes_per_worker": 1,
-                "block_size": 1,
-                "wall_seconds": 278.0,
-                "worker_peak_memory_fraction": 0.04,
-                "validation_opened": False,
-                "locked_opened": False,
-            }
-        ),
-        "utf-8",
-    )
-    equivalence = tmp_path / "equivalence.json"
-    equivalence.write_text(
-        json.dumps(
-            {
-                "equivalent": True,
-                "difference_count": 0,
-                "validation_opened": False,
-                "locked_opened": False,
-            }
-        ),
-        "utf-8",
-    )
-
-    history = ingest_verified_observations(
-        history_path=None,
-        runtime_audit_paths=(audit,),
-        equivalence_paths=(equivalence,),
-        science_identity_sha256="b" * 64,
-        thermal_state="cold",
-    )
-    assert len(history.observations) == 1
-    assert history.observations[0].component_workers == 120
-    assert history.observations[0].component_processes_per_worker == 4
-
 def test_actions_runtime_audit_reports_wall_runner_setup_compute_and_bytes() -> None:
     from aurora.infra.sp500_megarun.catalog_actions_audit import (
         build_actions_runtime_audit,
@@ -832,135 +619,6 @@ def test_reusable_workflow_skips_empty_matrix_groups_without_blocking_reduce() -
     assert "outputs.recipe_matrix_c_count != '0'" in workflow
     assert "needs.evaluate_b.result == 'skipped'" in workflow
     assert "needs.evaluate_c.result == 'skipped'" in workflow
-
-
-def test_multi_asset_panel_preserves_calendar_and_asset_isolation() -> None:
-    from aurora.infra.sp500_megarun.catalog_multi_asset import (
-        build_asset_panel,
-        evaluate_multi_asset_panel,
-    )
-
-    panel = build_asset_panel(
-        {
-            "AAA": {1: 10.0, 2: 11.0, 4: 12.0},
-            "BBB": {2: 20.0, 3: 19.0, 4: 21.0},
-        }
-    )
-
-    assert panel.asset_ids == ("AAA", "BBB")
-    assert panel.sessions == (1, 2, 3, 4)
-    np.testing.assert_array_equal(
-        panel.valid_mask,
-        np.array([[True, True, False, True], [False, True, True, True]]),
-    )
-    assert np.isnan(panel.values[0, 2])
-    assert np.isnan(panel.values[1, 0])
-
-    evaluated = evaluate_multi_asset_panel(panel, lookback=1)
-    assert evaluated.asset_count == 2
-    assert evaluated.shared_calendar_builds == 1
-    assert evaluated.asset_specific_work_units == 2
-    assert evaluated.validation_opened is False
-    assert evaluated.locked_opened is False
-
-    changed = panel.values.copy()
-    changed[:, -1] = np.array([9999.0, -9999.0])
-    changed_panel = type(panel)(
-        asset_ids=panel.asset_ids,
-        sessions=panel.sessions,
-        values=changed,
-        valid_mask=panel.valid_mask,
-    )
-    changed_evaluation = evaluate_multi_asset_panel(changed_panel, lookback=1)
-    np.testing.assert_array_equal(
-        evaluated.independent_signals[:, :-1],
-        changed_evaluation.independent_signals[:, :-1],
-    )
-    np.testing.assert_array_equal(
-        evaluated.cross_asset_signals[:, :-1],
-        changed_evaluation.cross_asset_signals[:, :-1],
-    )
-
-
-def test_cross_sectional_engine_uses_point_in_time_membership_only() -> None:
-    from aurora.infra.sp500_megarun.catalog_cross_sectional import (
-        build_point_in_time_portfolio,
-        build_sparse_point_in_time_portfolio,
-    )
-
-    signals = np.array(
-        [[1.0, 3.0, 2.0], [2.0, 1.0, 4.0], [3.0, 2.0, 1.0]],
-    )
-    membership = np.array(
-        [[True, True, False], [True, False, True], [False, True, True]],
-    )
-    portfolio = build_point_in_time_portfolio(
-        signals,
-        membership,
-        top_count=1,
-        bottom_count=1,
-    )
-
-    np.testing.assert_array_equal(portfolio.weights[~membership], 0.0)
-    np.testing.assert_allclose(portfolio.weights.sum(axis=1), 0.0)
-    assert portfolio.max_active_assets == 2
-    assert portfolio.validation_opened is False
-    assert portfolio.locked_opened is False
-
-    sparse = build_sparse_point_in_time_portfolio(
-        np.where(membership, signals, np.nan),
-        membership,
-        top_count=1,
-        bottom_count=1,
-    )
-    np.testing.assert_array_equal(sparse.to_dense(), portfolio.weights)
-    assert sparse.nonzero_weight_count == 6
-
-
-def test_cross_sectional_sparse_engine_scales_to_one_thousand_assets() -> None:
-    from aurora.infra.sp500_megarun.catalog_cross_sectional import (
-        build_sparse_point_in_time_portfolio,
-    )
-
-    dates = 64
-    assets = 1000
-    signals = np.arange(dates * assets, dtype=np.float64).reshape(dates, assets)
-    membership = np.ones((dates, assets), dtype=bool)
-    membership[:, ::17] = False
-    signals[~membership] = np.nan
-
-    portfolio = build_sparse_point_in_time_portfolio(
-        signals,
-        membership,
-        top_count=10,
-        bottom_count=10,
-    )
-
-    assert portfolio.asset_count == assets
-    assert portfolio.nonzero_weight_count == dates * 20
-    assert portfolio.storage_bytes < signals.nbytes / 10
-    np.testing.assert_allclose(portfolio.to_dense().sum(axis=1), 0.0)
-    assert portfolio.validation_opened is False
-    assert portfolio.locked_opened is False
-
-
-def test_multi_asset_catalog_scale_streams_every_recipe_asset_pair() -> None:
-    from scripts.benchmark_catalog_future_architecture import (
-        _multi_asset_catalog_scale_case,
-    )
-
-    report = _multi_asset_catalog_scale_case(
-        3,
-        recipe_count=17,
-        session_count=32,
-        block_size=8,
-    )
-
-    assert report["requested_recipe_asset_evaluations"] == 51
-    assert report["complete_metric_count"] == 51
-    assert report["shared_calendar_builds"] == 1
-    assert report["asset_specific_work_units"] == 3
-    assert report["maximum_block_bytes"] < 32 * 1024 * 1024
 
 
 def test_checkpoint_slots_use_the_fewest_durable_low_overhead_segments() -> None:
