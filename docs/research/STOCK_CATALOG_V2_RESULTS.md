@@ -4,6 +4,12 @@ Reglas: [STOCK_CATALOG_V2_PREREGISTRATION.md](STOCK_CATALOG_V2_PREREGISTRATION.m
 ver los resultados del v1, así que 2011-2020 ya no es una prueba limpia. Una buena cifra aquí solo justifica probar
 en 2021+ (sin tocar). Sesgo de supervivencia sin corregir.
 
+**Confirmado en GitHub** ([run 39047042615](https://github.com/trading-optimizer-lab-org/aurora/actions/runs/39047042615)):
+profit factors a ±0,07 de los locales (Felipe SMA50 1,53 frente a 1,54; Weinstein SMA50 1,51 frente a 1,58; corto
+parabólico 2,34 frente a 2,35). La cartera varía más (por ejemplo, retroceso con amplitud 12,5% frente a 8,8%) porque a
+GitHub le faltan 58 acciones y eso cambia qué señales entran cuando no hay dinero para todas. Felipe SMA50 coincide:
+15,0% frente a 15,1% al año.
+
 ## 1. Cada señal por separado — validación 2011-2020
 
 | Estrategia | Operaciones | Acierto | Media | Mediana | Profit factor | Rentabilidad total | Días |
