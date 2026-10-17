@@ -22,11 +22,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Refuse a second opening
+      - name: Refuse a second opening or a non-main revision
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Only the reviewed code on main may open the locked period.
+          test "$GITHUB_REF" = "refs/heads/main"
+          # Any earlier run of this workflow, whatever its outcome, consumed the
+          # one opening: data may have been downloaded before it failed.
+          earlier=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/multiasset-locked-once.yml/runs?per_page=100" \
+            --jq "[.workflow_runs[] | select(.id != $GITHUB_RUN_ID)] | length")
+          test "$earlier" = "0"
           prior=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=multiasset-locked-once&per_page=1" --jq '.total_count')
           test "$prior" = "0"
 

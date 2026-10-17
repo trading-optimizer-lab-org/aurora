@@ -20,11 +20,11 @@ def _prices(end: str) -> pd.DataFrame:
 
 def test_requires_locked_data() -> None:
     with pytest.raises(ValueError, match="no locked-period data"):
-        locked.evaluate_locked(_prices("2020-12-31"))
+        locked.evaluate_locked(_prices("2020-12-31"), today=pd.Timestamp("2021-01-05"))
 
 
 def test_reports_only_the_locked_period_with_preregistered_checks() -> None:
-    out = locked.evaluate_locked(_prices("2023-06-30"))
+    out = locked.evaluate_locked(_prices("2023-06-30"), today=pd.Timestamp("2023-07-03"))
     cand = out[locked.CANDIDATE]
     assert cand["start"] >= "2021-01-01"
     assert set(cand["annual_returns"]) == {"2021", "2022", "2023"}
@@ -38,8 +38,25 @@ def test_script_refuses_without_the_exact_authorization(monkeypatch) -> None:
 
     path = Path(__file__).resolve().parents[1] / "scripts" / "run_multiasset_locked_once.py"
     spec = importlib.util.spec_from_file_location("run_multiasset_locked_once", path)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr("sys.argv", ["x", "--authorization", "nope"])
     with pytest.raises(SystemExit, match="authorization"):
         module.main()
+
+
+def test_refuses_stale_data() -> None:
+    with pytest.raises(ValueError, match="days before the run"):
+        locked.evaluate_locked(_prices("2023-06-30"), today=pd.Timestamp("2023-08-15"))
+
+
+def test_drops_the_unfinished_month() -> None:
+    out = locked.evaluate_locked(_prices("2023-06-14"), today=pd.Timestamp("2023-06-15"))
+    assert out["evaluated_through"] == "2023-05-31"
+    assert out[locked.CANDIDATE]["end"] == "2023-05-31"
+
+
+def test_drawdown_counts_a_first_day_loss() -> None:
+    r = pd.Series([-0.10, 0.05], index=pd.bdate_range("2021-01-04", periods=2))
+    assert locked._drawdown_from_start(r) == pytest.approx(-0.10)

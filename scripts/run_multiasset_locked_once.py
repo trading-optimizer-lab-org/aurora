@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 from aurora.research.multiasset_locked import evaluate_locked
@@ -19,6 +20,7 @@ AUTHORIZATION = "OPEN_MULTIASSET_LOCKED_2021_AW_VAA_ONCE"
 def _build_prices():
     path = Path(__file__).resolve().parent / "run_multiasset_baselines.py"
     spec = importlib.util.spec_from_file_location("run_multiasset_baselines", path)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.build_prices(end_exclusive=None)
@@ -30,7 +32,8 @@ def render(result: dict, data_end: str) -> str:
             ("Daily Sortino", "sortino", "{:.2f}"), ("Daily Sharpe", "sharpe", "{:.2f}"),
             ("CAGR", "cagr", "{:.1%}"), ("Volatility", "vol", "{:.1%}"),
             ("Max drawdown", "max_drawdown", "{:.1%}"), ("Positive months", "positive_months", "{:.1%}")]
-    lines = [f"# Locked period evaluation ({cand['start']} to {data_end})", "",
+    lines = [f"# Locked period evaluation ({cand['start']} to {result['evaluated_through']}, "
+             f"complete months; data to {data_end})", "", f"Commit: `{result['git_commit']}`", "",
              f"Candidate: `{result['candidate']}`; benchmark: `{result['benchmark']}`; "
              f"costs {result['cost_bps']:g} bps.", "",
              "| metric | candidate | SPY |", "|---|---|---|"]
@@ -52,8 +55,11 @@ def main() -> int:
     if args.authorization != AUTHORIZATION:
         raise SystemExit("authorization string mismatch; locked period not opened")
     prices, data_report = _build_prices()
-    result = evaluate_locked(prices)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Keep the exact observations used, since this run must never be repeated.
+    prices.to_parquet(args.output_dir / "prices.parquet")
+    result = evaluate_locked(prices)
+    result["git_commit"] = os.environ.get("GITHUB_SHA", "unknown")
     (args.output_dir / "locked_result.json").write_text(
         json.dumps({"data": data_report, **result}, indent=2, default=str), encoding="utf-8")
     text = render(result, data_report["data_end"])
