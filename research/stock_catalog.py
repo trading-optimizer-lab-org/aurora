@@ -112,7 +112,7 @@ def indicators(panel: dict[str, pd.DataFrame], index_close: pd.Series, industry:
         "mf": sma(idx.to_frame(), 10).iloc[:, 0] > sma(idx.to_frame(), 20).iloc[:, 0],
         "index_above_200": idx > idx.rolling(200, min_periods=200).mean(),
         "vol50_prior": V.shift(1).rolling(50, min_periods=50).mean(),
-        "sma10": sma(C, 10), "sma20": sma(C, 20), "sma50": sma(C, 50),
+        "sma5": sma(C, 5), "sma10": sma(C, 10), "sma20": sma(C, 20), "sma50": sma(C, 50),
     }
 
 
@@ -221,6 +221,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     C = panel["close"].ffill().to_numpy(dtype=f32)
     S10, S20 = ind["sma10"].to_numpy(dtype=f32), ind["sma20"].to_numpy(dtype=f32)
     S50 = ind["sma50"].to_numpy(dtype=f32) if "sma50" in ind else None
+    S5 = ind["sma5"].to_numpy(dtype=f32) if "sma5" in ind else None
+    AD = ind["adr"].to_numpy(dtype=f32)
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -300,6 +302,16 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
             elif exit_rule == "XPS":
                 if c <= S10[t, i] or days >= 10:
                     sell(i, c)
+            elif exit_rule == "XC20":
+                if c > S20[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XRSI":
+                assert S5 is not None
+                if c > S5[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XT3":
+                p["hc"] = max(p["hc"], float(c))
+                p["stop"] = max(p["stop"], p["hc"] * (1 - 3 * p["adr"]))
             elif exit_rule == "BNF":
                 assert R2 is not None
                 if R2[t, i] >= 85 or (days >= 3 and c < p["entry"]) or days >= 5:
@@ -322,7 +334,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     if value <= 1e-6 * equity:
                         break
                     cash -= value * (1 + COST)
-                    pos[i] = {"shares": value / c, "entry": c, "stop": st, "t": t, "half": False}
+                    pos[i] = {"shares": value / c, "entry": c, "stop": st, "t": t, "half": False,
+                              "hc": float(c), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0}
         equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
         rets.append(equity / eq_prev - 1)
         inv.append(1 - cash / equity if equity > 0 else 0.0)

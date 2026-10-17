@@ -264,3 +264,32 @@ def test_v2_parabolic_short_signal_and_breadth() -> None:
     assert stop["A"].iloc[9] == pytest.approx(18 * 1.01)
     on = v2.breadth_on(close, close.notna())
     assert on.dtype == bool
+
+
+def test_v3_grid_size_shards_and_new_setups() -> None:
+    from aurora.research import stock_catalog_v3 as v3
+
+    names = [t.name for t in v3.trials()]
+    assert len(names) == 326 and len(set(names)) == 326
+    covered = sorted(g for k in range(12) for g in v3.shard_groups(k, 12))
+    assert covered == sorted(v3.GROUPS)
+    rng = np.random.default_rng(1)
+    idx = pd.bdate_range("1993-01-04", periods=400)
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0.001, 0.03, (400, 3)), axis=0), index=idx, columns=list("abc"))
+    panel = _panel(close)
+    ind = sc.indicators(panel, close["a"], pd.Series({"a": "X", "b": "X", "c": "X"}))
+    for key, fn in v3.NEW_SETUPS.items():
+        sig, stop = fn(*(panel[k] for k in ("open", "high", "low", "close", "volume")), ind)
+        assert sig.shape == close.shape and stop.shape == close.shape, key
+
+
+def test_trailing_stop_rises_with_the_close() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(8)
+    close = pd.DataFrame({"A": [100.0, 100, 100, 110, 120, 120, 120, 120]}, index=idx)
+    panel = _panel(close)
+    panel["low"] = close * 1.0
+    panel["low"].iloc[6, 0] = 100.0  # below 120 * (1 - 3 * 5%) = 102
+    t = st.trade_list(panel, _ind(close), _entry(close, 2), close * 0 + 90.0, "XT3", start=idx[0])
+    assert t["exit"].iloc[0] == pytest.approx(102.0) and t["exit_date"].iloc[0] == idx[6]

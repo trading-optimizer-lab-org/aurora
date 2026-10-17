@@ -30,6 +30,8 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
     O, H, L, C = (panel[k].to_numpy(dtype=f32) for k in ("open", "high", "low", "close"))
     S10, S20 = ind["sma10"].to_numpy(dtype=f32), ind["sma20"].to_numpy(dtype=f32)
     S50 = ind["sma50"].to_numpy(dtype=f32) if "sma50" in ind else None
+    S5 = ind["sma5"].to_numpy(dtype=f32) if "sma5" in ind else None
+    AD = ind["adr"].to_numpy(dtype=f32)
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
@@ -73,6 +75,8 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
         if not (np.isfinite(entry) and np.isfinite(stop)) or side * (entry - stop) <= 0:
             continue
         risk = abs(entry - stop) / entry
+        adr_e = float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0
+        hc = entry
         half_ret: float | None = None
         exit_t, exit_px = None, None
         for u in range(t + 1, min(t + MAX_HOLD, last) + 1):
@@ -96,6 +100,13 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XPS" and (c <= S10[u, i] or days >= 10):
                 exit_t, exit_px = u, float(c)
+            elif exit_rule == "XC20" and c > S20[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XRSI" and S5 is not None and c > S5[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XT3":
+                hc = max(hc, float(c))
+                stop = max(stop, hc * (1 - 3 * adr_e))
             elif exit_rule == "XH3":
                 if days == 3 and half_ret is None:
                     half_ret, stop = _net(entry, float(c)), entry
