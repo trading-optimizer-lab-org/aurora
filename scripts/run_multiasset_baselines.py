@@ -141,7 +141,9 @@ def tbill_index(report: dict | None = None) -> pd.Series:
     return (1 + daily).cumprod().rename("CASH")
 
 
-def build_prices() -> tuple[pd.DataFrame, dict]:
+def build_prices(end_exclusive: pd.Timestamp | None = LOCKED_START) -> tuple[pd.DataFrame, dict]:
+    """Price panel truncated before ``end_exclusive``; only the one-shot locked
+    evaluation passes ``None``."""
     report: dict = {"assets": {}}
     columns: dict[str, pd.Series] = {}
     for etf, proxies in PROXIES.items():
@@ -172,7 +174,8 @@ def build_prices() -> tuple[pd.DataFrame, dict]:
     for name, s in columns.items():
         first = s.index[0]
         prices.loc[prices.index < first, name] = np.nan
-    prices = prices.loc[prices.index < LOCKED_START]
+    if end_exclusive is not None:
+        prices = prices.loc[prices.index < end_exclusive]
     report["data_end"] = str(prices.index.max().date())
     return prices, report
 

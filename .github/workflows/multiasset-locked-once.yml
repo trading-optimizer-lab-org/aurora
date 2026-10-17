@@ -1,0 +1,67 @@
+name: Multi-asset locked period once
+
+# Opens 2021-01-01 onward exactly once for the pre-registered candidate in
+# research/multiasset_locked.py. Refuses to run if a previous result exists.
+on:
+  workflow_dispatch:
+    inputs:
+      authorization:
+        description: Exact one-shot authorization string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: multiasset-locked-once
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Refuse a second opening or a non-main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Only the reviewed code on main may open the locked period.
+          test "$GITHUB_REF" = "refs/heads/main"
+          # Any earlier run of this workflow, whatever its outcome, consumed the
+          # one opening: data may have been downloaded before it failed.
+          earlier=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/multiasset-locked-once.yml/runs?per_page=100" \
+            --jq "[.workflow_runs[] | select(.id != $GITHUB_RUN_ID)] | length")
+          test "$earlier" = "0"
+          prior=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=multiasset-locked-once&per_page=1" --jq '.total_count')
+          test "$prior" = "0"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Evaluate the locked period
+        env:
+          AUTHORIZATION: ${{ inputs.authorization }}
+        run: python scripts/run_multiasset_locked_once.py --authorization "$AUTHORIZATION" --output-dir outputs/multiasset_locked_once
+
+      - name: Publish summary
+        run: cat outputs/multiasset_locked_once/LOCKED.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: multiasset-locked-once
+          path: outputs/multiasset_locked_once
+          if-no-files-found: error
+          retention-days: 90
