@@ -6,7 +6,7 @@ Run de GitHub: [39057613396](https://github.com/trading-optimizer-lab-org/aurora
 ## Resumen en español
 
 - **Pasa los criterios de cartera una combinación: `S33_XT8_G1`** (recuperar la media de 20 días cerca del mínimo anual,
-  stop móvil 8 ADR, filtros mercado+industria+ADR): . No estaba en la selección por entrenamiento, y al comprar cerca
+  stop móvil 8 ADR, filtros mercado+industria+ADR): validación Sortino 2.25, 17.7%/año, caída -22.2%; entrenamiento Sortino 0.50, 6.9%/año; PF 1.44 -> 1.20; operaciones 209/84; Sharpe ajustado 0.53. No estaba en la selección por entrenamiento, y al comprar cerca
   de mínimos anuales es de las más expuestas al sesgo de supervivencia.
 - **Golden cross (S36) con stop móvil 5-8 ADR** domina la selección por entrenamiento (PF 2,7-3,2) y repite en validación
   (PF 2,4-3,0, +14-22% por operación); en cartera 15-18%/año con Sortino 1,4-1,8 y caídas de -27% a -33%.
