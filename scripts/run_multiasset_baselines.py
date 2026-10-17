@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -99,16 +100,41 @@ def cboe_index(name: str) -> pd.Series:
     return s[s.index.notna()].dropna().sort_index()
 
 
-def tbill_index() -> pd.Series:
-    resp = requests.get(FRED_URL.format("DTB3"), headers=HEADERS, timeout=60)
-    resp.raise_for_status()
-    df = pd.read_csv(io.StringIO(resp.text))
-    df.columns = ["date", "rate"]
-    rate = pd.to_numeric(df["rate"], errors="coerce")
-    s = pd.Series(rate.to_numpy(), index=pd.to_datetime(df["date"])).ffill().dropna()
-    # DTB3 is a 91-day bank-discount quote: price = 1 - d * 91 / 360. Convert to
-    # the bill's holding-period return, then to a per-trading-day return
-    # (91 calendar days ~ 63 trading days).
+def fred_dtb3(attempts: int = 3) -> pd.Series:
+    last: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            resp = requests.get(FRED_URL.format("DTB3"), headers=HEADERS, timeout=120)
+            resp.raise_for_status()
+            df = pd.read_csv(io.StringIO(resp.text))
+            df.columns = ["date", "rate"]
+            rate = pd.to_numeric(df["rate"], errors="coerce")
+            return pd.Series(rate.to_numpy(), index=pd.to_datetime(df["date"]), name="DTB3")
+        except (requests.RequestException, ValueError) as exc:
+            last = exc
+            time.sleep(10 * (attempt + 1))
+    raise RuntimeError(f"FRED DTB3 unavailable: {last}")
+
+
+def tbill_rates(report: dict) -> pd.Series:
+    """3-month T-bill discount rate in percent: FRED DTB3, else Yahoo ^IRX
+    (the same 13-week bill quoted on a discount basis)."""
+    try:
+        s = fred_dtb3()
+        report["source"] = "FRED DTB3"
+    except RuntimeError as exc:
+        s = yahoo_close("^IRX")
+        if s.empty:
+            raise RuntimeError(f"no T-bill source: {exc}; Yahoo ^IRX empty") from exc
+        report["source"] = f"Yahoo ^IRX (FRED failed: {exc})"
+    return s.ffill().dropna()
+
+
+def tbill_index(report: dict | None = None) -> pd.Series:
+    s = tbill_rates(report if report is not None else {})
+    # The rate is a 91-day bank-discount quote: price = 1 - d * 91 / 360.
+    # Convert to the bill's holding-period return, then to a per-trading-day
+    # return (91 calendar days ~ 63 trading days).
     discount = s / 100.0 * 91 / 360
     holding = discount / (1 - discount)
     daily = (1 + holding) ** (1 / 63) - 1
@@ -131,8 +157,9 @@ def build_prices() -> tuple[pd.DataFrame, dict]:
             report["assets"][name] = {"start": str(columns[name].index[0].date()), "source": "CBOE"}
         except Exception as exc:  # optional asset; record and continue
             report["assets"][name] = {"status": f"missing: {exc}"}
-    columns["CASH"] = tbill_index()
-    report["assets"]["CASH"] = {"start": str(columns["CASH"].index[0].date()), "source": "FRED DTB3"}
+    cash_report: dict = {}
+    columns["CASH"] = tbill_index(cash_report)
+    report["assets"]["CASH"] = {"start": str(columns["CASH"].index[0].date()), **cash_report}
     for name, s in columns.items():
         trimmed = continuous_from(s)
         if trimmed.index[0] != s.index[0]:
@@ -166,6 +193,11 @@ def write_report(result: dict, data_report: dict, out: Path) -> None:
         v = result["strategies"][name]["validation"]
         i = result["strategies"][name]["in_sample"]
         rows.append({"strategy": name, "val_sharpe": v["sharpe"], "val_sortino": v["sortino"],
+                     "val_sharpe_monthly": v["sharpe_monthly"],
+                     "val_sortino_monthly": v["sortino_monthly"],
+                     "is_sharpe_monthly": i.get("sharpe_monthly"),
+                     "is_sortino_monthly": i.get("sortino_monthly"),
+                     "val_positive_months": v["positive_months"],
                      "val_cagr": v["cagr"], "val_vol": v["vol"], "val_max_dd": v["max_drawdown"],
                      "val_calmar": v["calmar"], "val_deflated_sharpe": v["deflated_sharpe"],
                      "is_start": i.get("start"), "is_sharpe": i.get("sharpe"),
@@ -181,7 +213,9 @@ def write_report(result: dict, data_report: dict, out: Path) -> None:
         "",
         f"Data end: {data_report['data_end']} (locked period from 2021-01-01 excluded).",
         f"Trials counted for the deflated Sharpe: {result['n_trials']}.",
-        "Ranking: mean of validation (2011-2020) Sharpe rank and Sortino rank.",
+        "Ranking: mean of validation (2011-2020) daily Sharpe rank and Sortino rank.",
+        "`*_monthly` columns use calendar-month excess returns (usual published convention).",
+        "`blend_*` rows were declared after seeing the single-strategy results.",
         "",
         _markdown_table(table),
         "",

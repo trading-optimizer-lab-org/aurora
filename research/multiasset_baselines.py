@@ -239,6 +239,42 @@ STRATEGIES: dict[str, StrategyFn] = {
 BENCHMARK = "spy_buy_hold"
 
 
+def blend(sleeves: dict[str, float]) -> StrategyFn:
+    """Fixed-share mix of strategies, rebalanced between sleeves every month.
+
+    Each month the target is the share-weighted sum of every sleeve's target, so
+    the blend only starts once all its sleeves have data.
+    """
+
+    def strategy(view: MarketView) -> Weights | None:
+        out: Weights = {}
+        for name, share in sleeves.items():
+            w = STRATEGIES[name](view)
+            if w is None:
+                return None
+            for asset, value in w.items():
+                out[asset] = out.get(asset, 0.0) + share * value
+        return out
+
+    return strategy
+
+
+# Static + tactical blends. They were declared after looking at the single
+# strategies' in-sample and validation results (statics led 2011-2020,
+# tactical rules led before 2011), so they count as extra trials and only the
+# locked period can confirm them.
+BLENDS: dict[str, StrategyFn] = {
+    "blend_aw_vaa": blend({"all_weather": 0.5, "vaa_g4": 0.5}),
+    "blend_aw_tsmom": blend({"all_weather": 0.5, "tsmom": 0.5}),
+    "blend_aw_daa": blend({"all_weather": 0.5, "daa_canary": 0.5}),
+    "blend_aw_gtaa_aggressive": blend({"all_weather": 0.5, "gtaa_aggressive": 0.5}),
+    "blend_6040_vaa": blend({"sixty_forty": 0.5, "vaa_g4": 0.5}),
+    "blend_aw_vaa_sectors": blend({"all_weather": 1 / 3, "vaa_g4": 1 / 3, "sector_rotation": 1 / 3}),
+    "blend_equal_all": blend({k: 1 / (len(STRATEGIES) - 1) for k in STRATEGIES if k != BENCHMARK}),
+}
+ALL_STRATEGIES: dict[str, StrategyFn] = {**STRATEGIES, **BLENDS}
+
+
 def signal_dates(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """Last trading day of each month present in ``index``."""
     s = pd.Series(index, index=index)
@@ -312,6 +348,31 @@ def vol_target_overlay(strategy_returns: pd.Series, cash_returns: pd.Series,
     return applied * base + (1 - applied) * cash - cost
 
 
+def _monthly(returns: pd.Series) -> pd.Series:
+    return (1 + returns).groupby(returns.index.to_period("M")).prod() - 1
+
+
+def _sortino_from(mean_excess: float, downside: float) -> float:
+    """Annualised monthly Sortino; same zero-downside convention as
+    ``sortino_ratio``: +inf for a positive mean, 0 otherwise."""
+    if downside > 0:
+        return float(mean_excess / downside * np.sqrt(12))
+    return float("inf") if mean_excess > 0 else 0.0
+
+
+def _monthly_metrics(r: pd.Series, cash: pd.Series) -> dict[str, float]:
+    """Sharpe and Sortino on calendar-month excess returns (the usual published
+    convention) and the share of positive months."""
+    m = _monthly(r)
+    excess = m - _monthly(cash.reindex(r.index).fillna(0.0))
+    downside = np.sqrt((np.minimum(excess, 0.0) ** 2).sum() / (len(excess) - 1))
+    return {
+        "sharpe_monthly": float(excess.mean() / excess.std(ddof=1) * np.sqrt(12)),
+        "sortino_monthly": _sortino_from(excess.mean(), downside),
+        "positive_months": float((m > 0).mean()),
+    }
+
+
 def metrics(returns: pd.Series, cash: pd.Series) -> dict[str, float | str | int]:
     r = returns.dropna()
     if len(r) < 2:
@@ -332,6 +393,7 @@ def metrics(returns: pd.Series, cash: pd.Series) -> dict[str, float | str | int]
         "calmar": cagr / abs(mdd) if mdd < 0 else float("nan"),
         "skew": float(excess.skew()),
         "kurtosis": float(excess.kurt()),
+        **_monthly_metrics(r, cash),
     }
 
 
@@ -347,7 +409,7 @@ def run_all(prices: pd.DataFrame, cost_bps: float = COST_BPS) -> dict:
     cash = prices["CASH"].pct_change(fill_method=None)
     results: dict[str, dict] = {}
     daily: dict[str, pd.Series] = {}
-    for name, fn in STRATEGIES.items():
+    for name, fn in ALL_STRATEGIES.items():
         weights = target_weights(prices, fn)
         if weights.empty:
             results[name] = {"skipped": "no data for its assets"}

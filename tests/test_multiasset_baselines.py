@@ -58,6 +58,42 @@ def test_simulate_refuses_to_pad_a_gap_in_a_held_asset() -> None:
         mab.simulate(prices, weights, cost_bps=0)
 
 
+def test_blend_sums_sleeve_targets_by_share() -> None:
+    idx = pd.bdate_range("2015-01-01", "2016-12-31")
+    prices = pd.DataFrame({a: np.linspace(100, 150, len(idx)) for a in ["SPY", "IEF"]}, index=idx)
+    monthly = prices.loc[mab.signal_dates(prices.index)]
+    view = mab.MarketView(prices, monthly)
+    mix = mab.blend({"spy_buy_hold": 0.5, "sixty_forty": 0.5})(view)
+    assert mix == pytest.approx({"SPY": 0.8, "IEF": 0.2})
+
+
+def test_blend_waits_for_every_sleeve() -> None:
+    idx = pd.bdate_range("2015-01-01", "2015-03-31")
+    prices = pd.DataFrame({a: np.linspace(100, 150, len(idx)) for a in ["SPY", "IEF"]}, index=idx)
+    monthly = prices.loc[mab.signal_dates(prices.index)]
+    assert mab.blend({"sixty_forty": 0.5, "gem": 0.5})(mab.MarketView(prices, monthly)) is None
+
+
+def test_monthly_metrics_count_positive_months() -> None:
+    idx = pd.bdate_range("2015-01-01", "2015-04-30")
+    r = pd.Series(0.0, index=idx)
+    r[r.index.month == 1] = 0.001
+    r[r.index.month == 2] = -0.001
+    r[r.index.month == 3] = 0.002
+    r[r.index.month == 4] = 0.001
+    out = mab._monthly_metrics(r, pd.Series(0.0, index=idx))
+    assert out["positive_months"] == pytest.approx(0.75)
+    assert out["sortino_monthly"] > out["sharpe_monthly"] > 0
+
+
+def test_monthly_sortino_without_downside_follows_daily_convention() -> None:
+    idx = pd.bdate_range("2015-01-01", "2015-06-30")
+    up = mab._monthly_metrics(pd.Series(0.001, index=idx), pd.Series(0.0, index=idx))
+    flat = mab._monthly_metrics(pd.Series(0.0, index=idx), pd.Series(0.0, index=idx))
+    assert up["sortino_monthly"] == float("inf")
+    assert flat["sortino_monthly"] == 0.0
+
+
 def test_rank_uses_the_requested_period() -> None:
     results = {
         "a": {"in_sample": {"sharpe": 2.0, "sortino": 2.0}, "validation": {"sharpe": 0.1, "sortino": 0.1}},
@@ -104,9 +140,9 @@ def test_vol_target_overlay_never_levers() -> None:
 def test_run_all_ranks_every_strategy_and_adds_the_overlay() -> None:
     result = mab.run_all(_prices())
     names = set(result["ranking"])
-    assert set(mab.STRATEGIES) <= names
+    assert set(mab.ALL_STRATEGIES) <= names
     assert any(n.startswith("vol_target_10__") for n in names)
-    assert result["n_trials"] == len(mab.STRATEGIES) + 1
+    assert result["n_trials"] == len(mab.ALL_STRATEGIES) + 1
     for name in result["ranking"]:
         v = result["strategies"][name]["validation"]
         assert v["start"] >= "2011-01-01" and v["end"] <= "2020-12-31"
