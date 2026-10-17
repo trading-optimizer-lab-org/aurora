@@ -129,14 +129,28 @@ def main() -> int:
     ap.add_argument("--symbols", type=Path, default=Path("docs/research/data/stock_catalog_symbols.csv"))
     ap.add_argument("--fingerprint-ref", type=Path, default=Path("docs/research/data/stock_panel_fingerprint.csv"))
     ap.add_argument("--out-dir", type=Path, default=Path("outputs/stock_panel"))
+    ap.add_argument("--raw-cache", type=Path, default=Path("outputs/yahoo_raw"),
+                    help="per-symbol Yahoo downloads kept between runs (resume)")
     args = ap.parse_args()
     syms = pd.read_csv(args.symbols)
     if args.source == "local":
         series = {s: read_local(args.prices_dir, s) for s in syms["symbol"]}
     else:
-        got = download_yahoo(syms["yfinance_symbol"].tolist())
-        back = dict(zip(syms["yfinance_symbol"], syms["symbol"]))
-        series = {back[t]: df for t, df in got.items()}
+        if args.fingerprint_ref.exists():  # only symbols that have data before 2021 locally
+            syms = syms[syms["symbol"].isin(pd.read_csv(args.fingerprint_ref)["symbol"])]
+        args.raw_cache.mkdir(parents=True, exist_ok=True)
+        series = {}
+        for s in syms["symbol"]:
+            f = args.raw_cache / f"{s}.parquet"
+            if f.exists():
+                series[s] = pd.read_parquet(f)
+        todo = syms[~syms["symbol"].isin(series)]
+        print(f"raw cache: {len(series)} symbols, downloading {len(todo)}", flush=True)
+        got = download_yahoo(todo["yfinance_symbol"].tolist())
+        back = dict(zip(todo["yfinance_symbol"], todo["symbol"]))
+        for t, df in got.items():
+            df.to_parquet(args.raw_cache / f"{back[t]}.parquet")
+            series[back[t]] = df
     bench = benchmarks(args.source, args.prices_dir)
     calendar = pd.DatetimeIndex(bench["gspc"].dropna().index)
     qc_rows, fps, keep = [], {}, {}

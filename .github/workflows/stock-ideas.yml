@@ -48,9 +48,25 @@ jobs:
           path: outputs/stock_panel
           key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
 
-      - name: Download and check prices
+      - name: Restore partial Yahoo downloads
         if: steps.panel.outputs.cache-hit != 'true'
-        run: python scripts/build_stock_panel.py --source yahoo --out-dir outputs/stock_panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/yahoo_raw
+          key: yahoo-raw-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: yahoo-raw-v1-
+
+      - name: Download and check prices
+        id: build
+        if: steps.panel.outputs.cache-hit != 'true'
+        run: python scripts/build_stock_panel.py --source yahoo --out-dir outputs/stock_panel --raw-cache outputs/yahoo_raw
+
+      - name: Save partial Yahoo downloads
+        if: always() && steps.panel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/yahoo_raw
+          key: yahoo-raw-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Save price panel
         if: steps.panel.outputs.cache-hit != 'true'
