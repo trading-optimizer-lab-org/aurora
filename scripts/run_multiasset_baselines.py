@@ -106,7 +106,12 @@ def tbill_index() -> pd.Series:
     df.columns = ["date", "rate"]
     rate = pd.to_numeric(df["rate"], errors="coerce")
     s = pd.Series(rate.to_numpy(), index=pd.to_datetime(df["date"])).ffill().dropna()
-    daily = (1 + s / 100.0) ** (1 / 252) - 1
+    # DTB3 is a 91-day bank-discount quote: price = 1 - d * 91 / 360. Convert to
+    # the bill's holding-period return, then to a per-trading-day return
+    # (91 calendar days ~ 63 trading days).
+    discount = s / 100.0 * 91 / 360
+    holding = discount / (1 - discount)
+    daily = (1 + holding) ** (1 / 63) - 1
     return (1 + daily).cumprod().rename("CASH")
 
 

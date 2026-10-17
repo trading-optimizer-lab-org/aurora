@@ -61,11 +61,11 @@ class MarketView:
         return float(m.iloc[-1] / m.iloc[-months:].mean())
 
     def vol(self, asset: str, days: int = 60) -> float:
-        r = self.daily[asset].pct_change().iloc[-days:]
+        r = self.daily[asset].pct_change(fill_method=None).iloc[-days:]
         return float(r.std(ddof=1) * np.sqrt(TRADING_DAYS))
 
     def daily_returns(self, assets: list[str], days: int) -> pd.DataFrame:
-        return self.daily[assets].pct_change().iloc[-days:].dropna()
+        return self.daily[assets].pct_change(fill_method=None).iloc[-days:].dropna()
 
 
 def keller_13612w(view: MarketView, asset: str) -> float:
@@ -262,7 +262,7 @@ def simulate(prices: pd.DataFrame, weights: pd.DataFrame,
     A target set at the close of day ``d`` is traded at that close and earns
     the returns of ``d + 1`` onwards.
     """
-    returns = prices.pct_change().reindex(columns=weights.columns).to_numpy()
+    returns = prices.pct_change(fill_method=None).reindex(columns=weights.columns).to_numpy()
     dates = prices.index
     targets = {dates.get_loc(d): w for d, w in zip(weights.index, weights.to_numpy())}
     current: np.ndarray | None = None
@@ -307,7 +307,8 @@ def vol_target_overlay(strategy_returns: pd.Series, cash_returns: pd.Series,
     applied = scale.ffill().shift(1).dropna()
     cash = cash_returns.reindex(applied.index).fillna(0.0)
     base = strategy_returns.reindex(applied.index)
-    cost = applied.diff().abs().fillna(0.0) * cost_bps / 1e4
+    # Moving d from the strategy to cash trades both legs, as in simulate().
+    cost = 2 * applied.diff().abs().fillna(0.0) * cost_bps / 1e4
     return applied * base + (1 - applied) * cash - cost
 
 
@@ -343,7 +344,7 @@ def run_all(prices: pd.DataFrame, cost_bps: float = COST_BPS) -> dict:
     """Evaluate every strategy plus the vol-target overlay of the validation winner."""
     if prices.index.max() >= LOCKED_START:
         raise ValueError("locked period data reached the evaluator")
-    cash = prices["CASH"].pct_change()
+    cash = prices["CASH"].pct_change(fill_method=None)
     results: dict[str, dict] = {}
     daily: dict[str, pd.Series] = {}
     for name, fn in STRATEGIES.items():
@@ -358,9 +359,12 @@ def run_all(prices: pd.DataFrame, cost_bps: float = COST_BPS) -> dict:
             "validation": metrics(_period(rets, VALIDATION_START, VALIDATION_END), cash),
             "avg_turnover_per_rebalance": float(turnover.mean()) if len(turnover) else 0.0,
         }
+    # The overlay base is chosen on the in-sample period only, so the
+    # validation window plays no part in building the extra trial.
+    in_sample_ranked = _rank(results, period="in_sample")
     ranked = _rank(results)
-    if ranked:
-        winner = ranked[0]
+    if in_sample_ranked:
+        winner = in_sample_ranked[0]
         overlay = vol_target_overlay(daily[winner], cash, cost_bps=cost_bps)
         name = f"vol_target_10__{winner}"
         daily[name] = overlay
@@ -402,10 +406,10 @@ def deflated_sharpe(sharpe_ann: float, trial_sharpes_ann: list[float], n_periods
     return float(norm.cdf((sr - sr0) * np.sqrt(n_periods - 1) / np.sqrt(denom)))
 
 
-def _rank(results: dict[str, dict]) -> list[str]:
-    """Order by the mean of the validation Sharpe rank and Sortino rank."""
-    rows = {k: v["validation"] for k, v in results.items()
-            if "validation" in v and "sharpe" in v["validation"]}
+def _rank(results: dict[str, dict], period: str = "validation") -> list[str]:
+    """Order by the mean of the ``period`` Sharpe rank and Sortino rank."""
+    rows = {k: v[period] for k, v in results.items()
+            if period in v and "sharpe" in v[period]}
     if not rows:
         return []
     frame = pd.DataFrame(rows).T[["sharpe", "sortino"]].astype(float)

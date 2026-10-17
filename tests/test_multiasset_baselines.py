@@ -50,6 +50,23 @@ def test_holdings_drift_between_rebalances() -> None:
     assert rets.loc[idx[3]] == pytest.approx(-1 / 6)
 
 
+def test_simulate_refuses_to_pad_a_gap_in_a_held_asset() -> None:
+    idx = pd.bdate_range("2020-01-01", periods=5)
+    prices = pd.DataFrame({"A": [100, 101, np.nan, 103, 104]}, index=idx)
+    weights = pd.DataFrame({"A": [1.0]}, index=[idx[0]])
+    with pytest.raises(ValueError, match="missing return"):
+        mab.simulate(prices, weights, cost_bps=0)
+
+
+def test_rank_uses_the_requested_period() -> None:
+    results = {
+        "a": {"in_sample": {"sharpe": 2.0, "sortino": 2.0}, "validation": {"sharpe": 0.1, "sortino": 0.1}},
+        "b": {"in_sample": {"sharpe": 0.5, "sortino": 0.5}, "validation": {"sharpe": 1.0, "sortino": 1.0}},
+    }
+    assert mab._rank(results, period="in_sample") == ["a", "b"]
+    assert mab._rank(results) == ["b", "a"]
+
+
 def test_run_all_rejects_locked_period() -> None:
     prices = _prices(end="2021-01-05")
     with pytest.raises(ValueError, match="locked"):
