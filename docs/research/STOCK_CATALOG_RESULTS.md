@@ -5,8 +5,11 @@ Datos: catálogo local `free_us_daily` (Yahoo), 2.938 acciones operables, 1993-2
 **Sesgo de supervivencia sin corregir** (decisión del propietario): solo están las empresas que siguen cotizando, así
 que todo sale optimista, sobre todo lo que compra acciones hundidas (BNF).
 
-La ejecución en GitHub (`stock-ideas.yml`) usa los mismos datos descargados de Yahoo. Las 1.155 acciones que bajó el
-primer run coincidieron al 100% con estos datos locales. Su resultado completo se añadirá cuando la descarga termine.
+**Confirmado en GitHub** ([run 39042775310](https://github.com/trading-optimizer-lab-org/aurora/actions/runs/39042775310),
+`stock-ideas.yml`, datos descargados de nuevo de Yahoo): 3.205 de las 3.263 acciones (98,2%); 3.203 con rentabilidades
+idénticas a las locales (dos con revisiones de datos: GORO y NFE). Los profit factors coinciden con los locales a ±0,04 en
+casi todas las reglas (por ejemplo, retroceso 9/21: 1,26 en GitHub frente a 1,27 en local). La excepción es el Episodic Pivot,
+con solo 135 operaciones (0,78 frente a 1,00), demasiado pocas para ser estable. Las conclusiones no cambian.
 
 ## 1. Cada señal por separado (sin límite de dinero) — validación 2011-2020
 
