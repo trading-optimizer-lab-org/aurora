@@ -54,7 +54,7 @@ def _months() -> list[str]:
 
 
 def daily_closes(kind: str, symbol: str) -> pd.Series:
-    frames = []
+    frames: list[pd.Series] = []
     for month in _months():
         url = f"{BASE}/{kind}/monthly/klines/{symbol}/1d/{symbol}-1d-{month}.zip"
         df = _csv_from_zip(url)
@@ -66,7 +66,7 @@ def daily_closes(kind: str, symbol: str) -> pd.Series:
 
 
 def daily_funding(symbol: str) -> pd.Series:
-    frames = []
+    frames: list[pd.Series] = []
     for month in _months():
         url = f"{BASE}/futures/um/monthly/fundingRate/{symbol}/{symbol}-fundingRate-{month}.zip"
         df = _csv_from_zip(url)
