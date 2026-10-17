@@ -20,7 +20,8 @@ filter.
 - Prices: the local free US daily catalog (Yahoo, `free_us_daily`, 4,400
   stocks listed in June 2026; open/high/low/close, adjusted close, volume,
   splits). Prices are total-return adjusted with `adj_close / close`.
-  Only rows before 2021-01-01 are read.
+  Only rows before 2021-01-01 are used. Split events after 2020 are read
+  only to convert Yahoo's split-adjusted close back to the quoted price.
 - Market filter: S&P 500 index (`^GSPC`) daily close. Benchmark: SPY total
   return. Cash: 3-month T-bill index as in the other studies.
 - Survivorship-bias calibration: Kenneth French data library, "10 Portfolios
@@ -48,7 +49,8 @@ The bias is measured, not ignored:
 2. For each period (train, validation) the bias `b` is the mean monthly
    difference, local minus French, floored at zero.
 3. Every candidate's monthly return is reduced by `b` times its average
-   invested fraction that month. **Pass criteria apply to these adjusted
+   invested fraction that month (applied daily: `b / trading days in the
+   month` times that day's invested fraction). **Pass criteria apply to these adjusted
    returns.** Unadjusted results are reported too.
 
 ## Universe, every trading day
