@@ -193,7 +193,9 @@ def write_report(result: dict, data_report: dict, out: Path) -> None:
         v = result["strategies"][name]["validation"]
         i = result["strategies"][name]["in_sample"]
         rows.append({"strategy": name, "val_sharpe": v["sharpe"], "val_sortino": v["sortino"],
+                     "val_sharpe_monthly": v["sharpe_monthly"],
                      "val_sortino_monthly": v["sortino_monthly"],
+                     "is_sharpe_monthly": i.get("sharpe_monthly"),
                      "is_sortino_monthly": i.get("sortino_monthly"),
                      "val_positive_months": v["positive_months"],
                      "val_cagr": v["cagr"], "val_vol": v["vol"], "val_max_dd": v["max_drawdown"],

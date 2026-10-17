@@ -352,6 +352,14 @@ def _monthly(returns: pd.Series) -> pd.Series:
     return (1 + returns).groupby(returns.index.to_period("M")).prod() - 1
 
 
+def _sortino_from(mean_excess: float, downside: float) -> float:
+    """Annualised monthly Sortino; same zero-downside convention as
+    ``sortino_ratio``: +inf for a positive mean, 0 otherwise."""
+    if downside > 0:
+        return float(mean_excess / downside * np.sqrt(12))
+    return float("inf") if mean_excess > 0 else 0.0
+
+
 def _monthly_metrics(r: pd.Series, cash: pd.Series) -> dict[str, float]:
     """Sharpe and Sortino on calendar-month excess returns (the usual published
     convention) and the share of positive months."""
@@ -360,7 +368,7 @@ def _monthly_metrics(r: pd.Series, cash: pd.Series) -> dict[str, float]:
     downside = np.sqrt((np.minimum(excess, 0.0) ** 2).sum() / (len(excess) - 1))
     return {
         "sharpe_monthly": float(excess.mean() / excess.std(ddof=1) * np.sqrt(12)),
-        "sortino_monthly": float(excess.mean() / downside * np.sqrt(12)) if downside > 0 else float("nan"),
+        "sortino_monthly": _sortino_from(excess.mean(), downside),
         "positive_months": float((m > 0).mean()),
     }
 

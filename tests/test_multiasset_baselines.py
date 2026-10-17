@@ -86,6 +86,14 @@ def test_monthly_metrics_count_positive_months() -> None:
     assert out["sortino_monthly"] > out["sharpe_monthly"] > 0
 
 
+def test_monthly_sortino_without_downside_follows_daily_convention() -> None:
+    idx = pd.bdate_range("2015-01-01", "2015-06-30")
+    up = mab._monthly_metrics(pd.Series(0.001, index=idx), pd.Series(0.0, index=idx))
+    flat = mab._monthly_metrics(pd.Series(0.0, index=idx), pd.Series(0.0, index=idx))
+    assert up["sortino_monthly"] == float("inf")
+    assert flat["sortino_monthly"] == 0.0
+
+
 def test_rank_uses_the_requested_period() -> None:
     results = {
         "a": {"in_sample": {"sharpe": 2.0, "sortino": 2.0}, "validation": {"sharpe": 0.1, "sortino": 0.1}},
