@@ -49,3 +49,22 @@ Versión EEUU del rebote corto de BNF, con reglas escritas antes de mirar los da
 - Salida en 1-5 días.
 
 Como solo dura días, el sesgo de empresas desaparecidas pesa menos que en estrategias de meses. Aun así está ahí, porque se compran acciones que se han hundido: el test lo medirá limitándose a las acciones más grandes y líquidas.
+
+## Solo los que superan el 100% anual compuesto
+
+La rentabilidad anual compuesta se calcula a partir del capital inicial y final publicados (`(final/inicial)^(1/años) - 1`).
+
+| # | Trader | Anual compuesto | Multiplicó por | Años | Verif. |
+|---|---|---|---|---|---|
+| 1 | BNF | 221% | x11.250 | 8 | A/B |
+| 2 | Mark Minervini (1994-2000; además +334,8% auditado en 2021) | 188% | x336 | 5,5 | A/B |
+| 3 | Chris Kacher | 123% | x181 | 6,5 | A |
+| 4 | Ross Cameron (empezó con 583 $, lo que infla el %; day trading) | ~217% | 583 $ a 18,8 M$ | 9 | A |
+| 5 | David Ryan | 139% | x14 | 3 | B |
+| 6 | J Law | 300% | x16 | 2 | B |
+| 7 | Martin Luk | 540% | x41 | 2 | B |
+| 8 | Dan Zanger | ~14.000% | x1.671 | 1,5 | A/B |
+| 9 | Oliver Kell | 941% | x10,4 | 1 | B |
+| 10 | Kristjan Kullamägi | 221% | x20.000 (dice) | 8,5 | C |
+
+Quedan fuera por no llegar al 100%: Steve Cohen (~30%), Richard Driehaus (~30%), Gil Morales (87%), Sean Ryan (81%), CIS (69-88%), Darvas (91% con lo verificado; 297% con lo que él decía) y Livermore (sin datos).
