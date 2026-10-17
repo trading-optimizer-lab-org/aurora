@@ -11,7 +11,6 @@ import argparse
 import importlib.util
 import io
 import json
-import os
 import zipfile
 from pathlib import Path
 
@@ -19,12 +18,13 @@ import numpy as np
 import pandas as pd
 import requests
 
+from aurora.core.runtime_paths import base_data_dir
 from aurora.research import stocks_sepa as ss
 
 FRENCH_URL = ("https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/"
               "10_Portfolios_Prior_12_2_CSV.zip")
 TIINGO_URL = "https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip"
-DEFAULT_DIR = Path(os.environ.get("LOCALAPPDATA", "~")) / "aurora" / "prices" / "free_us_daily"
+DEFAULT_DIR = base_data_dir() / "prices" / "free_us_daily"
 FIELDS = ("open", "high", "low", "close", "volume", "dollar_volume", "real_price")
 
 
