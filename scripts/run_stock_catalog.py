@@ -60,6 +60,19 @@ def render(study: dict, data: dict) -> str:
         checks = "; ".join(f"{'PASS' if ok else 'FAIL'} {c}" for c, ok in r["checks"].items())
         lines.append(f"- **{n}**: {'PASSED' if r['passed'] else 'FAILED'} ({checks}); "
                      f"deflated Sharpe {r['validation']['deflated_sharpe']:.2f}; signals {r.get('signals', 0)}")
+    tk = [("trades", "{:,}"), ("win_rate", "{:.0%}"), ("avg_return", "{:+.2%}"), ("median_return", "{:+.2%}"),
+          ("avg_R", "{:+.2f}"), ("profit_factor", "{:.2f}"), ("total_return", "{:+,.0%}"), ("total_R", "{:+,.0f}"),
+          ("avg_days", "{:.1f}"), ("top5pct_share", "{:.0%}")]
+    for period in ("train", "validation"):
+        lines += ["", f"## Every signal traded on its own ({period}, Amendment 1)", "",
+                  "| strategy | " + " | ".join(k for k, _ in tk) + " |", "|" + "---|" * (len(tk) + 1)]
+        for n in study["candidates"]:
+            tl = res[n].get("trade_level")
+            if not tl or not tl[period].get("trades"):
+                continue
+            row = tl[period]
+            lines.append(f"| {n} | " + " | ".join(
+                "-" if (v := row.get(k)) is None or v != v else f.format(v) for k, f in tk) + " |")
     years = [str(y) for y in range(2011, 2021)]
     lines += ["", "## Industry filter (IND50) minus no filter, validation years (Jacobs' claim)", "",
               "| strategy | " + " | ".join(years) + " | years better |", "|" + "---|" * (len(years) + 2)]
@@ -92,6 +105,8 @@ def main() -> int:
             "panel": json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}}
     args.output_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(study["daily_returns"]).to_parquet(args.output_dir / "daily_returns.parquet")
+    pd.concat({n: t for n, t in study["trades"].items()}, names=["strategy"]).reset_index(level=0).to_parquet(
+        args.output_dir / "trades.parquet")
     (args.output_dir / "results.json").write_text(
         json.dumps({"data": data, "results": study["results"]}, indent=2, default=str), encoding="utf-8")
     text = render(study, data)

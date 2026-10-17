@@ -361,19 +361,27 @@ def run_study(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close:
     cash = cash_index.reindex(dates).ffill().pct_change(fill_method=None).fillna(0.0)
     ind = indicators(panel, index_close, industry.reindex(keep))
     O, H, L, C, V = (panel[k] for k in ("open", "high", "low", "close", "volume"))
+    from aurora.research import stock_trades as st
+
     daily: dict[str, pd.Series] = {}
+    trades: dict[str, pd.DataFrame] = {}
     extra: dict[str, dict] = {}
     for key, fn in SETUPS.items():
         sig, stop = fn(O, H, L, C, V, ind)
         for cand in [c for c in CANDIDATES if c.setup == key]:
-            d = simulate(panel, ind, entry_mask(sig, ind, cand.filters), stop, cand.exit, cash, ind["rs"])
+            mask = entry_mask(sig, ind, cand.filters)
+            d = simulate(panel, ind, mask, stop, cand.exit, cash, ind["rs"])
             daily[cand.name] = d["return"]
+            trades[cand.name] = st.trade_list(panel, ind, mask, stop, cand.exit)
             extra[cand.name] = {"invested_mean": float(d["invested"].mean()),
-                                "signals": int(entry_mask(sig, ind, cand.filters).loc[TRAIN_START:].to_numpy().sum())}
+                                "signals": int(mask.loc[TRAIN_START:].to_numpy().sum())}
         del sig, stop
     sig, limit, dev = bnf_signals(panel, ind)
-    d = simulate(panel, ind, sig.fillna(False), None, "BNF", cash, -dev, limits=limit, rsi=rsi2(C))
+    sig = sig.fillna(False).astype(bool)
+    r2 = rsi2(C)
+    d = simulate(panel, ind, sig, None, "BNF", cash, -dev, limits=limit, rsi=r2)
     daily["bnf_reversion"] = d["return"]
+    trades["bnf_reversion"] = st.trade_list(panel, ind, sig, None, "BNF", limits=limit, rsi=r2)
     extra["bnf_reversion"] = {"invested_mean": float(d["invested"].mean()),
                               "signals": int(sig.loc[TRAIN_START:].to_numpy().sum())}
     daily[BLEND[0]] = blend(daily, BLEND[1])
@@ -386,6 +394,8 @@ def run_study(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close:
         results[name] = {p: metrics(r.loc[a:b], cash) for p, (a, b) in PERIODS.items()}
         results[name]["annual"] = annual_returns(r)
         results[name].update(extra.get(name, {}))
+        if name in trades:
+            results[name]["trade_level"] = st.summarize(trades[name])
     names = [c.name for c in CANDIDATES] + [BLEND[0]]
     trial = [results[n]["validation"]["sharpe"] for n in names]
     for n in names:
@@ -394,4 +404,4 @@ def run_study(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close:
                                                    kurtosis=v["kurtosis"], ppy=PPY)
         results[n]["checks"] = criteria(v, results["spy"]["validation"])
         results[n]["passed"] = all(results[n]["checks"].values())
-    return {"results": results, "daily_returns": {**bench, **daily}, "candidates": names}
+    return {"results": results, "daily_returns": {**bench, **daily}, "candidates": names, "trades": trades}

@@ -158,3 +158,58 @@ def test_setups_return_signal_and_stop_shapes() -> None:
         assert sig.shape == close.shape and stop.shape == close.shape, key
     sig, limit, dev = sc.bnf_signals(panel, ind)
     assert sig.shape == close.shape
+
+
+def test_trade_list_skips_overlapping_signals_and_nets_costs() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(15)
+    close = pd.DataFrame({"A": [100.0] * 6 + [110.0] * 9}, index=idx)
+    panel = _panel(close)
+    entries = _entry(close, 1)
+    entries.iloc[3, 0] = True  # inside the first trade: skipped
+    entries.iloc[9, 0] = True  # after it: a second trade
+    t = st.trade_list(panel, _ind(close), entries, close * 0 + 95.0, "X5", start=idx[0])
+    assert len(t) == 2
+    assert t["return"].iloc[0] == pytest.approx(110 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1)
+    assert t["R"].iloc[0] == pytest.approx(t["return"].iloc[0] / 0.05)
+    assert t["days"].iloc[0] == 5
+
+
+def test_trade_list_stop_and_half_exit() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(10)
+    close = pd.DataFrame({"A": [100.0, 100, 100, 104, 104, 104, 104, 104, 104, 104]}, index=idx)
+    panel = _panel(close)
+    panel["low"] = close * 1.0
+    panel["low"].iloc[7, 0] = 99.0  # break-even stop after the half exit
+    t = st.trade_list(panel, _ind(close), _entry(close, 1), close * 0 + 95.0, "XH3", start=idx[0])
+    half = 104 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
+    rest = 100 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
+    assert t["return"].iloc[0] == pytest.approx(0.5 * half + 0.5 * rest)
+
+
+def test_trade_list_bnf_needs_a_fill() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(10)
+    close = pd.DataFrame({"A": [100.0] * 10}, index=idx)
+    panel = _panel(close)
+    entries = _entry(close, 1)
+    entries.iloc[6, 0] = True
+    limits = close * 0 + 99.5
+    limits.iloc[6, 0] = 90.0  # never reached: no trade
+    t = st.trade_list(panel, _ind(close), entries, None, "BNF", start=idx[0], limits=limits,
+                      rsi=close * 0 + 50.0)
+    assert len(t) == 1 and t["entry"].iloc[0] == pytest.approx(99.5) and t["days"].iloc[0] == 5
+
+
+def test_trade_stats_profit_factor_and_total() -> None:
+    from aurora.research import stock_trades as st
+
+    t = pd.DataFrame({"return": [0.10, -0.05, 0.20, -0.05], "R": [2.0, -1.0, 4.0, -1.0], "days": [1, 2, 3, 4]})
+    s = st.trade_stats(t)
+    assert s["profit_factor"] == pytest.approx(3.0)
+    assert s["total_return"] == pytest.approx(0.20)
+    assert s["total_R"] == pytest.approx(4.0) and s["win_rate"] == 0.5
