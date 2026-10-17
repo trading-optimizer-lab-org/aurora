@@ -166,6 +166,9 @@ def write_report(result: dict, data_report: dict, out: Path) -> None:
         v = result["strategies"][name]["validation"]
         i = result["strategies"][name]["in_sample"]
         rows.append({"strategy": name, "val_sharpe": v["sharpe"], "val_sortino": v["sortino"],
+                     "val_sortino_monthly": v["sortino_monthly"],
+                     "is_sortino_monthly": i.get("sortino_monthly"),
+                     "val_positive_months": v["positive_months"],
                      "val_cagr": v["cagr"], "val_vol": v["vol"], "val_max_dd": v["max_drawdown"],
                      "val_calmar": v["calmar"], "val_deflated_sharpe": v["deflated_sharpe"],
                      "is_start": i.get("start"), "is_sharpe": i.get("sharpe"),
@@ -181,7 +184,9 @@ def write_report(result: dict, data_report: dict, out: Path) -> None:
         "",
         f"Data end: {data_report['data_end']} (locked period from 2021-01-01 excluded).",
         f"Trials counted for the deflated Sharpe: {result['n_trials']}.",
-        "Ranking: mean of validation (2011-2020) Sharpe rank and Sortino rank.",
+        "Ranking: mean of validation (2011-2020) daily Sharpe rank and Sortino rank.",
+        "`*_monthly` columns use calendar-month excess returns (usual published convention).",
+        "`blend_*` rows were declared after seeing the single-strategy results.",
         "",
         _markdown_table(table),
         "",
