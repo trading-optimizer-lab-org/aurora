@@ -103,7 +103,7 @@ def local_hi_prior(panel: dict[str, pd.DataFrame], nyse: pd.Index) -> pd.Series:
 def delisting_census(local_first: pd.Series) -> dict:
     resp = requests.get(TIINGO_URL, timeout=120)
     resp.raise_for_status()
-    t = pd.read_csv(io.BytesIO(resp.content))
+    t = pd.read_csv(io.BytesIO(resp.content), compression="zip")
     t = t[t["assetType"].eq("Stock") & t["exchange"].isin(["NYSE", "NASDAQ", "AMEX", "NYSE MKT"])]
     start, end = pd.to_datetime(t["startDate"], errors="coerce"), pd.to_datetime(t["endDate"], errors="coerce")
     out = {}
