@@ -1,0 +1,88 @@
+name: Stock catalog (pre-registered)
+
+# Train + validation of docs/research/STOCK_CATALOG_PREREGISTRATION.md.
+# Prices are downloaded from Yahoo ending 2020-12-31 (locked period never
+# read), checked, compared with the fingerprint of the owner's local data,
+# and cached for later runs. Only the report is uploaded, not the prices.
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - research/stock_catalog.py
+      - research/stock_data_checks.py
+      - scripts/build_stock_panel.py
+      - scripts/run_stock_catalog.py
+      - .github/workflows/stock-ideas.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stock-ideas
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        id: panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+
+      - name: Download and check prices
+        if: steps.panel.outputs.cache-hit != 'true'
+        run: python scripts/build_stock_panel.py --source yahoo --out-dir outputs/stock_panel
+
+      - name: Save price panel
+        if: steps.panel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: ${{ steps.panel.outputs.cache-primary-key }}
+
+      - name: Run catalog
+        run: python scripts/run_stock_catalog.py --panel-dir outputs/stock_panel --output-dir outputs/stock_catalog
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f outputs/stock_catalog/REPORT.md ]; then
+            cat outputs/stock_catalog/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f outputs/stock_panel/data_summary.json ]; then
+            { echo '```json'; cat outputs/stock_panel/data_summary.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          mkdir -p outputs/stock_catalog
+          cp outputs/stock_panel/data_quality.csv outputs/stock_panel/data_summary.json \
+             outputs/stock_panel/fingerprint.csv outputs/stock_catalog/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: stock-catalog
+          path: |
+            outputs/stock_catalog/REPORT.md
+            outputs/stock_catalog/results.json
+            outputs/stock_catalog/data_quality.csv
+            outputs/stock_catalog/data_summary.json
+            outputs/stock_catalog/fingerprint.csv
+          if-no-files-found: warn
+          retention-days: 90
