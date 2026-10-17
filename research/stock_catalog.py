@@ -228,6 +228,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     LO20 = ind["low20"].to_numpy(dtype=f32) if "low20" in ind else None
     R14 = ind["rsi14"].to_numpy(dtype=f32) if "rsi14" in ind else None
     WK = ind["week_end"].to_numpy() if "week_end" in ind else None
+    XC = ind[exit_rule].to_numpy() if exit_rule.startswith("XC_") else None
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -343,6 +344,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
             elif exit_rule == "XEXT":
                 assert S50 is not None
                 if c >= 1.25 * S50[t, i] or c < S50[t, i]:
+                    sell(i, c)
+            elif exit_rule.startswith("XC_"):
+                assert XC is not None
+                if XC[t, i]:
                     sell(i, c)
             elif exit_rule == "XWK":
                 assert S50 is not None and WK is not None

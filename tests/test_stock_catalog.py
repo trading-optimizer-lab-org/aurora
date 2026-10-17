@@ -358,3 +358,21 @@ def test_v5_grid_setups_and_exits() -> None:
     c3 = pd.DataFrame({"A": [100.0] * 30}, index=d3)
     t3 = st.trade_list(_panel(c3), _ind(c3), _entry(c3, 2), c3 * 0 + 95.0, "XTIME20", start=d3[0])
     assert t3["days"].iloc[0] == 20
+
+
+def test_v6_grid_and_volume_setups() -> None:
+    from aurora.research import stock_catalog_v6 as v6
+
+    names = [t.name for t in v6.trials()]
+    assert len(set(names)) == len(names) == 51 * 23 * 10
+    assert sorted(g for k in range(51) for g in v6.shard_groups(k, 51)) == sorted(v6.SETUPS)
+    rng = np.random.default_rng(4)
+    idx = pd.bdate_range("1993-01-04", periods=400)
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0.001, 0.03, (400, 3)), axis=0), index=idx, columns=list("abc"))
+    panel = _panel(close)
+    ind = sc.indicators(panel, close["a"], pd.Series({"a": "X", "b": "X", "c": "X"}))
+    args = [panel[k] for k in ("open", "high", "low", "close", "volume")]
+    vc = v6.volume_context(*args, ind)
+    for key in v6.VOLUME_SETUPS:
+        sig, stop = v6.build_volume(key, *args, ind, vc)
+        assert sig.shape == close.shape and stop.shape == close.shape, key

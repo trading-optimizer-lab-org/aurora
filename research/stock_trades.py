@@ -37,6 +37,7 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
     LO20 = ind["low20"].to_numpy(dtype=f32) if "low20" in ind else None
     R14 = ind["rsi14"].to_numpy(dtype=f32) if "rsi14" in ind else None
     WK = ind["week_end"].to_numpy() if "week_end" in ind else None
+    XC = ind[exit_rule].to_numpy() if exit_rule.startswith("XC_") else None
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
@@ -134,6 +135,8 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             elif exit_rule == "XRSI80" and R14 is not None and R14[u, i] > 80:
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XEXT" and S50 is not None and (c >= 1.25 * S50[u, i] or c < S50[u, i]):
+                exit_t, exit_px = u, float(c)
+            elif XC is not None and XC[u, i]:
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XWK" and S50 is not None and WK is not None and WK[u] and c < S50[u, i]:
                 exit_t, exit_px = u, float(c)
