@@ -37,12 +37,17 @@ jobs:
           AU_DATA_DIR: ${{ runner.temp }}/aurora_data
         run: python scripts/run_multiasset_baselines.py --output-dir outputs/multiasset_baselines
 
+      - name: Robustness checks for All Weather + VAA-G4
+        run: python scripts/run_multiasset_robustness.py --output-dir outputs/multiasset_baselines
+
       - name: Publish summary
         if: always()
         run: |
-          if [ -f outputs/multiasset_baselines/REPORT.md ]; then
-            cat outputs/multiasset_baselines/REPORT.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for f in REPORT.md ROBUSTNESS.md; do
+            if [ -f "outputs/multiasset_baselines/$f" ]; then
+              cat "outputs/multiasset_baselines/$f" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()

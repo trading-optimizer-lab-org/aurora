@@ -131,15 +131,22 @@ def gem(view: MarketView) -> Weights | None:
     return {"AGG": 1.0}
 
 
-def vaa_g4(view: MarketView) -> Weights | None:
-    """Keller & Keuning (2017) VAA-G4, top 1."""
+def make_vaa_g4(score_fn: Callable[[MarketView, str], float] = keller_13612w) -> StrategyFn:
+    """Keller & Keuning (2017) VAA-G4, top 1, with a pluggable momentum score."""
     offensive, defensive = ["SPY", "EFA", "EEM", "AGG"], ["LQD", "IEF", "SHY"]
-    if not view.has(offensive + defensive, 12):
-        return None
-    score = {a: keller_13612w(view, a) for a in offensive + defensive}
-    if all(score[a] > 0 for a in offensive):
-        return {max(offensive, key=score.__getitem__): 1.0}
-    return {max(defensive, key=score.__getitem__): 1.0}
+
+    def strategy(view: MarketView) -> Weights | None:
+        if not view.has(offensive + defensive, 12):
+            return None
+        score = {a: score_fn(view, a) for a in offensive + defensive}
+        if all(score[a] > 0 for a in offensive):
+            return {max(offensive, key=score.__getitem__): 1.0}
+        return {max(defensive, key=score.__getitem__): 1.0}
+
+    return strategy
+
+
+vaa_g4 = make_vaa_g4()
 
 
 def daa_canary(view: MarketView) -> Weights | None:
@@ -275,14 +282,20 @@ BLENDS: dict[str, StrategyFn] = {
 ALL_STRATEGIES: dict[str, StrategyFn] = {**STRATEGIES, **BLENDS}
 
 
-def signal_dates(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-    """Last trading day of each month present in ``index``."""
+def signal_dates(index: pd.DatetimeIndex, day: int | None = None) -> pd.DatetimeIndex:
+    """One trading day per month: the last one, or with ``day`` the last trading
+    day on or before that day of the month (the first trading day if none)."""
     s = pd.Series(index, index=index)
-    return pd.DatetimeIndex(s.groupby(index.to_period("M")).max().to_numpy())
+    groups = s.groupby(index.to_period("M"))
+    if day is None:
+        return pd.DatetimeIndex(groups.max().to_numpy())
+    picks = [g[g.dt.day <= day].max() if (g.dt.day <= day).any() else g.min() for _, g in groups]
+    return pd.DatetimeIndex(picks)
 
 
-def target_weights(prices: pd.DataFrame, strategy: StrategyFn) -> pd.DataFrame:
-    monthly = prices.loc[signal_dates(prices.index)]
+def target_weights(prices: pd.DataFrame, strategy: StrategyFn,
+                   dates: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+    monthly = prices.loc[signal_dates(prices.index) if dates is None else dates]
     rows: dict[pd.Timestamp, Weights] = {}
     for date in monthly.index:
         w = strategy(MarketView(prices.loc[:date], monthly.loc[:date]))
