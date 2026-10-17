@@ -9,12 +9,15 @@ on:
 
 jobs:
   test:
+    # Pull requests run the required Linux / Python 3.12 suite in six parallel
+    # shards so the merge gate stays under ten minutes. The full Python x OS
+    # matrix still runs on every push to main.
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
-        os: [ubuntu-latest, windows-latest]
-        shard: [0, 1]
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.11", "3.12", "3.13"]') }}
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "windows-latest"]') }}
+        shard: ${{ github.event_name == 'pull_request' && fromJSON('[0, 1, 2, 3, 4, 5]') || fromJSON('[0, 1]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -36,4 +39,4 @@ jobs:
         run: >-
           python scripts/run_ci_test_shard.py
           --shard-index ${{ matrix.shard }}
-          --shard-count 2
+          --shard-count ${{ github.event_name == 'pull_request' && 6 || 2 }}
