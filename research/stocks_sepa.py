@@ -143,8 +143,8 @@ def run_candidate(panel: dict[str, pd.DataFrame], ind: dict, cash_returns: pd.Se
             if market[t]:
                 free = slots - (len(pos) - len(sells))
                 cand = np.flatnonzero(entry[t])
-                cand = [i for i in cand[np.argsort(-rs[t, cand], kind="stable")] if i not in pos]
-                buys = cand[:max(free, 0)]
+                ranked = [int(i) for i in cand[np.argsort(-rs[t, cand], kind="stable")] if i not in pos]
+                buys = ranked[:max(free, 0)]
         elif month_end[t]:
             if market[t]:
                 cand = np.flatnonzero(entry[t])

@@ -121,7 +121,7 @@ def render(study: dict, report: dict) -> str:
     lines = ["# US stocks, Minervini / O'Neil style (pre-registered)", "",
              "Locked period from 2021-01-01 never read. Candidates are bias-adjusted "
              "(see the pre-registration); monthly metrics on excess returns over T-bills.", "",
-             f"Survivorship bias, local minus French top momentum decile, per month: "
+             "Survivorship bias, local minus French top momentum decile, per month: "
              + ", ".join(f"{p} {b:.2%}" for p, b in study["bias_monthly"].items()), ""]
     for period in ("train", "validation"):
         lines += [f"## {period.capitalize()}", "", "| strategy | " + " | ".join(k for k, _ in keys) + " |",
