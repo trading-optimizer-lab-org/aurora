@@ -33,6 +33,10 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
     S5 = ind["sma5"].to_numpy(dtype=f32) if "sma5" in ind else None
     AD = ind["adr"].to_numpy(dtype=f32)
     E21 = ind["ema21"].to_numpy(dtype=f32) if "ema21" in ind else None
+    LO10 = ind["low10"].to_numpy(dtype=f32) if "low10" in ind else None
+    LO20 = ind["low20"].to_numpy(dtype=f32) if "low20" in ind else None
+    R14 = ind["rsi14"].to_numpy(dtype=f32) if "rsi14" in ind else None
+    WK = ind["week_end"].to_numpy() if "week_end" in ind else None
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
@@ -88,6 +92,10 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             if side < 0 and np.isfinite(hi) and hi >= stop:
                 exit_t, exit_px = u, float(max(O[u, i], stop)) if np.isfinite(O[u, i]) else stop
                 break
+            if exit_rule == "XR3" and np.isfinite(hi) and hi >= entry * (1 + 3 * risk):
+                tgt = entry * (1 + 3 * risk)
+                exit_t, exit_px = u, float(max(O[u, i], tgt)) if np.isfinite(O[u, i]) else tgt
+                break
             if exit_rule == "XO25" and half_ret is None and np.isfinite(hi) and hi >= entry * 1.25:
                 half_ret = _net(entry, float(max(O[u, i], entry * 1.25)) if np.isfinite(O[u, i]) else entry * 1.25)
             if not np.isfinite(c):
@@ -107,9 +115,28 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XRSI" and S5 is not None and c > S5[u, i]:
                 exit_t, exit_px = u, float(c)
-            elif exit_rule in ("XT2", "XT3", "XT5"):
+            elif exit_rule in ("XT2", "XT3", "XT5", "XT8"):
                 hc = max(hc, float(c))
-                stop = max(stop, hc * (1 - int(exit_rule[2]) * adr_e))
+                stop = max(stop, hc * (1 - int(exit_rule[2:]) * adr_e))
+            elif exit_rule == "XBE":
+                if c >= entry * (1 + risk):
+                    stop = max(stop, entry)
+                if c < S20[u, i]:
+                    exit_t, exit_px = u, float(c)
+            elif exit_rule == "XR3" and days >= 60:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule in ("XTIME20", "XTIME60") and days >= int(exit_rule[5:]):
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XLOW10" and LO10 is not None and c < LO10[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XLOW20" and LO20 is not None and c < LO20[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XRSI80" and R14 is not None and R14[u, i] > 80:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XEXT" and S50 is not None and (c >= 1.25 * S50[u, i] or c < S50[u, i]):
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XWK" and S50 is not None and WK is not None and WK[u] and c < S50[u, i]:
+                exit_t, exit_px = u, float(c)
             elif exit_rule == "XE21" and E21 is not None and c < E21[u, i]:
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XS50T60" and S50 is not None and (c < S50[u, i] or days >= 60):

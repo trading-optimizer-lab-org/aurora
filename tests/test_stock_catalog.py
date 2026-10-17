@@ -326,3 +326,35 @@ def test_profit_target_half_then_sma50() -> None:
     half = 125 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
     rest = 130 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
     assert t["return"].iloc[0] == pytest.approx(0.5 * half + 0.5 * rest)
+
+
+def test_v5_grid_setups_and_exits() -> None:
+    from aurora.research import stock_catalog_v5 as v5
+    from aurora.research import stock_trades as st
+
+    names = [t.name for t in v5.trials()]
+    assert len(names) == 960 and len(set(names)) == 960
+    assert sorted(g for k in range(20) for g in v5.shard_groups(k, 20)) == sorted(v5.SETUPS)
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("1993-01-04", periods=400)
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0.001, 0.03, (400, 3)), axis=0), index=idx, columns=list("abc"))
+    panel = _panel(close)
+    ind = sc.indicators(panel, close["a"], pd.Series({"a": "X", "b": "X", "c": "X"}))
+    from aurora.research import stock_catalog_v2 as v2
+    ctx = {"sma200": sc.sma(close, 200), "stage2": v2.stage2(close), "week_end": sc.week_ends(idx),
+           "month_end": v5.month_ends(idx), "index": close["a"]}
+    for key in v5.SETUPS:
+        sig, stop = v5.build(key, *(panel[k] for k in ("open", "high", "low", "close", "volume")), ind, ctx)
+        assert sig.shape == close.shape and stop.shape == close.shape, key
+    # XR3: +3R target fills at the target
+    d = _dates(8)
+    c2 = pd.DataFrame({"A": [100.0, 100, 100, 104, 120, 120, 120, 120]}, index=d)
+    p2 = _panel(c2)
+    p2["open"].iloc[4, 0] = 104.0
+    t = st.trade_list(p2, _ind(c2), _entry(c2, 2), c2 * 0 + 95.0, "XR3", start=d[0])
+    assert t["exit"].iloc[0] == pytest.approx(115.0)
+    # XTIME20 exits on day 20 at the latest
+    d3 = _dates(30)
+    c3 = pd.DataFrame({"A": [100.0] * 30}, index=d3)
+    t3 = st.trade_list(_panel(c3), _ind(c3), _entry(c3, 2), c3 * 0 + 95.0, "XTIME20", start=d3[0])
+    assert t3["days"].iloc[0] == 20

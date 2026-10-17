@@ -224,6 +224,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     S5 = ind["sma5"].to_numpy(dtype=f32) if "sma5" in ind else None
     AD = ind["adr"].to_numpy(dtype=f32)
     E21 = ind["ema21"].to_numpy(dtype=f32) if "ema21" in ind else None
+    LO10 = ind["low10"].to_numpy(dtype=f32) if "low10" in ind else None
+    LO20 = ind["low20"].to_numpy(dtype=f32) if "low20" in ind else None
+    R14 = ind["rsi14"].to_numpy(dtype=f32) if "rsi14" in ind else None
+    WK = ind["week_end"].to_numpy() if "week_end" in ind else None
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -310,9 +314,40 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                 assert S5 is not None
                 if c > S5[t, i]:
                     sell(i, c)
-            elif exit_rule in ("XT2", "XT3", "XT5"):
+            elif exit_rule in ("XT2", "XT3", "XT5", "XT8"):
                 p["hc"] = max(p["hc"], float(c))
-                p["stop"] = max(p["stop"], p["hc"] * (1 - int(exit_rule[2]) * p["adr"]))
+                p["stop"] = max(p["stop"], p["hc"] * (1 - int(exit_rule[2:]) * p["adr"]))
+            elif exit_rule == "XBE":
+                if c >= p["entry"] + p["r0"]:
+                    p["stop"] = max(p["stop"], p["entry"])
+                if c < S20[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XR3":
+                target = p["entry"] + 3 * p["r0"]
+                if np.isfinite(H[t, i]) and H[t, i] >= target:
+                    sell(i, max(O[t, i], target) if np.isfinite(O[t, i]) else target)
+                elif days >= 60:
+                    sell(i, c)
+            elif exit_rule in ("XTIME20", "XTIME60"):
+                if days >= int(exit_rule[5:]):
+                    sell(i, c)
+            elif exit_rule in ("XLOW10", "XLOW20"):
+                lows = LO10 if exit_rule == "XLOW10" else LO20
+                assert lows is not None
+                if c < lows[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XRSI80":
+                assert R14 is not None
+                if R14[t, i] > 80:
+                    sell(i, c)
+            elif exit_rule == "XEXT":
+                assert S50 is not None
+                if c >= 1.25 * S50[t, i] or c < S50[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XWK":
+                assert S50 is not None and WK is not None
+                if WK[t] and c < S50[t, i]:
+                    sell(i, c)
             elif exit_rule == "XE21":
                 assert E21 is not None
                 if c < E21[t, i]:
@@ -352,7 +387,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                         break
                     cash -= value * (1 + COST)
                     pos[i] = {"shares": value / c, "entry": c, "stop": st, "t": t, "half": False,
-                              "hc": float(c), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0}
+                              "hc": float(c), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0,
+                              "r0": abs(float(c) - float(st))}
         equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
         rets.append(equity / eq_prev - 1)
         inv.append(1 - cash / equity if equity > 0 else 0.0)
