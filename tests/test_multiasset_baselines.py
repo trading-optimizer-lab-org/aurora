@@ -97,6 +97,24 @@ def test_run_all_ranks_every_strategy_and_adds_the_overlay() -> None:
     assert max(s.index.max() for s in result["daily_returns"].values()) < mab.LOCKED_START
 
 
+def test_deflated_sharpe_scales_the_null_by_trial_dispersion() -> None:
+    trials = [0.2, 0.4, 0.6, 0.8, 1.0]
+    best = mab.deflated_sharpe(1.0, trials, n_periods=2520, skew=0.0, kurtosis=3.0)
+    worst = mab.deflated_sharpe(0.2, trials, n_periods=2520, skew=0.0, kurtosis=3.0)
+    assert 0.5 < best <= 1.0
+    assert worst < best
+    # Same Sharpe, more dispersed trials -> higher null bar -> lower DSR.
+    wide = mab.deflated_sharpe(1.0, [0.0, 0.5, 1.0, 1.5, 2.0], n_periods=2520, skew=0.0, kurtosis=3.0)
+    assert wide < best
+
+
+def test_continuous_from_drops_sparse_early_history() -> None:
+    script = _script()
+    idx = pd.DatetimeIndex(["1991-03-04", "1991-06-28", "1991-07-01", "1991-07-02", "1991-07-03"])
+    out = script.continuous_from(pd.Series([1.0, 2.0, 3.0, 4.0, 5.0], index=idx))
+    assert out.index[0] == pd.Timestamp("1991-06-28")
+
+
 def test_splice_fills_only_dates_before_the_etf_and_keeps_levels_continuous() -> None:
     script = _script()
     proxy = pd.Series([10.0, 11.0, 12.0, 13.0], index=pd.bdate_range("2000-01-03", periods=4), name="P")

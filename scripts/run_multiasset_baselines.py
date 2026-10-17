@@ -77,6 +77,15 @@ def splice(primary: pd.Series, proxies: list[pd.Series]) -> tuple[pd.Series, lis
     return series, used
 
 
+def continuous_from(series: pd.Series, max_gap_days: int = 10) -> pd.Series:
+    """Drop the part of ``series`` before its last gap longer than ``max_gap_days``
+    calendar days, so sparse early history is never forward-filled."""
+    s = series.dropna()
+    gaps = s.index.to_series().diff().dt.days
+    long_gaps = gaps[gaps > max_gap_days]
+    return s.loc[long_gaps.index[-1]:] if len(long_gaps) else s
+
+
 def cboe_index(name: str) -> pd.Series:
     resp = requests.get(CBOE_URL.format(name), headers=HEADERS, timeout=60)
     resp.raise_for_status()
@@ -119,6 +128,11 @@ def build_prices() -> tuple[pd.DataFrame, dict]:
             report["assets"][name] = {"status": f"missing: {exc}"}
     columns["CASH"] = tbill_index()
     report["assets"]["CASH"] = {"start": str(columns["CASH"].index[0].date()), "source": "FRED DTB3"}
+    for name, s in columns.items():
+        trimmed = continuous_from(s)
+        if trimmed.index[0] != s.index[0]:
+            report["assets"][name]["continuous_from"] = str(trimmed.index[0].date())
+        columns[name] = trimmed
 
     calendar = columns["SPY"].index
     prices = pd.DataFrame({k: v.reindex(calendar.union(v.index)).ffill(limit=5).reindex(calendar)

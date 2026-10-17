@@ -23,11 +23,11 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
+from scipy.stats import norm
 
 from aurora.analytics.metrics_full.drawdown import max_drawdown
 from aurora.analytics.metrics_full.risk_adjusted import sharpe_ratio, sortino_ratio
 from aurora.deployment.hrp import hrp_allocate
-from aurora.validation.deflated_sharpe import deflated_sharpe_annualized
 
 LOCKED_START = pd.Timestamp("2021-01-01")
 IN_SAMPLE_END = pd.Timestamp("2010-12-31")
@@ -369,16 +369,37 @@ def run_all(prices: pd.DataFrame, cost_bps: float = COST_BPS) -> dict:
             "validation": metrics(_period(overlay, VALIDATION_START, VALIDATION_END), cash),
         }
         ranked = _rank(results)
-    n_trials = sum("validation" in v for v in results.values())
+    n_trials = len(ranked)
+    trial_sharpes = [results[n]["validation"]["sharpe"] for n in ranked]
     for name in ranked:
         v = results[name]["validation"]
-        dsr = deflated_sharpe_annualized(
-            v["sharpe"], n_trials=n_trials, n_periods=v["days"], ppy=TRADING_DAYS,
-            skew=v["skew"], kurtosis=v["kurtosis"] + 3.0,
-        )
-        results[name]["validation"]["deflated_sharpe"] = float(dsr.dsr)
+        v["deflated_sharpe"] = deflated_sharpe(
+            v["sharpe"], trial_sharpes, n_periods=v["days"],
+            skew=v["skew"], kurtosis=v["kurtosis"] + 3.0)
     return {"n_trials": n_trials, "ranking": ranked, "strategies": results,
             "daily_returns": daily}
+
+
+def deflated_sharpe(sharpe_ann: float, trial_sharpes_ann: list[float], n_periods: int,
+                    skew: float, kurtosis: float, ppy: int = TRADING_DAYS) -> float:
+    """Bailey & Lopez de Prado (2014) deflated Sharpe ratio.
+
+    The expected maximum Sharpe under the null is scaled by the dispersion of
+    the Sharpes actually observed across the trials (eq. 8 of the paper).
+    ``kurtosis`` is raw (3 for a normal distribution).
+    """
+    sr = sharpe_ann / np.sqrt(ppy)
+    trials = np.asarray(trial_sharpes_ann, dtype=float) / np.sqrt(ppy)
+    n = len(trials)
+    if n < 2 or n_periods < 10:
+        return float("nan")
+    gamma = np.euler_gamma
+    e_max = ((1 - gamma) * norm.ppf(1 - 1 / n) + gamma * norm.ppf(1 - 1 / (n * np.e)))
+    sr0 = np.sqrt(trials.var(ddof=1)) * e_max
+    denom = 1 - skew * sr + (kurtosis - 1) / 4 * sr ** 2
+    if denom <= 0:
+        return float("nan")
+    return float(norm.cdf((sr - sr0) * np.sqrt(n_periods - 1) / np.sqrt(denom)))
 
 
 def _rank(results: dict[str, dict]) -> list[str]:
