@@ -68,3 +68,31 @@ def test_run_study_reports_every_candidate_with_criteria() -> None:
         assert res[name]["validation"]["end"] <= "2023-12-31"
         assert len(res[name]["checks"]) == 3
         assert set(res[name]["robustness"]) == {"weekday_2", "weekday_4", "daily", "cost_15bps", "cost_60bps"}
+
+
+def _script():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "run_crypto_trend.py"
+    spec = importlib.util.spec_from_file_location("run_crypto_trend", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cash_accrues_only_on_business_days() -> None:
+    script = _script()
+    calendar = pd.date_range("2023-12-22", "2023-12-27", freq="D")  # Christmas Monday 25th
+    index = pd.Series(np.cumprod(np.full(len(calendar), 1.0001)), index=calendar)
+    cash = script.business_day_cash(index, calendar).pct_change().fillna(0.0)
+    assert cash.loc["2023-12-23"] == 0.0  # Saturday
+    assert cash.loc["2023-12-25"] == 0.0  # federal holiday
+    assert cash.loc["2023-12-26"] > 0.0
+
+
+def test_sealed_drops_locked_observations_before_cleanup() -> None:
+    script = _script()
+    s = pd.Series(1.0, index=pd.date_range("2023-12-30", "2024-01-03", freq="D"))
+    assert script._sealed(s).index.max() == pd.Timestamp("2023-12-31")

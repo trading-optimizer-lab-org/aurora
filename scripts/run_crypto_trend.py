@@ -9,9 +9,11 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import time
 from pathlib import Path
 
 import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
 
 from aurora.research import crypto_trend as ct
 
@@ -27,26 +29,52 @@ def _baselines():
     return module
 
 
+def _sealed(series: pd.Series) -> pd.Series:
+    """Drop locked-period observations before any data-dependent cleanup."""
+    return series.loc[series.index < ct.LOCKED_START]
+
+
+def _download(base, ticker: str, attempts: int = 3) -> pd.Series:
+    for attempt in range(attempts):
+        s = _sealed(base.yahoo_close(ticker))
+        if not s.empty:
+            return s
+        time.sleep(10 * (attempt + 1))
+    return s
+
+
+def business_day_cash(cash_index: pd.Series, calendar: pd.DatetimeIndex) -> pd.Series:
+    """T-bill index on ``calendar`` that accrues only on US business days
+    (weekdays that are not federal holidays); flat otherwise."""
+    daily = cash_index.pct_change(fill_method=None).reindex(calendar).fillna(0.0)
+    holidays = USFederalHolidayCalendar().holidays(calendar.min(), calendar.max())
+    business = (calendar.weekday < 5) & ~calendar.isin(holidays)
+    daily = daily.where(business, 0.0)
+    return (1 + daily).cumprod().rename("CASH")
+
+
 def build_prices() -> tuple[pd.DataFrame, dict]:
     base = _baselines()
     report: dict = {"assets": {}}
     columns = {}
+    missing = []
     for asset, ticker in YAHOO.items():
-        s = base.continuous_from(base.yahoo_close(ticker))
+        s = base.continuous_from(_download(base, ticker))
         if s.empty:
-            report["assets"][asset] = {"status": "missing", "ticker": ticker}
+            missing.append(ticker)
             continue
         columns[asset] = s
         report["assets"][asset] = {"ticker": ticker, "start": str(s.index[0].date())}
+    if missing:
+        raise RuntimeError(f"Yahoo returned no pre-2024 history for {missing}; not evaluating a partial universe")
     cash_report: dict = {}
-    cash = base.tbill_index(cash_report)
+    cash = _sealed(base.tbill_index(cash_report))
     report["assets"]["CASH"] = {"start": str(cash.index[0].date()), **cash_report}
     calendar = pd.date_range(min(s.index[0] for s in columns.values()), max(s.index[-1] for s in columns.values()),
                              freq="D")
     prices = pd.DataFrame({a: s.reindex(calendar).ffill(limit=3).where(calendar >= s.index[0])
                            for a, s in columns.items()})
-    prices["CASH"] = cash.reindex(calendar.union(cash.index)).ffill().reindex(calendar)
-    prices = prices.loc[prices.index < ct.LOCKED_START]
+    prices["CASH"] = business_day_cash(cash.reindex(calendar.union(cash.index)).ffill(), calendar)
     report["data_end"] = str(prices.index.max().date())
     return prices, report
 
