@@ -71,3 +71,9 @@ and only the best one by validation monthly Sortino.
 
 Train, validation and robustness (rebalance weekday, costs 15-60 bps) are
 reported for every candidate, including the ones that fail.
+
+## Implementation fix after code review (2026-10-17)
+
+The first run charged the 30 bps on cash weight changes as well as on crypto,
+roughly doubling the cost of every move into or out of cash. Only crypto
+turnover is now charged, as written above; the study was re-run.

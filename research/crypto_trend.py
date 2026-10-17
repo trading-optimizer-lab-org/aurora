@@ -128,7 +128,7 @@ def run_one(prices: pd.DataFrame, name: str, cost_bps: float = COST_BPS,
     else:
         signal, universe = CANDIDATES[name]
         weights = target_weights(prices, signal, universe, weekday)
-    returns, _ = mab.simulate(prices, weights, cost_bps)
+    returns, _ = mab.simulate(prices, weights, cost_bps, untraded=("CASH",))
     return returns
 
 
