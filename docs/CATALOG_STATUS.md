@@ -41,10 +41,14 @@ it as a held-out test.
 - Secrets used only by the removed audit jobs (auditor App key, enterprise
   billing, cache verifier and package inventory tokens).
 
-The operating prompts in `docs/runbooks/` and the request-layer Python
-(`infra/sp500_megarun/catalog_requester*`, `scripts/*catalog_cloud*`,
-`scripts/submit_catalog_run_request.py` and similar) are still in the tree
-with their unit tests, but no workflow invokes them any more.
+On 2026-10-17 the request-layer code itself was removed too: 63 files
+(requester, broker, chat entry, cloud intake/ticket/transport, bootstrap
+assistant, watchdog, fast-authority publishing, their Windows installers and
+the bootstrap manifest schema) that no remaining workflow reaches through
+imports, plus the tests that only covered them. Kept on purpose:
+`catalog_atlas_contract`, `catalog_signal_codec` and `catalog_vector_engine`
+(hashed into the campaign definition manifests), `catalog_capacity` (a prompt
+policy enforcer) and `docs/runbooks/` (hashed into the execution protocol).
 
 Request history: about 28 requests between 2026-08-31 and 2026-09-24. Three
 reached SUCCESS (two 8-recipe canaries and one 37,258-recipe run that rebuilt

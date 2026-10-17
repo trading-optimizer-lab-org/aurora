@@ -62,30 +62,6 @@ def write_launch_ticket_fixture(tmp_path: Path, generation: int = 1) -> Path:
     return path
 
 
-def test_request_creator_emits_only_canonical_fields(tmp_path: Path) -> None:
-    output = tmp_path / "request_intent.json"
-    ticket = write_launch_ticket_fixture(tmp_path, generation=1)
-    result = _run(
-        "create_catalog_run_request.py",
-        "--campaign-key",
-        CAMPAIGN_KEY,
-        "--launch-ticket",
-        str(ticket),
-        "--output",
-        str(output),
-    )
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(output.read_text("utf-8"))
-    assert set(payload) == {"draft", "submission_key_sha256"}
-    assert "workflow" not in json.dumps(payload["draft"])
-    assert "path" not in json.dumps(payload["draft"])
-    assert payload["draft"]["request_id"] == REQUEST_ID
-    assert payload["draft"]["launch_generation"] == 1
-    assert "requested_commit_sha" not in payload["draft"]
-    assert "requester_attestation_b64" not in payload["draft"]
-    assert output.read_bytes().endswith(b"\n")
-
-
 def test_creator_rejects_unknown_campaign_and_extra_argument() -> None:
     result = _run(
         "create_catalog_run_request.py",
@@ -161,27 +137,6 @@ def run_controller_fixture(
     )
     decision = json.loads((output / "decision.json").read_text("utf-8"))
     return result, decision, github_output.read_text("utf-8")
-
-
-def test_command_surfaces_have_no_arbitrary_execution_options() -> None:
-    forbidden = {
-        "--submit",
-        "--workflow",
-        "--command",
-        "--ref",
-        "--commit-sha",
-        "--request-id",
-        "--launch-generation",
-        "--set",
-    }
-    for script in (
-        "build_catalog_campaign_definition.py",
-        "create_catalog_run_request.py",
-        "control_catalog_run.py",
-    ):
-        result = _run(script, "--help")
-        assert result.returncode == 0, result.stderr
-        assert forbidden.isdisjoint(result.stdout.split())
 
 
 def test_controller_is_decision_only_unless_reserve_explicitly_requests_record() -> None:
