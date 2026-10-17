@@ -292,13 +292,16 @@ def target_weights(prices: pd.DataFrame, strategy: StrategyFn) -> pd.DataFrame:
 
 
 def simulate(prices: pd.DataFrame, weights: pd.DataFrame,
-             cost_bps: float = COST_BPS) -> tuple[pd.Series, pd.Series]:
+             cost_bps: float = COST_BPS,
+             untraded: tuple[str, ...] = ()) -> tuple[pd.Series, pd.Series]:
     """Daily net returns and one-way turnover per rebalance.
 
     A target set at the close of day ``d`` is traded at that close and earns
-    the returns of ``d + 1`` onwards.
+    the returns of ``d + 1`` onwards. Columns in ``untraded`` (e.g. a cash
+    balance) are not traded, so their weight changes pay no cost.
     """
     returns = prices.pct_change(fill_method=None).reindex(columns=weights.columns).to_numpy()
+    traded = ~weights.columns.isin(untraded)
     dates = prices.index
     targets = {dates.get_loc(d): w for d, w in zip(weights.index, weights.to_numpy())}
     current: np.ndarray | None = None
@@ -308,7 +311,7 @@ def simulate(prices: pd.DataFrame, weights: pd.DataFrame,
         cost = 0.0
         if pending is not None:
             prev = current if current is not None else np.zeros_like(pending)
-            turn = float(np.abs(pending - prev).sum() / 2)
+            turn = float(np.abs(pending - prev)[traded].sum() / 2)
             turn_idx.append(dates[t])
             turn_val.append(turn)
             cost = 2 * turn * cost_bps / 1e4

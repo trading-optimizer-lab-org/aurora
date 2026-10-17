@@ -70,6 +70,8 @@ def daily_funding(symbol: str) -> pd.Series:
     for month in _months():
         url = f"{BASE}/futures/um/monthly/fundingRate/{symbol}/{symbol}-fundingRate-{month}.zip"
         df = _csv_from_zip(url)
+        if df is None and frames:
+            raise RuntimeError(f"funding archive missing after inception: {url}")
         if df is not None:
             frames.append(pd.Series(df.iloc[:, -1].astype(float).to_numpy(),
                                     index=pd.to_datetime(df.iloc[:, 0].astype("int64"), unit="ms")))
@@ -89,7 +91,11 @@ def build_data() -> tuple[dict[str, pd.DataFrame], pd.Series, dict]:
         idx = pd.date_range(start, min(spot.index[-1], perp.index[-1]), freq="D")
         frame = pd.DataFrame({"spot": spot.reindex(idx).ffill(limit=2),
                               "perp": perp.reindex(idx).ffill(limit=2),
-                              "funding": funding.reindex(idx).fillna(0.0)})
+                              "funding": funding.reindex(idx)})
+        if frame["funding"].isna().any():
+            missing = frame.index[frame["funding"].isna()]
+            raise RuntimeError(f"{symbol} has no funding events on {len(missing)} days, "
+                               f"first {missing[0].date()}; not zero-filling")
         if frame[["spot", "perp"]].isna().any().any():
             raise RuntimeError(f"gaps in {symbol} closes; not evaluating a partial history")
         data[asset] = frame.loc[frame.index < cc.LOCKED_START]

@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from aurora.research import crypto_trend as ct
+from aurora.research import multiasset_baselines as mab
 
 
 def _prices(end: str = "2023-12-31", seed: int = 2) -> pd.DataFrame:
@@ -96,3 +97,12 @@ def test_sealed_drops_locked_observations_before_cleanup() -> None:
     script = _script()
     s = pd.Series(1.0, index=pd.date_range("2023-12-30", "2024-01-03", freq="D"))
     assert script._sealed(s).index.max() == pd.Timestamp("2023-12-31")
+
+
+def test_cash_weight_changes_are_not_charged() -> None:
+    idx = pd.date_range("2020-01-01", periods=4, freq="D")
+    prices = pd.DataFrame({"BTC": 100.0, "CASH": 100.0}, index=idx)
+    weights = pd.DataFrame({"BTC": [0.5], "CASH": [0.5]}, index=idx[:1])
+    returns, turnover = mab.simulate(prices, weights, 30.0, untraded=("CASH",))
+    assert returns.iloc[0] == pytest.approx(-0.5 * 30 / 1e4)
+    assert turnover.iloc[0] == pytest.approx(0.25)

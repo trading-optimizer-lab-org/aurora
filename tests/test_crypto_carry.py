@@ -65,3 +65,29 @@ def test_run_study_reports_every_candidate() -> None:
     for r in out["results"].values():
         assert r["validation"]["start"] >= "2022-01-01"
         assert len(r["checks"]) == 3
+
+
+def test_signal_is_traded_at_the_close_it_is_decided() -> None:
+    d = _asset()
+    d["spot"] = 100.0
+    d["perp"] = 100.0
+    d["funding"] = 0.0
+    d.iloc[10:, d.columns.get_loc("funding")] = 1e-4
+    active = cc.active_days(d["funding"], "positive")
+    assert not active.iloc[:10].any() and active.iloc[10]
+    r = cc.sleeve_returns(d["spot"], d["perp"], d["funding"], active)
+    assert (r.iloc[:10] == 0).all()
+    assert r.iloc[10] < 0  # entry fees at the close of the first positive day
+    assert r.iloc[11] > 0  # funding earned the next day
+
+
+def test_two_asset_candidate_lets_sleeves_drift(monkeypatch: pytest.MonkeyPatch) -> None:
+    idx = pd.date_range("2020-01-01", periods=3, freq="D")
+    fixed = {100.0: pd.Series([0.0, 0.10, 0.10], index=idx), 200.0: pd.Series(0.0, index=idx)}
+    monkeypatch.setattr(cc, "sleeve_returns", lambda spot, *a: fixed[spot.iloc[0]])
+    data = {a: pd.DataFrame({"spot": px, "perp": px, "funding": 0.0}, index=idx)
+            for a, px in (("BTC", 100.0), ("ETH", 200.0))}
+    r = cc.run_one(data, "carry_btc_eth_positive")
+    assert r.iloc[1] == pytest.approx(0.05)
+    # Day 3: BTC sleeve's 10% on its drifted weight 1.1 / 2.1, no reset to 50/50.
+    assert r.iloc[2] == pytest.approx(0.10 * 1.1 / 2.1)

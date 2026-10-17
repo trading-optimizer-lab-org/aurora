@@ -31,11 +31,12 @@ CANDIDATES: dict[str, tuple[list[str], str]] = {
 
 
 def active_days(funding: pd.Series, rule: str) -> pd.Series:
-    """Whether the spread is held on each day; decided at the previous close."""
+    """Target state chosen at each day's close (funding of that day is known);
+    ``sleeve_returns`` trades it at that close and holds it the next day."""
     if rule == "always":
         return pd.Series(True, index=funding.index)
     trailing = funding.rolling(SIGNAL_DAYS, min_periods=SIGNAL_DAYS).mean()
-    return (trailing > 0).shift(1, fill_value=False).astype(bool)
+    return (trailing > 0).astype(bool)
 
 
 def sleeve_returns(spot: pd.Series, perp: pd.Series, funding: pd.Series,
@@ -66,7 +67,10 @@ def run_one(data: dict[str, pd.DataFrame], name: str) -> pd.Series:
         d = data[asset]
         sleeves.append(sleeve_returns(d["spot"], d["perp"], d["funding"], active_days(d["funding"], rule)))
     common = pd.concat(sleeves, axis=1).dropna()
-    return common.mean(axis=1)
+    # Equal capital at the start, then each sleeve drifts: no implicit (and
+    # unpaid) daily rebalancing between assets.
+    value = (1 + common).cumprod().mean(axis=1)
+    return value.pct_change().fillna(value.iloc[0] - 1)
 
 
 def criteria(v: dict) -> dict[str, bool]:

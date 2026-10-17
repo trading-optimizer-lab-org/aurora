@@ -70,3 +70,16 @@ and only the best one by validation monthly Sortino.
 Exchange failure or freezing of funds (as at FTX in November 2022), auto-
 deleveraging, a funding regime that stays negative, and execution slippage
 beyond the fee schedule. A pass in the backtest does not remove them.
+
+## Implementation fixes after code review (2026-10-17)
+
+The first run did not follow three rules above; the code was corrected and the
+study re-run. No rule, parameter or candidate changed.
+
+- The positive-funding state was applied two days after the funding it uses
+  instead of one. It is now decided at the day's close and held the next day.
+- `carry_btc_eth_positive` averaged daily sleeve returns, an implicit daily
+  BTC/ETH rebalance that paid no fees. Each sleeve now starts with 50% of the
+  capital and drifts.
+- Missing funding archives were silently read as zero funding. The run now
+  stops if any day after inception has no funding events.
