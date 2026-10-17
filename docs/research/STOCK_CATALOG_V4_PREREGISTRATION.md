@@ -7,7 +7,7 @@ trade-level view, periods, pass criteria, train-only selection of the top 15
 with >= 300 train trades) is as in the v1-v3 pre-registrations. Survivorship
 bias not adjusted (owner's choice). Locked period 2021+ never read.
 
-## Setups (16)
+## Setups (15)
 
 Kept from earlier catalogs (best or most stable): S1 felipe_breakout, S3
 pullback_921, S6 darvas_52w, S7 weinstein_stage2, S12 high52, S13 gap_go,
@@ -65,12 +65,14 @@ All include the standard universe (S25 its own one).
 
 ## Grid
 
-16 setups x 8 exits x 6 filter sets = **768 trials**, named
+15 setups x 8 exits x 6 filter sets = **720 trials**, named
 `<setup>_<exit>_<set>`. Deflated Sharpe over these plus the 364 of v1-v3
-(1,132). Besides the train-only selection, the report lists, descriptively,
+(1,084). (Corrected before any v4 computation: the first version of this
+document miscounted 16 setups / 768 trials; the setup list itself is
+unchanged: 7 kept + 8 new.) Besides the train-only selection, the report lists, descriptively,
 trials with PF >= 1.3 and >= 200 trades in **both** periods.
 
 ## Execution
 
-GitHub only (`stock-ideas-v4.yml`), one shard per setup (16 parallel jobs)
+GitHub only (`stock-ideas-v4.yml`), one shard per setup (15 parallel jobs)
 on the cached price panel, plus a merge job.

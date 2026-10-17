@@ -32,6 +32,7 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
     S50 = ind["sma50"].to_numpy(dtype=f32) if "sma50" in ind else None
     S5 = ind["sma5"].to_numpy(dtype=f32) if "sma5" in ind else None
     AD = ind["adr"].to_numpy(dtype=f32)
+    E21 = ind["ema21"].to_numpy(dtype=f32) if "ema21" in ind else None
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
@@ -87,6 +88,8 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             if side < 0 and np.isfinite(hi) and hi >= stop:
                 exit_t, exit_px = u, float(max(O[u, i], stop)) if np.isfinite(O[u, i]) else stop
                 break
+            if exit_rule == "XO25" and half_ret is None and np.isfinite(hi) and hi >= entry * 1.25:
+                half_ret = _net(entry, float(max(O[u, i], entry * 1.25)) if np.isfinite(O[u, i]) else entry * 1.25)
             if not np.isfinite(c):
                 continue
             days = u - t
@@ -104,9 +107,15 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XRSI" and S5 is not None and c > S5[u, i]:
                 exit_t, exit_px = u, float(c)
-            elif exit_rule == "XT3":
+            elif exit_rule in ("XT2", "XT3", "XT5"):
                 hc = max(hc, float(c))
-                stop = max(stop, hc * (1 - 3 * adr_e))
+                stop = max(stop, hc * (1 - int(exit_rule[2]) * adr_e))
+            elif exit_rule == "XE21" and E21 is not None and c < E21[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XS50T60" and S50 is not None and (c < S50[u, i] or days >= 60):
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XO25" and S50 is not None and c < S50[u, i]:
+                exit_t, exit_px = u, float(c)
             elif exit_rule == "XH3":
                 if days == 3 and half_ret is None:
                     half_ret, stop = _net(entry, float(c)), entry

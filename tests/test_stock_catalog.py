@@ -293,3 +293,36 @@ def test_trailing_stop_rises_with_the_close() -> None:
     panel["low"].iloc[6, 0] = 100.0  # below 120 * (1 - 3 * 5%) = 102
     t = st.trade_list(panel, _ind(close), _entry(close, 2), close * 0 + 90.0, "XT3", start=idx[0])
     assert t["exit"].iloc[0] == pytest.approx(102.0) and t["exit_date"].iloc[0] == idx[6]
+
+
+def test_v4_grid_and_new_setups() -> None:
+    from aurora.research import stock_catalog_v4 as v4
+
+    names = [t.name for t in v4.trials()]
+    assert len(names) == 720 and len(set(names)) == 720
+    assert sorted(g for k in range(15) for g in v4.shard_groups(k, 15)) == sorted(v4.SETUPS)
+    rng = np.random.default_rng(2)
+    idx = pd.bdate_range("1993-01-04", periods=400)
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0.001, 0.03, (400, 3)), axis=0), index=idx, columns=list("abc"))
+    panel = _panel(close)
+    ind = sc.indicators(panel, close["a"], pd.Series({"a": "X", "b": "X", "c": "X"}))
+    for key, fn in v4.NEW.items():
+        sig, stop = fn(*(panel[k] for k in ("open", "high", "low", "close", "volume")), ind)
+        assert sig.shape == close.shape and stop.shape == close.shape, key
+
+
+def test_profit_target_half_then_sma50() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(8)
+    close = pd.DataFrame({"A": [100.0, 100, 100, 120, 130, 130, 130, 130]}, index=idx)
+    panel = _panel(close)
+    panel["high"].iloc[4, 0] = 131.0  # reaches +25% (125) on day 4
+    panel["open"].iloc[4, 0] = 121.0  # opens below the target
+    ind = _ind(close)
+    ind["sma50"] = close * 0 + 0.0
+    ind["sma50"].iloc[6, 0] = 140.0
+    t = st.trade_list(panel, ind, _entry(close, 2), close * 0 + 90.0, "XO25", start=idx[0])
+    half = 125 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
+    rest = 130 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
+    assert t["return"].iloc[0] == pytest.approx(0.5 * half + 0.5 * rest)

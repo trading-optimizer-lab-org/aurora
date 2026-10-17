@@ -112,7 +112,7 @@ def indicators(panel: dict[str, pd.DataFrame], index_close: pd.Series, industry:
         "mf": sma(idx.to_frame(), 10).iloc[:, 0] > sma(idx.to_frame(), 20).iloc[:, 0],
         "index_above_200": idx > idx.rolling(200, min_periods=200).mean(),
         "vol50_prior": V.shift(1).rolling(50, min_periods=50).mean(),
-        "sma5": sma(C, 5), "sma10": sma(C, 10), "sma20": sma(C, 20), "sma50": sma(C, 50),
+        "sma5": sma(C, 5), "sma10": sma(C, 10), "sma20": sma(C, 20), "sma50": sma(C, 50), "ema21": ema(C, 21),
     }
 
 
@@ -223,6 +223,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     S50 = ind["sma50"].to_numpy(dtype=f32) if "sma50" in ind else None
     S5 = ind["sma5"].to_numpy(dtype=f32) if "sma5" in ind else None
     AD = ind["adr"].to_numpy(dtype=f32)
+    E21 = ind["ema21"].to_numpy(dtype=f32) if "ema21" in ind else None
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -309,9 +310,25 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                 assert S5 is not None
                 if c > S5[t, i]:
                     sell(i, c)
-            elif exit_rule == "XT3":
+            elif exit_rule in ("XT2", "XT3", "XT5"):
                 p["hc"] = max(p["hc"], float(c))
-                p["stop"] = max(p["stop"], p["hc"] * (1 - 3 * p["adr"]))
+                p["stop"] = max(p["stop"], p["hc"] * (1 - int(exit_rule[2]) * p["adr"]))
+            elif exit_rule == "XE21":
+                assert E21 is not None
+                if c < E21[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XS50T60":
+                assert S50 is not None
+                if c < S50[t, i] or days >= 60:
+                    sell(i, c)
+            elif exit_rule == "XO25":
+                assert S50 is not None
+                target = p["entry"] * 1.25
+                if not p["half"] and np.isfinite(H[t, i]) and H[t, i] >= target:
+                    sell(i, max(O[t, i], target) if np.isfinite(O[t, i]) else target, 0.5)
+                    p["half"] = True
+                if i in pos and c < S50[t, i]:
+                    sell(i, c)
             elif exit_rule == "BNF":
                 assert R2 is not None
                 if R2[t, i] >= 85 or (days >= 3 and c < p["entry"]) or days >= 5:
