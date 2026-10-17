@@ -15,17 +15,21 @@ from aurora.research import stock_catalog as sc
 MAX_HOLD = 250
 
 
-def _net(entry: float, exit_px: float) -> float:
-    return exit_px * (1 - sc.COST) / (entry * (1 + sc.COST)) - 1
+def _net(entry: float, exit_px: float, side: int = 1) -> float:
+    if side > 0:
+        return exit_px * (1 - sc.COST) / (entry * (1 + sc.COST)) - 1
+    x = exit_px / entry  # short held as collateral, as in stock_catalog.simulate
+    return (2 - x - x * sc.COST) / (1 + sc.COST) - 1
 
 
 def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, stops: pd.DataFrame | None,
                exit_rule: str, start: pd.Timestamp = sc.TRAIN_START, limits: pd.DataFrame | None = None,
-               rsi: pd.DataFrame | None = None) -> pd.DataFrame:
+               rsi: pd.DataFrame | None = None, side: int = 1) -> pd.DataFrame:
     dates = panel["close"].index
     f32 = np.float32
     O, H, L, C = (panel[k].to_numpy(dtype=f32) for k in ("open", "high", "low", "close"))
     S10, S20 = ind["sma10"].to_numpy(dtype=f32), ind["sma20"].to_numpy(dtype=f32)
+    S50 = ind["sma50"].to_numpy(dtype=f32) if "sma50" in ind else None
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
@@ -47,8 +51,12 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             if not (np.isfinite(lim) and np.isfinite(L[u, i]) and L[u, i] <= lim):
                 continue
             entry = float(min(O[u, i], lim)) if np.isfinite(O[u, i]) else float(lim)
+            pstop = float(ST[t, i]) if ST is not None and np.isfinite(ST[t, i]) else None
             exit_t, exit_px = last, None
             for v in range(u + 1, min(u + MAX_HOLD, last) + 1):
+                if pstop is not None and np.isfinite(L[v, i]) and L[v, i] <= pstop:
+                    exit_t, exit_px = v, float(min(O[v, i], pstop)) if np.isfinite(O[v, i]) else pstop
+                    break
                 c = C[v, i]
                 if not np.isfinite(c):
                     continue
@@ -62,15 +70,18 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             continue
         assert ST is not None
         entry, stop = float(C[t, i]), float(ST[t, i])
-        if not (np.isfinite(entry) and np.isfinite(stop)) or stop >= entry:
+        if not (np.isfinite(entry) and np.isfinite(stop)) or side * (entry - stop) <= 0:
             continue
-        risk = (entry - stop) / entry
+        risk = abs(entry - stop) / entry
         half_ret: float | None = None
         exit_t, exit_px = None, None
         for u in range(t + 1, min(t + MAX_HOLD, last) + 1):
-            lo, c = L[u, i], C[u, i]
-            if np.isfinite(lo) and lo <= stop:
+            lo, hi, c = L[u, i], H[u, i], C[u, i]
+            if side > 0 and np.isfinite(lo) and lo <= stop:
                 exit_t, exit_px = u, float(min(O[u, i], stop)) if np.isfinite(O[u, i]) else stop
+                break
+            if side < 0 and np.isfinite(hi) and hi >= stop:
+                exit_t, exit_px = u, float(max(O[u, i], stop)) if np.isfinite(O[u, i]) else stop
                 break
             if not np.isfinite(c):
                 continue
@@ -80,6 +91,10 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             elif exit_rule == "XS10" and c < S10[u, i]:
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XS20" and c < S20[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XS50" and S50 is not None and c < S50[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XPS" and (c <= S10[u, i] or days >= 10):
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XH3":
                 if days == 3 and half_ret is None:
@@ -94,7 +109,7 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             exit_t = min(t + MAX_HOLD, last)
             exit_px = float(pd.Series(C[t:exit_t + 1, i]).ffill().iloc[-1])
         assert exit_px is not None
-        ret = _net(entry, exit_px)
+        ret = _net(entry, exit_px, side)
         if half_ret is not None:
             ret = 0.5 * half_ret + 0.5 * ret
         busy_until[i] = exit_t

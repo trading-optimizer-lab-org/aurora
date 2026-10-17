@@ -112,7 +112,7 @@ def indicators(panel: dict[str, pd.DataFrame], index_close: pd.Series, industry:
         "mf": sma(idx.to_frame(), 10).iloc[:, 0] > sma(idx.to_frame(), 20).iloc[:, 0],
         "index_above_200": idx > idx.rolling(200, min_periods=200).mean(),
         "vol50_prior": V.shift(1).rolling(50, min_periods=50).mean(),
-        "sma10": sma(C, 10), "sma20": sma(C, 20),
+        "sma10": sma(C, 10), "sma20": sma(C, 20), "sma50": sma(C, 50),
     }
 
 
@@ -206,11 +206,13 @@ def entry_mask(sig: pd.DataFrame, ind: dict, filters: tuple[str, ...]) -> pd.Dat
 def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, stops: pd.DataFrame | None,
              exit_rule: str, cash_r: pd.Series, rank: pd.DataFrame, start: pd.Timestamp = TRAIN_START,
              limits: pd.DataFrame | None = None, rsi: pd.DataFrame | None = None,
-             trades: list | None = None) -> pd.DataFrame:
+             trades: list | None = None, risk: float = RISK, side: int = 1) -> pd.DataFrame:
     """Daily net return and invested fraction from ``start``.
 
-    Entries fill at the close of the signal day (S8: limit order the next day).
-    Stops are checked from the day after entry against the low.
+    Entries fill at the close of the signal day (S8: limit order the next day,
+    with ``stops`` as its optional stop). Stops are checked from the day after
+    entry: against the low for longs, the high for shorts (``side=-1``). A
+    short is held as collateral worth ``shares * (2 * entry - close)``.
     """
     dates = panel["close"].index
     f32 = np.float32
@@ -218,6 +220,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     Craw = panel["close"].to_numpy(dtype=f32)
     C = panel["close"].ffill().to_numpy(dtype=f32)
     S10, S20 = ind["sma10"].to_numpy(dtype=f32), ind["sma20"].to_numpy(dtype=f32)
+    S50 = ind["sma50"].to_numpy(dtype=f32) if "sma50" in ind else None
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -227,25 +230,31 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     first = int(dates.searchsorted(start))
     cash, eq_prev = 1.0, 1.0
     pos: dict[int, dict] = {}
-    pending: list[tuple[int, float]] = []
+    pending: list[tuple[int, float, float | None]] = []
     rets, inv = [], []
+
+    def mark(p: dict, c: float) -> float:
+        return p["shares"] * (c if side > 0 else 2 * p["entry"] - c)
 
     def sell(i: int, px: float, frac: float = 1.0) -> None:
         nonlocal cash
         p = pos[i]
         q = p["shares"] * frac
-        cash += q * px * (1 - COST)
+        if side > 0:
+            cash += q * px * (1 - COST)
+        else:
+            cash += q * (2 * p["entry"] - px) - q * px * COST
         if trades is not None:
             trades.append({"symbol": int(i), "entry_date": dates[p["t"]], "exit_date": dates[t],
                            "entry": float(p["entry"]), "exit": float(px), "fraction": frac,
-                           "return": float(px / p["entry"] - 1)})
+                           "return": float(side * (px / p["entry"] - 1))})
         p["shares"] -= q
         if frac >= 1.0:
             del pos[i]
 
     for t in range(first, len(dates)):
         cash *= 1 + cr[t]
-        for i, lim in pending:
+        for i, lim, pstop in pending:
             if i in pos or not np.isfinite(L[t, i]) or L[t, i] > lim:
                 continue
             px = min(O[t, i], lim) if np.isfinite(O[t, i]) else lim
@@ -253,13 +262,16 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
             if amount <= 0:
                 break
             cash -= amount * (1 + COST)
-            pos[i] = {"shares": amount / px, "entry": px, "stop": None, "t": t, "half": False}
+            pos[i] = {"shares": amount / px, "entry": px, "stop": pstop, "t": t, "half": False}
         pending = []
         for i in list(pos):
             p = pos[i]
-            if p["t"] >= t or p["stop"] is None or not np.isfinite(L[t, i]) or L[t, i] > p["stop"]:
+            if p["t"] >= t or p["stop"] is None:
                 continue
-            sell(i, min(O[t, i], p["stop"]) if np.isfinite(O[t, i]) else p["stop"])
+            if side > 0 and np.isfinite(L[t, i]) and L[t, i] <= p["stop"]:
+                sell(i, min(O[t, i], p["stop"]) if np.isfinite(O[t, i]) else p["stop"])
+            elif side < 0 and np.isfinite(H[t, i]) and H[t, i] >= p["stop"]:
+                sell(i, max(O[t, i], p["stop"]) if np.isfinite(O[t, i]) else p["stop"])
         for i in list(pos):
             p = pos[i]
             c = Craw[t, i]
@@ -272,6 +284,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
             elif exit_rule in ("XS10", "XS20"):
                 if c < (S10 if exit_rule == "XS10" else S20)[t, i]:
                     sell(i, c)
+            elif exit_rule == "XS50":
+                assert S50 is not None
+                if c < S50[t, i]:
+                    sell(i, c)
             elif exit_rule == "XH3":
                 if days == 3 and not p["half"]:
                     sell(i, c, 0.5)
@@ -281,29 +297,33 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
             elif exit_rule == "XF":
                 if (days == 3 and c <= p["entry"]) or c < S10[t, i]:
                     sell(i, c)
+            elif exit_rule == "XPS":
+                if c <= S10[t, i] or days >= 10:
+                    sell(i, c)
             elif exit_rule == "BNF":
                 assert R2 is not None
                 if R2[t, i] >= 85 or (days >= 3 and c < p["entry"]) or days >= 5:
                     sell(i, c)
-        equity = cash + sum(p["shares"] * C[t, i] for i, p in pos.items())
+        equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
         hits = np.flatnonzero(E[t])
         if hits.size:
             order = [int(i) for i in hits[np.argsort(-RK[t, hits], kind="stable")] if int(i) not in pos]
             if exit_rule == "BNF":
                 assert LIM is not None
-                pending = [(i, float(LIM[t, i])) for i in order if np.isfinite(LIM[t, i])]
+                pending = [(i, float(LIM[t, i]), float(ST[t, i]) if ST is not None and np.isfinite(ST[t, i])
+                            else None) for i in order if np.isfinite(LIM[t, i])]
             else:
                 assert ST is not None
                 for i in order:
                     c, st = Craw[t, i], ST[t, i]
-                    if not (np.isfinite(c) and np.isfinite(st)) or st >= c:
+                    if not (np.isfinite(c) and np.isfinite(st)) or side * (c - st) <= 0:
                         continue
-                    value = min(RISK * equity / ((c - st) / c), CAP * equity, cash / (1 + COST))
+                    value = min(risk * equity / (abs(c - st) / c), CAP * equity, cash / (1 + COST))
                     if value <= 1e-6 * equity:
                         break
                     cash -= value * (1 + COST)
                     pos[i] = {"shares": value / c, "entry": c, "stop": st, "t": t, "half": False}
-        equity = cash + sum(p["shares"] * C[t, i] for i, p in pos.items())
+        equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
         rets.append(equity / eq_prev - 1)
         inv.append(1 - cash / equity if equity > 0 else 0.0)
         eq_prev = equity

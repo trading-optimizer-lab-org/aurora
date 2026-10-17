@@ -213,3 +213,54 @@ def test_trade_stats_profit_factor_and_total() -> None:
     assert s["profit_factor"] == pytest.approx(3.0)
     assert s["total_return"] == pytest.approx(0.20)
     assert s["total_R"] == pytest.approx(4.0) and s["win_rate"] == 0.5
+
+
+def test_short_profits_when_price_falls_and_stop_uses_the_high() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(8)
+    close = pd.DataFrame({"A": [100.0, 100, 100, 90, 90, 90, 90, 90]}, index=idx)
+    panel = _panel(close)
+    ind = _ind(close, sma=95.0)  # cover when close <= SMA10 (95)
+    stops = close * 0 + 105.0
+    d = _run(panel, ind, _entry(close, 2), stops, "XPS", side=-1)
+    expected_value = 1 - 0.10 * (1 + sc.COST) + 0.10 * (2 - 0.9) - 0.10 * 0.9 * sc.COST
+    assert (1 + d["return"]).prod() == pytest.approx(expected_value, rel=1e-5)
+    t = st.trade_list(panel, ind, _entry(close, 2), stops, "XPS", start=idx[0], side=-1)
+    assert t["return"].iloc[0] == pytest.approx((2 - 0.9 - 0.9 * sc.COST) / (1 + sc.COST) - 1)
+    up = pd.DataFrame({"A": [100.0, 100, 100, 100, 100, 100, 100, 100]}, index=idx)
+    p2 = _panel(up)
+    p2["high"].iloc[4, 0] = 106.0
+    t2 = st.trade_list(p2, _ind(up, sma=50.0), _entry(up, 2), up * 0 + 105.0, "XPS", start=idx[0], side=-1)
+    assert t2["exit"].iloc[0] == pytest.approx(105.0) and t2["return"].iloc[0] < 0
+
+
+def test_sma50_exit_and_bnf_stop() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(10)
+    close = pd.DataFrame({"A": [100.0] * 10}, index=idx)
+    ind = _ind(close)
+    ind["sma50"] = close * 0 + 0.0
+    ind["sma50"].iloc[6, 0] = 101.0
+    t = st.trade_list(_panel(close), ind, _entry(close, 2), close * 0 + 95.0, "XS50", start=idx[0])
+    assert t["days"].iloc[0] == 4
+    panel = _panel(close)
+    panel["low"].iloc[4, 0] = 90.0
+    t2 = st.trade_list(panel, ind, _entry(close, 2), close * 0 + 92.0, "BNF", start=idx[0],
+                       limits=close * 0 + 99.5, rsi=close * 0 + 50.0)
+    assert t2["exit"].iloc[0] == pytest.approx(92.0)
+
+
+def test_v2_parabolic_short_signal_and_breadth() -> None:
+    from aurora.research import stock_catalog_v2 as v2
+
+    idx = _dates(12)
+    px = [10, 10, 10, 10, 10, 11, 13, 15, 18, 16, 15, 15]
+    close = pd.DataFrame({"A": px}, index=idx, dtype=float)
+    panel = _panel(close)
+    sig, stop = v2.setup_s9(*(panel[k] for k in ("open", "high", "low", "close", "volume")), _ind(close))
+    assert sig["A"].tolist() == [False] * 9 + [True, False, False]
+    assert stop["A"].iloc[9] == pytest.approx(18 * 1.01)
+    on = v2.breadth_on(close, close.notna())
+    assert on.dtype == bool

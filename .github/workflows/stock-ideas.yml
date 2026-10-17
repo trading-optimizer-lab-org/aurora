@@ -13,6 +13,9 @@ on:
       - research/stock_data_checks.py
       - scripts/build_stock_panel.py
       - scripts/run_stock_catalog.py
+      - research/stock_catalog_v2.py
+      - research/stock_trades.py
+      - scripts/run_stock_catalog_v2.py
       - .github/workflows/stock-ideas.yml
 
 permissions:
@@ -78,9 +81,17 @@ jobs:
       - name: Run catalog
         run: python scripts/run_stock_catalog.py --panel-dir outputs/stock_panel --output-dir outputs/stock_catalog
 
+      - name: Run catalog v2
+        run: >-
+          python scripts/run_stock_catalog_v2.py --panel-dir outputs/stock_panel
+          --v1-results outputs/stock_catalog/results.json --output-dir outputs/stock_catalog_v2
+
       - name: Publish summary
         if: always()
         run: |
+          if [ -f outputs/stock_catalog_v2/REPORT.md ]; then
+            cat outputs/stock_catalog_v2/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f outputs/stock_catalog/REPORT.md ]; then
             cat outputs/stock_catalog/REPORT.md >> "$GITHUB_STEP_SUMMARY"
           elif [ -f outputs/stock_panel/data_summary.json ]; then
@@ -100,5 +111,7 @@ jobs:
             outputs/stock_catalog/data_quality.csv
             outputs/stock_catalog/data_summary.json
             outputs/stock_catalog/fingerprint.csv
+            outputs/stock_catalog_v2/REPORT.md
+            outputs/stock_catalog_v2/results.json
           if-no-files-found: warn
           retention-days: 90
