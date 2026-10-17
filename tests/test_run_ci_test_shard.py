@@ -43,11 +43,15 @@ def test_ci_shards_cover_each_supported_runtime_without_exclusions() -> None:
     workflow = yaml.safe_load((root / '.github/workflows/tests.yml').read_text())
     job = workflow['jobs']['test']
     matrix = job['strategy']['matrix']
-    assert matrix['python'] == ['3.11', '3.12', '3.13']
-    assert matrix['os'] == ['ubuntu-latest', 'windows-latest']
-    assert matrix['shard'] == [0, 1]
+    # Pushes to main run every Python x OS combination in two shards; pull
+    # requests run Linux / 3.12 in six shards to keep the merge gate fast.
+    assert """fromJSON('["3.11", "3.12", "3.13"]')""" in matrix['python']
+    assert """fromJSON('["ubuntu-latest", "windows-latest"]')""" in matrix['os']
+    assert "fromJSON('[0, 1]')" in matrix['shard']
+    assert """fromJSON('["3.12"]')""" in matrix['python']
+    assert "fromJSON('[0, 1, 2, 3, 4, 5]')" in matrix['shard']
     assert not matrix.get('exclude')
     assert job['timeout-minutes'] == 30
     command = next(step['run'] for step in job['steps'] if step.get('name') == 'Run tests')
     assert '--shard-index ${{ matrix.shard }}' in command
-    assert '--shard-count 2' in command
+    assert "--shard-count ${{ github.event_name == 'pull_request' && 6 || 2 }}" in command
