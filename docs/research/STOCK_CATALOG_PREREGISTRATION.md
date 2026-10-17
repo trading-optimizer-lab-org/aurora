@@ -121,3 +121,30 @@ return above SPY; maximum drawdown no deeper than -25%. Deflated Sharpe uses
 all 24 trials. Only the best passing candidate by validation Sortino may be
 proposed for the locked test. The IND50 vs `_noind` comparison is also
 reported year by year to check Jacobs' claim.
+
+## Amendment 1 (2026-10-17): trade-level evaluation of every signal
+
+Added at the owner's request after the first local portfolio results were
+seen. It changes no setup, exit, filter or criterion above; it only adds a
+second, descriptive view of the same 23 rules (the blend is a portfolio and
+has no trades of its own).
+
+- **Every signal is traded on its own**, with no capital limit and no
+  ranking. The only exclusion: a new signal in a stock that still has an
+  open trade from the same rule is skipped (no overlapping trades in one
+  stock).
+- Same entry, stop and exit rules and the same 10 bps per side as above.
+  `XH3` counts as one trade: half the return at day 3 plus half at the final
+  exit. S8 counts only signals whose next-day limit order fills. Trades still
+  open on 2020-12-31 are closed at that close. Maximum holding 250 days.
+- Per trade: net return in %, and R = net return / initial risk
+  (`(entry - stop) / entry`; S8 has no stop and reports no R).
+- Reported for train and validation (by entry date) and per year: number of
+  trades, win rate, average and median return, average R, **profit factor**
+  (sum of winning returns / |sum of losing returns|), **total return** (sum
+  of all trade returns, i.e. the profit of putting 1 unit in every trade),
+  total R, average days held, and the share of total profit from the best 5%
+  of trades.
+- This view is descriptive: no pass/fail. It answers whether a rule has an
+  edge per trade; the portfolio view above answers whether one account can
+  trade it.
