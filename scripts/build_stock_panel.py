@@ -23,6 +23,7 @@ from aurora.research import stock_data_checks as q
 
 DEFAULT_DIR = base_data_dir() / "prices" / "free_us_daily"
 START = pd.Timestamp("1992-01-01")
+MIN_COVERAGE = 0.98
 COLS = ["open", "high", "low", "close", "adj_close", "volume", "stock_splits"]
 YF_COLS = {"Open": "open", "High": "high", "Low": "low", "Close": "close", "Adj Close": "adj_close",
            "Volume": "volume", "Stock Splits": "stock_splits"}
@@ -42,7 +43,7 @@ def read_local(prices_dir: Path, symbol: str) -> pd.DataFrame | None:
     return _sealed(df)
 
 
-def download_yahoo(tickers: list[str], batch: int = 80, attempts: int = 3) -> dict[str, pd.DataFrame]:
+def download_yahoo(tickers: list[str], batch: int = 40, attempts: int = 6) -> dict[str, pd.DataFrame]:
     import yfinance as yf
 
     out: dict[str, pd.DataFrame] = {}
@@ -73,11 +74,12 @@ def download_yahoo(tickers: list[str], batch: int = 80, attempts: int = 3) -> di
                     continue
                 df.index = pd.to_datetime(df.index).tz_localize(None).normalize()
                 out[t] = _sealed(df.astype(float))
-            time.sleep(1)
+            time.sleep(3)
+        print(f"download round {attempt + 1}: {len(out)} ok, {len(missing)} to retry", flush=True)
         todo = missing
         if not todo:
             break
-        time.sleep(30 * (attempt + 1))
+        time.sleep(60 * (attempt + 1))
     return out
 
 
@@ -138,6 +140,8 @@ def main() -> int:
     bench = benchmarks(args.source, args.prices_dir)
     calendar = pd.DatetimeIndex(bench["gspc"].dropna().index)
     qc_rows, fps, keep = [], {}, {}
+    for s in syms["symbol"]:
+        series.setdefault(s, None)
     for s, df in series.items():
         if df is None or len(df) < 2:
             qc_rows.append({"symbol": s, "status": "missing"})
@@ -165,11 +169,18 @@ def main() -> int:
                .loc[lambda x: x != ""].value_counts().to_dict(),
                "issue_counts": {c: int((qc[c] > 0).sum()) for c in qc.columns
                                 if c not in ("symbol", "status", "reasons", "rows", "missing_share")}}
+    coverage_ok = True
     if args.fingerprint_ref.exists() and args.source != "local":
         ref = pd.read_csv(args.fingerprint_ref, index_col="symbol")
-        summary["comparison_with_local"] = compare(fp, ref)
+        cmp = compare(fp, ref)
+        cmp["coverage_of_local"] = round(cmp["in_both"] / max(cmp["symbols_reference"], 1), 4)
+        summary["comparison_with_local"] = cmp
+        coverage_ok = cmp["coverage_of_local"] >= MIN_COVERAGE
     (args.out_dir / "data_summary.json").write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
     print(json.dumps(summary, indent=2, default=str))
+    if not coverage_ok:
+        print(f"ERROR: downloaded data covers less than {MIN_COVERAGE:.0%} of the local symbols")
+        return 1
     return 0
 
 
