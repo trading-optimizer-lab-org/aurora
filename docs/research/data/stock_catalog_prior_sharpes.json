@@ -1,5 +1,5 @@
 {
- "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375; qullamaggie_sizing (16 trials) from GitHub run 39130036578; qullamaggie_catalyst (16 trials) from GitHub run 39131901612; combination_7a (12 combinations) from GitHub run 39147489147",
+ "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375; qullamaggie_sizing (16 trials) from GitHub run 39130036578; qullamaggie_catalyst (16 trials) from GitHub run 39131901612; combination_7a (12 combinations) from GitHub run 39147489147; combination_plus (18 trials, 2016-2020 Sharpe) from GitHub run 39149435566",
  "v1": {
   "felipe_5d": -0.12390925336417466,
   "felipe_s20": 0.44860231190397754,
@@ -249237,5 +249237,25 @@
   "ALL_RP": 1.69439,
   "ALL_RPH": 1.38709,
   "ALL_RPH_VT": 1.00242
+ },
+ "combination_plus": {
+  "EP_DAY": 1.0263723207583089,
+  "BO_DAY": 0.6693403703744544,
+  "PS_DAY": 0.31874226055532795,
+  "PS_SWING": -0.24001425464790827,
+  "BD_DAY": -0.5990673782788878,
+  "INTRA8_EQ": 0.702298490432001,
+  "INTRA8_RP": 0.9755751554368837,
+  "ALL13_EQ": 1.3347561151004135,
+  "ALL13_RP": 1.6088261711626328,
+  "INTRADAY_EQ_L1.5": 1.2799817715959991,
+  "INTRADAY_EQ_L2": 1.257554810891342,
+  "INTRADAY_EQ_L3": 1.235127850186684,
+  "INTRA8_EQ_L1.5": 0.6401353095656572,
+  "INTRA8_EQ_L2": 0.6090537191324855,
+  "INTRA8_EQ_L3": 0.5779721286993136,
+  "ALL13_EQ_L1.5": 1.247043174584829,
+  "ALL13_EQ_L2": 1.203186704327037,
+  "ALL13_EQ_L3": 1.1593302340692444
  }
 }
