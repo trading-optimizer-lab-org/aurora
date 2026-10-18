@@ -715,3 +715,46 @@ def test_stars_features_use_only_the_prior_close() -> None:
     full, cut = feats_at(400), feats_at(300)
     for k in qs.FEATURES:
         assert full[k].iloc[:300].equals(cut[k]), k
+
+
+def test_pyramid_and_selling_into_strength() -> None:
+    idx = _dates(10)
+    close = pd.DataFrame({"A": [100.0, 100, 100, 102, 105, 105, 105, 105, 105, 105]}, index=idx)
+    panel = _panel(close)
+    ind = _ind(close)
+    entries, stops = _entry(close, 2), close * 0 + 98.0  # risk 2 per share: +2R = 104
+    base = _run(panel, ind, entries, stops, "XS20", cap=1.0)
+    pyr = _run(panel, ind, entries, stops, "XS20", cap=1.0, pyramid=True)
+    assert base["invested"].iloc[4] == pytest.approx(base["invested"].iloc[3], rel=0.05)
+    assert pyr["invested"].iloc[4] > 1.4 * base["invested"].iloc[4]  # 50% more shares at the +2R new high
+    ind["sma10"] = close * 0 + 100.0
+    ind["sma10"].iloc[4, 0] = 80.0  # 105 is 31% above it
+    trades: list[dict] = []
+    _run(panel, ind, entries, stops, "XS20", cap=1.0, extended_sell=1.30, trades=trades)
+    assert trades and trades[0]["exit_date"] == idx[4] and trades[0]["fraction"] == pytest.approx(1 / 3)
+
+
+def test_profit_cushion_doubles_the_risk_after_a_gain() -> None:
+    idx = _dates(100)
+    a = np.r_[np.full(2, 100.0), np.linspace(100, 200, 58), np.full(40, 200.0)]
+    close = pd.DataFrame({"A": a, "B": np.full(100, 50.0)}, index=idx)
+    panel = _panel(close)
+    panel["low"]["A"] = close["A"]  # A never touches its tight stop while it doubles
+    ind = _ind(close)
+    entries = pd.DataFrame(False, index=idx, columns=close.columns)
+    entries.iloc[1, 0] = True
+    entries.iloc[80, 1] = True
+    stops = close * 0.999  # A: 0.1% stop -> capped at 50%
+    stops["B"] = 45.0  # B: 10% stop -> 5% of equity at 0.5% risk
+    plain = _run(panel, ind, entries, stops, "XS20", cap=0.5)
+    padded = _run(panel, ind, entries, stops, "XS20", cap=0.5, cushion=True)
+    jump = lambda d: d["invested"].iloc[80] - d["invested"].iloc[79]  # noqa: E731
+    assert jump(plain) == pytest.approx(0.05, rel=0.05)
+    assert jump(padded) == pytest.approx(0.10, rel=0.05)
+
+
+def test_sizing_grid() -> None:
+    from aurora.research import qullamaggie_sizing as qz
+
+    names = [t.name for t in qz.trials()]
+    assert len(names) == len(set(names)) == 16 and "SIZE_S2_P0_C0_X0" in names

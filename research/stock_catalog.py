@@ -28,6 +28,7 @@ COST = 10 / 1e4
 RISK = 0.005
 CAP = 0.20
 BORROW_SPREAD = 0.015  # margin pays the T-bill rate plus this, a year
+PYRAMID_R, PYRAMID_ADD, PYRAMID_DAYS = 2.0, 0.5, 10  # add 50% once, at +2R within 10 sessions
 BNF_SIZE = 0.10
 UNIVERSE_SIZE = 1500
 MIN_HISTORY = 260
@@ -210,7 +211,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
              trades: list | None = None, risk: float = RISK, side: int = 1,
              entry_px: pd.DataFrame | None = None, same_day_px: pd.DataFrame | None = None,
              risk_scale: pd.Series | None = None, max_gross: pd.Series | None = None,
-             cap: float = CAP) -> pd.DataFrame:
+             cap: float = CAP, pyramid: bool = False, cushion: bool = False,
+             extended_sell: float | None = None) -> pd.DataFrame:
     """Daily net return and invested fraction from ``start``.
 
     Entries fill at the close of the signal day (S8: limit order the next day,
@@ -254,6 +256,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     pos: dict[int, dict] = {}
     pending: list[tuple[int, float, float | None]] = []
     rets, inv = [], []
+    hist: list[float] = []
+    peak = 1.0
 
     def mark(p: dict, c: float) -> float:
         return p["shares"] * (c if side > 0 else 2 * p["entry"] - c)
@@ -276,6 +280,16 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
 
     for t in range(first, len(dates)):
         cash *= 1 + cr[t] + (BORROW_SPREAD / PPY if cash < 0 else 0.0)
+        day_gross = MG[t] if MG is not None else 1.0
+        mult = 1.0
+        if cushion:  # profit cushion, as of the prior close
+            hist.append(eq_prev)
+            peak = max(peak, eq_prev)
+            if len(hist) > 63 and eq_prev >= 1.10 * hist[-64] and eq_prev >= 0.95 * peak:
+                mult, day_gross = 2.0, max(day_gross, 2.0)
+            elif eq_prev <= 0.90 * peak:
+                mult = 0.5
+        adds: list[int] = []
         for i, lim, pstop in pending:
             if i in pos or not np.isfinite(L[t, i]) or L[t, i] > lim:
                 continue
@@ -430,7 +444,25 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                 assert R2 is not None
                 if R2[t, i] >= 85 or (days >= 3 and c < p["entry"]) or days >= 5:
                     sell(i, c)
+            if (pyramid or extended_sell) and i in pos:
+                p["top"] = max(p.get("top", p["entry"]), float(c))
+                if extended_sell and not p.get("ext") and c >= extended_sell * S10[t, i]:
+                    sell(i, c, 1 / 3)
+                    p["ext"] = True
+                if (pyramid and i in pos and side > 0 and not p.get("added") and days <= PYRAMID_DAYS
+                        and c >= p["entry"] + PYRAMID_R * p.get("r0", 0.0) and c >= p["top"]):
+                    adds.append(i)
         equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
+        for i in adds:  # add to the winner at today's close, within cash and the cap
+            p, c = pos[i], float(Craw[t, i])
+            value = min(PYRAMID_ADD * p["shares0"] * c, cap * equity - p["shares"] * c,
+                        (cash + (day_gross - 1) * equity) / (1 + COST))
+            if value > 1e-6 * equity:
+                cash -= value * (1 + COST)
+                p["shares"] += value / c
+                p["added"], p["stop"] = True, max(p["stop"], p["entry"])
+        if adds:
+            equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
         hits = np.flatnonzero(E[t])
         if hits.size:
             order = [int(i) for i in hits[np.argsort(-RK[t, hits], kind="stable")] if int(i) not in pos]
@@ -441,7 +473,9 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
             else:
                 assert ST is not None
                 risk_t = risk * (RSC[t] if RSC is not None else 1.0)
-                gross_t = MG[t] if MG is not None else 1.0
+                if cushion:
+                    risk_t *= mult
+                gross_t = day_gross
                 for i in (order if risk_t > 0 else []):
                     c, st = Craw[t, i], ST[t, i]
                     intraday = EPX is not None and np.isfinite(EPX[t, i])
@@ -453,7 +487,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     if value <= 1e-6 * equity:
                         break
                     cash -= value * (1 + COST)
-                    pos[i] = {"shares": value / px, "entry": px, "stop": st, "t": t, "half": False,
+                    pos[i] = {"shares": value / px, "shares0": value / px, "entry": px, "stop": st, "t": t, "half": False,
                               "hc": float(px), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0,
                               "r0": abs(float(px) - float(st)), "hh": float(px), "af": 0.02, "kell": False}
                     if intraday and SDX is not None:  # same-day exit known from minute bars

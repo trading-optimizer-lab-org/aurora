@@ -181,15 +181,9 @@ def _run_trial(t: Trial) -> dict:
     return row
 
 
-def run(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close: pd.Series, nasdaq: pd.Series,
-        cash_index: pd.Series, industry: pd.Series, load_minutes: Callable[[pd.Timestamp], pd.DataFrame],
-        alp_daily: dict[str, pd.DataFrame], workers: int = 4) -> tuple[list[dict], dict]:
-    if panel["close"].index.max() >= sc.LOCKED_START or nasdaq.index.max() >= sc.LOCKED_START:
-        raise ValueError("locked period data reached the Qullamaggie stars study")
+def selected_breakouts(panel: dict, ind: dict, ctx: dict, nasdaq: pd.Series) -> tuple[dict, dict]:
+    """Train the model on 1995-2010 and return, per (scorer, n), the breakout setups kept before each open."""
     f32 = np.float32
-    ind = sc.indicators(panel, index_close, industry)
-    ctx = q.context(panel, ind, nasdaq)
-    wind_df = qw.wind(panel, ind, ctx)
     feats = features(panel, ind, nasdaq)
     e35, s35, px35 = q.breakout(panel, ind, ctx, "STOP", *q.BO_SELECTIONS["SCAN35"])
     stream = st.trade_list(panel, ind, e35.fillna(False).astype(bool), s35.astype(f32), qw.EXIT,
@@ -199,19 +193,37 @@ def run(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close: pd.Se
     setup5, _ = q.breakout_setup(panel, ind, ctx, *q.BO_SELECTIONS["SCAN5"])
     tiebreak = (panel["close"] / panel["close"].shift(63) - 1).rank(axis=1, pct=True).shift(1)
     scores = {"STARS": stars(feats), "MODEL": model_score(feats, model)}
-    kept = {(c, n): top_n(scores[c], setup5, tiebreak, n) for c in SCORERS for n in NS}
-    del feats, scores, tiebreak
+    return {(c, n): top_n(scores[c], setup5, tiebreak, n) for c in SCORERS for n in NS}, info
+
+
+def intraday_signals(prep: dict, kept: pd.DataFrame | None) -> tuple[tuple, tuple, tuple]:
+    """(breakouts, episodic pivots, both) as (entries, stops, entry prices, same-day exits) on the 2016-2020
+    slice; ``kept`` limits the breakouts to the selected setups (None: all)."""
+    args = (prep["table"], prep["cands"], prep["m1"], prep["adr_prior"], prep["like"])
+    ie = qi.trial_inputs(qw.I_EP, *args)[:4]
+    cands = dict(prep["cands"])
+    if kept is not None:
+        cands["IBO_SCAN5"] = cands["IBO_SCAN5"] & kept.reindex_like(cands["IBO_SCAN5"]).fillna(False).astype(bool)
+    ib = qi.trial_inputs(qw.I_BO, prep["table"], cands, prep["m1"], prep["adr_prior"], prep["like"])[:4]
+    mix = (ib[0] | ie[0], ib[1].where(ib[0], ie[1]), ib[2].where(ib[0], ie[2]), ib[3].where(ib[0], ie[3]))
+    return ib, ie, mix
+
+
+def run(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close: pd.Series, nasdaq: pd.Series,
+        cash_index: pd.Series, industry: pd.Series, load_minutes: Callable[[pd.Timestamp], pd.DataFrame],
+        alp_daily: dict[str, pd.DataFrame], workers: int = 4) -> tuple[list[dict], dict]:
+    if panel["close"].index.max() >= sc.LOCKED_START or nasdaq.index.max() >= sc.LOCKED_START:
+        raise ValueError("locked period data reached the Qullamaggie stars study")
+    f32 = np.float32
+    ind = sc.indicators(panel, index_close, industry)
+    ctx = q.context(panel, ind, nasdaq)
+    wind_df = qw.wind(panel, ind, ctx)
+    kept, info = selected_breakouts(panel, ind, ctx, nasdaq)
     e5, s5, px5 = q.breakout(panel, ind, ctx, "STOP", *q.BO_SELECTIONS["SCAN5"])
     e5, s5, px5 = e5.fillna(False).astype(bool), s5.astype(f32), px5.astype(f32)
     prep = qi.prepare(panel, ind, ctx, cash_index, load_minutes, alp_daily)
     del ctx
-    args = (prep["table"], prep["cands"], prep["m1"], prep["adr_prior"], prep["like"])
-    ie = qi.trial_inputs(qw.I_EP, *args)[:4]
-    ib0 = qi.trial_inputs(qw.I_BO, *args)[:4]
-
-    def mix(b: tuple) -> tuple:
-        return (b[0] | ie[0], b[1].where(b[0], ie[1]), b[2].where(b[0], ie[2]), b[3].where(b[0], ie[3]))
-
+    ib0, _, m0 = intraday_signals(prep, None)
     cash = cash_index.reindex(panel["close"].index).ffill().pct_change(fill_method=None).fillna(0.0)
     rank = (panel["close"] / panel["close"].shift(63) - 1).rank(axis=1, pct=True).fillna(0.0).astype(f32)
     daily_base = {"panel": panel, "ind": ind, "cash": cash, "rank": rank, "start": sc.TRAIN_START,
@@ -220,17 +232,14 @@ def run(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close: pd.Se
                   "start": qi.START, "periods": qi.PERIODS}
     all_ib = st.trade_list(prep["panel"], prep["ind"], ib0[0], ib0[1], qw.EXIT, start=qi.START, entry_px=ib0[2],
                            same_day_px=ib0[3])
-    m0 = mix(ib0)
     all_mix = st.trade_list(prep["panel"], prep["ind"], m0[0], m0[1], qw.EXIT, start=qi.START, entry_px=m0[2],
                             same_day_px=m0[3])
     groups: dict = {}
     for (c, n), k in kept.items():
         groups[("D_BO", c, n)] = {**daily_base, "signals": (e5 & k, s5, px5, None)}
-        cands = dict(prep["cands"])
-        cands["IBO_SCAN5"] = cands["IBO_SCAN5"] & k.reindex_like(cands["IBO_SCAN5"]).fillna(False).astype(bool)
-        ib = qi.trial_inputs(qw.I_BO, prep["table"], cands, prep["m1"], prep["adr_prior"], prep["like"])[:4]
+        ib, _, mix = intraday_signals(prep, k)
         groups[("I_BO", c, n)] = {**intra_base, "signals": ib, "all_trades": all_ib}
-        groups[("I_MIX", c, n)] = {**intra_base, "signals": mix(ib), "all_trades": all_mix}
+        groups[("I_MIX", c, n)] = {**intra_base, "signals": mix, "all_trades": all_mix}
     del kept
     _G.update(groups, wind=wind_df)
     todo = trials()

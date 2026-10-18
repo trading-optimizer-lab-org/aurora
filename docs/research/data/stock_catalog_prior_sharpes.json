@@ -1,5 +1,5 @@
 {
- "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620",
+ "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375",
  "v1": {
   "felipe_5d": -0.12390925336417466,
   "felipe_s20": 0.44860231190397754,
@@ -249161,5 +249161,31 @@
   "I_MIX_E3_C10": 1.02904,
   "I_MIX_E4_C20": 0.82413,
   "I_MIX_E4_C10": 0.89811
+ },
+ "qullamaggie_stars": {
+  "D_BO_STARS_N1_E0": -0.44472,
+  "D_BO_STARS_N1_E3_C10": -0.12737,
+  "D_BO_STARS_N3_E0": -0.58849,
+  "D_BO_STARS_N3_E3_C10": -0.33232,
+  "D_BO_MODEL_N1_E0": -0.09969,
+  "D_BO_MODEL_N1_E3_C10": -0.02561,
+  "D_BO_MODEL_N3_E0": -0.21126,
+  "D_BO_MODEL_N3_E3_C10": 0.08462,
+  "I_BO_STARS_N1_E0": 0.64591,
+  "I_BO_STARS_N1_E3_C10": 0.57619,
+  "I_BO_STARS_N3_E0": 0.3232,
+  "I_BO_STARS_N3_E3_C10": 0.58312,
+  "I_BO_MODEL_N1_E0": 0.3692,
+  "I_BO_MODEL_N1_E3_C10": 0.29226,
+  "I_BO_MODEL_N3_E0": 0.76459,
+  "I_BO_MODEL_N3_E3_C10": 0.82364,
+  "I_MIX_STARS_N1_E0": 1.21293,
+  "I_MIX_STARS_N1_E3_C10": 0.98245,
+  "I_MIX_STARS_N3_E0": 1.00942,
+  "I_MIX_STARS_N3_E3_C10": 0.94169,
+  "I_MIX_MODEL_N1_E0": 1.12327,
+  "I_MIX_MODEL_N1_E3_C10": 0.91498,
+  "I_MIX_MODEL_N3_E0": 1.2339,
+  "I_MIX_MODEL_N3_E3_C10": 1.07192
  }
 }
