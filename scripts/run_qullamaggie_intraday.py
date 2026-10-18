@@ -156,6 +156,8 @@ SEP = "|" + "---|" * 18
 
 
 def _row(n: str, r: pd.Series) -> str:
+    p = r.get("passed")
+    passed = "-" if p is None or (isinstance(p, float) and p != p) else ("YES" if bool(p) else "no")
     return (f"| {n} | {_fmt(r['p1_tl_trades'], '{:,.0f}')} | {_fmt(r['p1_tl_profit_factor'], '{:.2f}')} | "
             f"{_fmt(r['p2_tl_trades'], '{:,.0f}')} | {_fmt(r['p2_tl_profit_factor'], '{:.2f}')} | "
             f"{_fmt(r['all_tl_trades'], '{:,.0f}')} | {_fmt(r['all_tl_win_rate'], '{:.0%}')} | "
@@ -164,7 +166,7 @@ def _row(n: str, r: pd.Series) -> str:
             f"{_fmt(r['all_cagr'], '{:.1%}')} | {_fmt(r['all_max_drawdown'], '{:.1%}')} | "
             f"{_fmt(r.get('stopped_entry_day'), '{:.0%}')} | {_fmt(r.get('median_risk'), '{:.1%}')} | "
             f"{_fmt(r.get('median_entry_minute'), '{:.0f}')} | {_fmt(r.get('deflated_sharpe'), '{:.2f}')} | "
-            f"{'YES' if r.get('passed') is True else ('no' if r.get('passed') is False else '-')} |")
+            f"{passed} |")
 
 
 def render(agg: dict, info: dict) -> str:
