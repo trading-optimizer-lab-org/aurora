@@ -13,6 +13,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from aurora.research import qullamaggie as q
@@ -128,11 +129,12 @@ def render(agg: dict) -> str:
             dims.update(neglect=parts.str[1], adr=parts.str[2], market=parts.str[3])
         else:
             dims.update(run=parts.str[1])
-        for dim, key in dims.items():
+        for dim, values in dims.items():
+            key = np.asarray(values)
             lines += [f"### {label}: by {dim}", "", f"| {dim} | train | 2011-2015 | 2016-2020 | 2011-2020 |",
                       "|---|---|---|---|---|"]
             for val in sorted(set(key)):
-                m = sub[(key == val).to_numpy()]
+                m = sub[key == val]
                 cells = []
                 for p in ("train", "val1", "val2", "validation"):
                     pf = m[f"{p}_tl_profit_factor"].where(m[f"{p}_tl_trades"] >= 50).dropna()
