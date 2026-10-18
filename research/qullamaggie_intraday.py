@@ -208,6 +208,27 @@ def _slice(obj, cols):
     return out[cols] if isinstance(out, pd.DataFrame) and cols is not None else out
 
 
+def prepare(panel: dict[str, pd.DataFrame], ind: dict, ctx: dict, cash_index: pd.Series,
+            load_minutes: Callable[[pd.Timestamp], pd.DataFrame], alp_daily: dict[str, pd.DataFrame]) -> dict:
+    """Intraday entry table and the 2016-2020 slices (candidate columns only) the trials run on."""
+    cands = candidates(panel, ind, ctx)
+    table, dropped = entry_table(panel, cands, load_minutes, alp_daily)
+    ref = {f"REF_BO_SCAN35_{m}": q.breakout(panel, ind, ctx, "STOP", *q.BO_SELECTIONS["SCAN35"]) for m in ("M0", "M1")}
+    ref = {k: (q._market(e, ctx, k[-2:]), s, px) for k, (e, s, px) in ref.items()}
+    ref["REF_EP_N1_A35_M0"] = q.episodic(panel, ind, ctx, EP_ADR, True)
+    cols = sorted(set(table["symbol"]) | {c for e, _, _ in ref.values() for c in e.columns[e.loc[START:END].any()]})
+    small = {k: _slice(v, cols) for k, v in panel.items()}
+    dates = small["close"].index
+    rank = (panel["close"] / panel["close"].shift(63) - 1).rank(axis=1, pct=True).loc[WARMUP:, cols]
+    info = {"candidate_days": int(sum(len(v) for v in needed(cands).values())), "entries": int(len(table)),
+            "dropped": dropped}
+    return {"panel": small, "ind": {k: _slice(v, cols) for k, v in ind.items()}, "table": table,
+            "cands": {k: v[[c for c in cols if c in v.columns]] for k, v in cands.items()},
+            "m1": ctx["m1"].loc[WARMUP:], "adr_prior": ind["adr"].shift(1).loc[WARMUP:, cols],
+            "like": small["close"], "cash": cash_index.reindex(dates).ffill().pct_change(fill_method=None).fillna(0.0),
+            "rank": rank.fillna(0.0).astype(np.float32), "ref": ref, "cols": cols, "info": info}
+
+
 def run(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close: pd.Series, nasdaq: pd.Series,
         cash_index: pd.Series, industry: pd.Series, load_minutes: Callable[[pd.Timestamp], pd.DataFrame],
         alp_daily: dict[str, pd.DataFrame], workers: int = 4) -> tuple[list[dict], dict]:
@@ -215,43 +236,29 @@ def run(panel: dict[str, pd.DataFrame], index_close: pd.Series, spy_close: pd.Se
         raise ValueError("locked period data reached the Qullamaggie intraday study")
     ind = sc.indicators(panel, index_close, industry)
     ctx = q.context(panel, ind, nasdaq)
-    cands = candidates(panel, ind, ctx)
-    table, dropped = entry_table(panel, cands, load_minutes, alp_daily)
-    ref = {f"REF_BO_SCAN35_{m}": q.breakout(panel, ind, ctx, "STOP", *q.BO_SELECTIONS["SCAN35"]) for m in ("M0", "M1")}
-    ref = {k: (q._market(e, ctx, k[-2:]), s, px) for k, (e, s, px) in ref.items()}
-    ref["REF_EP_N1_A35_M0"] = q.episodic(panel, ind, ctx, EP_ADR, True)
-    cols = sorted(set(table["symbol"]) | {c for e, _, _ in ref.values() for c in e.columns[e.loc[START:END].any()]})
-    m1, adr_prior = ctx["m1"].loc[WARMUP:], ind["adr"].shift(1).loc[WARMUP:, cols]
+    prep = prepare(panel, ind, ctx, cash_index, load_minutes, alp_daily)
     del ctx
-    small = {k: _slice(v, cols) for k, v in panel.items()}
-    small_ind = {k: _slice(v, cols) for k, v in ind.items()}
-    dates = small["close"].index
-    cash = cash_index.reindex(dates).ffill().pct_change(fill_method=None).fillna(0.0)
-    rank = (panel["close"] / panel["close"].shift(63) - 1).rank(axis=1, pct=True).loc[WARMUP:, cols]
-    cands_small = {k: v[[c for c in cols if c in v.columns]] for k, v in cands.items()}
-    _G.update(panel=small, ind=small_ind, table=table, cands=cands_small, m1=m1, adr_prior=adr_prior,
-              like=small["close"], cash=cash, rank=rank.fillna(0.0).astype(np.float32))
+    small, small_ind, cash, cols = prep["panel"], prep["ind"], prep["cash"], prep["cols"]
+    _G.update({k: prep[k] for k in ("panel", "ind", "table", "cands", "m1", "adr_prior", "like", "cash", "rank")})
     todo = trials()
     if workers > 1 and os.name != "nt":
         with mp.get_context("fork").Pool(workers) as pool:
             rows = list(pool.imap_unordered(_run_trial, todo))
     else:
         rows = [_run_trial(t) for t in todo]
-    for name, (e, s, px) in ref.items():
+    for name, (e, s, px) in prep["ref"].items():
         e2, s2 = _slice(e, cols).fillna(False).astype(bool), _slice(s, cols).astype(np.float32)
         px2 = None if px is None else _slice(px, cols).astype(np.float32)
         d = sc.simulate(small, small_ind, e2, s2, "XQ3_10", cash, _G["rank"], start=START, entry_px=px2)
         tl = st.trade_list(small, small_ind, e2, s2, "XQ3_10", start=START, entry_px=px2)
         rows.append(_metrics_row(name, d["return"], tl, cash))
     _G.clear()
-    spy = spy_close.reindex(dates).ffill().pct_change(fill_method=None).loc[START:].fillna(0.0)
+    spy = spy_close.reindex(small["close"].index).ffill().pct_change(fill_method=None).loc[START:].fillna(0.0)
     spy_row: dict = {"name": "spy"}
     for p, (a, b) in PERIODS.items():
         m = sc.metrics(spy.loc[a:b], cash)
         spy_row.update({f"{p}_{k}": m.get(k, np.nan) for k in v7.PORT_KEYS})
-    info = {"candidate_days": int(sum(len(v) for v in needed(cands).values())), "entries": int(len(table)),
-            "dropped": dropped}
-    return rows + [spy_row], info
+    return rows + [spy_row], prep["info"]
 
 
 def aggregate(rows: pd.DataFrame, prior_sharpes: list[float]) -> dict:

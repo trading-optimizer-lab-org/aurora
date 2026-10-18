@@ -27,6 +27,7 @@ PPY = 252
 COST = 10 / 1e4
 RISK = 0.005
 CAP = 0.20
+BORROW_SPREAD = 0.015  # margin pays the T-bill rate plus this, a year
 BNF_SIZE = 0.10
 UNIVERSE_SIZE = 1500
 MIN_HISTORY = 260
@@ -207,7 +208,9 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
              exit_rule: str, cash_r: pd.Series, rank: pd.DataFrame, start: pd.Timestamp = TRAIN_START,
              limits: pd.DataFrame | None = None, rsi: pd.DataFrame | None = None,
              trades: list | None = None, risk: float = RISK, side: int = 1,
-             entry_px: pd.DataFrame | None = None, same_day_px: pd.DataFrame | None = None) -> pd.DataFrame:
+             entry_px: pd.DataFrame | None = None, same_day_px: pd.DataFrame | None = None,
+             risk_scale: pd.Series | None = None, max_gross: pd.Series | None = None,
+             cap: float = CAP) -> pd.DataFrame:
     """Daily net return and invested fraction from ``start``.
 
     Entries fill at the close of the signal day (S8: limit order the next day,
@@ -244,6 +247,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
     RK = rank.to_numpy(dtype=f32)
     cr = cash_r.reindex(dates).fillna(0.0).to_numpy()
+    RSC = risk_scale.reindex(dates).fillna(1.0).to_numpy() if risk_scale is not None else None
+    MG = max_gross.reindex(dates).fillna(1.0).to_numpy() if max_gross is not None else None
     first = int(dates.searchsorted(start))
     cash, eq_prev = 1.0, 1.0
     pos: dict[int, dict] = {}
@@ -270,7 +275,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
             del pos[i]
 
     for t in range(first, len(dates)):
-        cash *= 1 + cr[t]
+        cash *= 1 + cr[t] + (BORROW_SPREAD / PPY if cash < 0 else 0.0)
         for i, lim, pstop in pending:
             if i in pos or not np.isfinite(L[t, i]) or L[t, i] > lim:
                 continue
@@ -435,13 +440,16 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                             else None) for i in order if np.isfinite(LIM[t, i])]
             else:
                 assert ST is not None
-                for i in order:
+                risk_t = risk * (RSC[t] if RSC is not None else 1.0)
+                gross_t = MG[t] if MG is not None else 1.0
+                for i in (order if risk_t > 0 else []):
                     c, st = Craw[t, i], ST[t, i]
                     intraday = EPX is not None and np.isfinite(EPX[t, i])
                     px = EPX[t, i] if EPX is not None and intraday else c
                     if not (np.isfinite(c) and np.isfinite(px) and np.isfinite(st)) or side * (px - st) <= 0:
                         continue
-                    value = min(risk * equity / (abs(px - st) / px), CAP * equity, cash / (1 + COST))
+                    value = min(risk_t * equity / (abs(px - st) / px), cap * equity,
+                                (cash + (gross_t - 1) * equity) / (1 + COST))
                     if value <= 1e-6 * equity:
                         break
                     cash -= value * (1 + COST)

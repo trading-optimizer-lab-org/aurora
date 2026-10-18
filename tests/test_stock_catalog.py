@@ -618,3 +618,56 @@ def test_qullamaggie_intraday_pipeline_on_synthetic_data() -> None:
     out = pd.DataFrame(rows)
     assert len(out) == 48 + 3 + 1 and out["name"].is_unique
     assert info["entries"] >= 0 and set(info["dropped"]) == {"no_minutes", "no_daily", "price_mismatch"}
+
+
+def test_risk_scale_margin_and_cap() -> None:
+    idx = _dates(8)
+    close = pd.DataFrame({"A": [100.0] * 8, "B": [100.0] * 8, "C": [100.0] * 8}, index=idx)
+    panel = _panel(close)
+    entries = pd.DataFrame(False, index=idx, columns=close.columns)
+    entries.iloc[2] = True
+    stops = close * 0 + 99.0  # 1% stop: 0.5% risk wants 50% of equity per position
+    ind = _ind(close)
+    base = _run(panel, ind, entries, stops, "X5")
+    assert base["invested"].iloc[2] == pytest.approx(3 * sc.CAP, rel=1e-3)
+    off = _run(panel, ind, entries, stops, "X5", risk_scale=pd.Series(0.0, index=idx))
+    assert (off["invested"] == 0).all()
+    small = _run(panel, ind, entries, stops, "X5", cap=0.10)
+    assert small["invested"].iloc[2] == pytest.approx(0.30, rel=1e-3)
+    entries.iloc[2] = False
+    entries.iloc[2, 0] = True
+    half = _run(panel, ind, entries, close * 0 + 98.0, "X5", risk_scale=pd.Series(0.5, index=idx), cap=1.0)
+    assert half["invested"].iloc[2] == pytest.approx(0.125, rel=1e-3)
+    big = _run(panel, ind, entries, close * 0 + 99.5, "X5", max_gross=pd.Series(2.0, index=idx), cap=2.0)
+    assert big["invested"].iloc[2] == pytest.approx(1.0, abs=2e-3)  # the cost is paid on margin
+    lev = _run(panel, ind, entries, close * 0 + 99.75, "X5", max_gross=pd.Series(2.0, index=idx), cap=2.0)
+    assert lev["invested"].iloc[2] > 1.5  # more than the whole account is invested on margin
+
+
+def test_wind_has_no_lookahead_and_policies_follow_the_state() -> None:
+    from aurora.research import qullamaggie as q
+    from aurora.research import qullamaggie_wind as qw
+
+    assert len({t.name for t in qw.trials()}) == 35
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("1993-01-04", periods=800)
+    close = pd.DataFrame(20 * np.cumprod(1 + rng.normal(0.003, 0.05, (800, 40)), axis=0), index=idx,
+                         columns=[f"s{i}" for i in range(40)])
+    panel = _panel(close)
+    panel["open"] = close.shift(1).fillna(close) * (1 + rng.normal(0, 0.02, close.shape))
+    panel["high"], panel["low"] = np.maximum(close, panel["open"]) * 1.03, np.minimum(close, panel["open"]) * 0.97
+    panel["volume"] = close * 0 + 1e7
+
+    def wind_at(n: int) -> pd.DataFrame:
+        p = {k: v.iloc[:n] for k, v in panel.items()}
+        ind = sc.indicators(p, p["close"].mean(axis=1), pd.Series("X", index=close.columns))
+        return qw.wind(p, ind, q.context(p, ind, p["close"].mean(axis=1)))
+
+    full, cut = wind_at(800), wind_at(600)
+    assert full["state"].iloc[:600].equals(cut["state"]) and set(full["state"]) <= {"green", "yellow", "red"}
+    w = pd.DataFrame({"state": ["green", "yellow", "red", "green"], "m1": [True, True, True, False]})
+    scale, gross, cap = qw.policy("E2", w)
+    assert list(scale) == [1.0, 2.0, 1.0, 0.0] and cap == sc.CAP  # decided at the prior close
+    scale, gross, cap = qw.policy("E4_C10", w)
+    assert list(scale) == [1.0, 2.0, 1.0, 0.0] and list(gross) == [1.0, 2.0, 1.0, 1.0] and cap == 0.10
+    assert list(qw.policy("E0", w)[0]) == [1.0] * 4 and list(qw.policy("E1", w)[0]) == [1.0, 1.0, 1.0, 0.0]
