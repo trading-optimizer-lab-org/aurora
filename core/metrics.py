@@ -9,6 +9,7 @@ Key metrics:
 - Win rate, profit factor
 """
 from __future__ import annotations
+from collections.abc import Sequence
 from dataclasses import dataclass, asdict
 import math
 import numpy as np
@@ -156,17 +157,24 @@ def compute_metrics(returns, ppy: int = 252) -> Metrics:
 
 
 def deflated_sharpe(observed_sharpe: float, n_trials: int, n_periods: int,
-                    skew: float = 0.0, kurtosis: float = 0.0) -> float:
+                    skew: float = 0.0, kurtosis: float = 0.0,
+                    trial_sharpes: Sequence[float] | None = None) -> float:
     """Deflated Sharpe Ratio (Bailey & Lopez de Prado 2014).
 
     Corrects raw Sharpe for selection bias when N strategies tested.
     Returns probability that observed Sharpe > 0 given selection from N trials.
 
     Args:
-        observed_sharpe: max Sharpe found across N trials (annualized)
+        observed_sharpe: max Sharpe found across N trials, in **per-period**
+            units matched to ``n_periods`` (see validation.deflated_sharpe for
+            annualized inputs)
         n_trials: number of strategies tested
         n_periods: backtest length (in periods)
-        skew, kurtosis: of selected strategy returns
+        skew, kurtosis: of selected strategy returns (raw kurtosis, 3 = normal)
+        trial_sharpes: per-period Sharpes of all trials. When given, their
+            dispersion scales the null benchmark (eq. 8 of the paper);
+            otherwise the sampling dispersion of a zero-skill Sharpe,
+            ``1 / sqrt(n_periods - 1)``, is used.
 
     Returns:
         DSR in [0, 1]. > 0.95 = passes 95% confidence.
@@ -174,9 +182,15 @@ def deflated_sharpe(observed_sharpe: float, n_trials: int, n_periods: int,
     if n_trials < 2 or n_periods < 10:
         return 0.0
 
-    # Expected max Sharpe under H0 (no skill)
+    # Expected max of n_trials standard normals; times the dispersion of the
+    # trial Sharpes it is the expected max Sharpe under H0 (no skill).
     e_max = ((1 - np.euler_gamma) * stats.norm.ppf(1 - 1.0 / n_trials)
              + np.euler_gamma * stats.norm.ppf(1 - 1.0 / (n_trials * np.e)))
+    if trial_sharpes is not None and len(trial_sharpes) >= 2:
+        null_sd = float(np.std(np.asarray(trial_sharpes, dtype=float), ddof=1))
+    else:
+        null_sd = 1.0 / math.sqrt(n_periods - 1)
+    sr0 = e_max * null_sd
 
     # Variance of estimated Sharpe given skew/kurtosis (Mertens)
     var_sr = (1 - skew * observed_sharpe + ((kurtosis - 1) / 4.0) * observed_sharpe**2) / (n_periods - 1)
@@ -184,7 +198,7 @@ def deflated_sharpe(observed_sharpe: float, n_trials: int, n_periods: int,
         return 0.0
     sigma_sr = math.sqrt(var_sr)
 
-    z = (observed_sharpe - e_max) / sigma_sr
+    z = (observed_sharpe - sr0) / sigma_sr
     dsr = float(stats.norm.cdf(z))
     return round(dsr, 4)
 
