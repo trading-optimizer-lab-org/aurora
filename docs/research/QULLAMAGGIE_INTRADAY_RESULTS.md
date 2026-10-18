@@ -17,8 +17,8 @@ Sesgo de supervivencia sin corregir. Nada posterior a 2020-12-31.
   0,5% de riesgo no la captura: entre -10% y +9,5% al año, caídas de -31% a -66%. Explicación probable (inferencia):
   la ganancia está en pocas operaciones enormes (el 5% mejor suma 1,5-3,5 veces el total) que llegan en racimos en
   mercados calientes, con docenas de señales al día; con posiciones del 20% la cartera solo coge unas pocas.
-- **Episodic Pivot intradía**: espectacular en 2019-2020 (cartera con Sortino 4-13 y +25% a +134% al año) y
-  perdedor en 2016-2018 (PF 0,42-0,87). 6 combinaciones pasan los criterios en 2016-2020; la mejor,
+- **Episodic Pivot intradía**: en 2019-2020 ganan las 24 variantes (cartera +14% a +134% al año, Sortino 1,6 a
+  12,9) y en 2016-2018 pierden todas por operación (PF 0,42-0,87). 6 combinaciones pasan los criterios en 2016-2020; la mejor,
   `IEP_N1_Q05_K1_XQ3_20` (hueco ≥ 10% en acción que no había subido, volumen al ritmo de la mitad de su media diaria,
   compra al romper el primer minuto, venta con la SMA20): Sortino 4,81, 38%/año, caída -23,8%. Pero el deflated
   Sharpe máximo es 0,25 y todas pierden en 2016-2018: no es robusto, depende de 2019-2020.
