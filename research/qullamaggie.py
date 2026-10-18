@@ -71,8 +71,9 @@ def _market(entries: pd.DataFrame, ctx: dict, market: str) -> pd.DataFrame:
     return entries.mul(ctx["m1"], axis=0).astype(bool) if market == "M1" else entries
 
 
-def breakout(panel: dict, ind: dict, ctx: dict, fill: str, adr_min: float, scan: bool):
-    O, H, L, C = (panel[k] for k in ("open", "high", "low", "close"))
+def breakout_setup(panel: dict, ind: dict, ctx: dict, adr_min: float, scan: bool):
+    """Breakout conditions as of the prior close, and the pivot (10-session high)."""
+    H, L, C = (panel[k] for k in ("high", "low", "close"))
     adr, s10, s20 = ind["adr"], ind["sma10"], ind["sma20"]
     elig = ctx["base"] & (adr >= adr_min)
     chosen = elig
@@ -84,8 +85,13 @@ def breakout(panel: dict, ind: dict, ctx: dict, fill: str, adr_min: float, scan:
     base = ((hi5 - lo5) < (hi5.shift(5) - lo5.shift(5))) & (lo5 > lo5.shift(5))
     trend = ((s10 > s20) & (s20 > s20.shift(5)) & (C >= s20)).shift(1, fill_value=False)
     pivot = H.shift(1).rolling(10, min_periods=10).max()
-    setup = chosen.shift(1, fill_value=False) & runup & base & trend
-    prior_adr = adr.shift(1)
+    return chosen.shift(1, fill_value=False) & runup & base & trend, pivot
+
+
+def breakout(panel: dict, ind: dict, ctx: dict, fill: str, adr_min: float, scan: bool):
+    O, H, L, C = (panel[k] for k in ("open", "high", "low", "close"))
+    setup, pivot = breakout_setup(panel, ind, ctx, adr_min, scan)
+    prior_adr = ind["adr"].shift(1)
     if fill == "STOP":
         hit = setup & (H >= pivot)
         px = np.maximum(O, pivot).where(hit)
@@ -95,13 +101,17 @@ def breakout(panel: dict, ind: dict, ctx: dict, fill: str, adr_min: float, scan:
     return setup & (C > pivot) & (risk > 0) & (risk <= prior_adr), L, None
 
 
+def episodic_gap(panel: dict, ind: dict, ctx: dict, adr_min: float, neglect: bool) -> pd.DataFrame:
+    """Gap of 10%+ at the open in a stock eligible the day before (no volume test)."""
+    O, C = panel["open"], panel["close"]
+    gap = (O / C.shift(1) - 1 >= 0.10) & (ctx["base"] & (ind["adr"] >= adr_min)).shift(1, fill_value=False)
+    return gap & (C.shift(1) / C.shift(127) - 1 < 0.30) if neglect else gap
+
+
 def episodic(panel: dict, ind: dict, ctx: dict, adr_min: float, neglect: bool):
-    O, L, C, V = (panel[k] for k in ("open", "low", "close", "volume"))
+    L, C, V = (panel[k] for k in ("low", "close", "volume"))
     adr = ind["adr"]
-    sig = ((O / C.shift(1) - 1 >= 0.10) & (V >= 3 * V.shift(1).rolling(20, min_periods=20).mean())
-           & (ctx["base"] & (adr >= adr_min)).shift(1, fill_value=False))
-    if neglect:
-        sig = sig & (C.shift(1) / C.shift(127) - 1 < 0.30)
+    sig = episodic_gap(panel, ind, ctx, adr_min, neglect) & (V >= 3 * V.shift(1).rolling(20, min_periods=20).mean())
     risk = (C - L) / C
     return sig & (risk > 0) & (risk <= 1.5 * adr.shift(1)), L, None
 

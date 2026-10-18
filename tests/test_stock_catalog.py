@@ -539,3 +539,82 @@ def test_qullamaggie_grid_and_signal_shapes() -> None:
         for key, (e, s, px) in q.build_group(g, panel, ind, ctx).items():
             assert e.shape == close.shape and s.shape == close.shape, (g, key)
             assert px is None or px.shape == close.shape
+
+
+def test_intraday_entry_rules() -> None:
+    from aurora.research import qullamaggie_intraday as qi
+
+    minute = np.arange(120)
+    o = np.full(120, 10.0)
+    h, low, v = o + 0.05, o - 0.05, np.full(120, 100.0)
+    h[2] = 10.2  # opening-range high (5 minutes)
+    h[12], o[12], low[12] = 10.6, 10.4, 10.3  # breaks the pivot 10.5
+    low[3] = 9.8  # low of day before the entry
+    low[40], o[40] = 9.7, 9.9  # later breaks the low of day
+    entry, stop, m, exit_px = qi.intraday_entry(minute, o, h, low, v, k=5, level_min=10.5)
+    assert (entry, stop, m, exit_px) == (10.5, 9.8, 12, pytest.approx(9.8))
+    # EP with a volume pace: the first break (minute 12) lacks volume, a later one has it
+    v2 = v.copy()
+    v2[30] = 5000.0
+    h[30] = 10.3
+    entry, stop, m, _ = qi.intraday_entry(minute, o, h, low, v2, k=5, adv=6000.0, q_vol=1.0)
+    assert m == 30 and entry == pytest.approx(10.2)
+    # nothing before 11:00 -> no trade
+    flat = np.full(120, 10.0)
+    flat_h = flat + 0.01
+    flat_h[100] = 11.0
+    assert qi.intraday_entry(minute, flat, flat_h, flat - 0.01, v, k=5) is None
+
+
+def test_same_day_exit_from_minutes_overrides_the_daily_low() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(10)
+    close = pd.DataFrame({"A": [100.0] * 10}, index=idx)
+    panel = _panel(close)
+    panel["low"].iloc[2, 0] = 90.0  # daily low far below the stop, but the minutes say it came first
+    entries, px, sd = _entry(close, 2), close * np.nan, close * np.nan
+    px.iloc[2, 0] = 101.0
+    stops = close * 0 + 98.0
+    t = st.trade_list(panel, _ind(close), entries, stops, "XS20", start=idx[0], entry_px=px, same_day_px=sd)
+    assert t["days"].iloc[0] > 0  # held: the stop stays at 98 (lows of 99 afterwards)
+    sd.iloc[2, 0] = 97.5
+    t = st.trade_list(panel, _ind(close), entries, stops, "XS20", start=idx[0], entry_px=px, same_day_px=sd)
+    assert t["days"].iloc[0] == 0 and t["exit"].iloc[0] == pytest.approx(97.5)
+    trades: list[dict] = []
+    _run(panel, _ind(close), entries, stops, "XS20", trades=trades, entry_px=px, same_day_px=sd)
+    assert trades[0]["exit_date"] == idx[2] and trades[0]["exit"] == pytest.approx(97.5)
+
+
+def test_qullamaggie_intraday_pipeline_on_synthetic_data() -> None:
+    from aurora.research import qullamaggie_intraday as qi
+
+    names = [t.name for t in qi.trials()]
+    assert len(names) == len(set(names)) == 48
+    rng = np.random.default_rng(5)
+    idx = pd.bdate_range("2013-01-01", "2020-12-31")
+    n = 12
+    close = pd.DataFrame(10 * np.cumprod(1 + rng.normal(0.003, 0.06, (len(idx), n)), axis=0), index=idx,
+                         columns=[f"s{i}" for i in range(n)])
+    opn = close.shift(1).fillna(close) * (1 + rng.normal(0.01, 0.06, close.shape))
+    high = np.maximum(close, opn) * 1.03
+    low = np.minimum(close, opn) * 0.97
+    vol = close * 0 + 1e6
+    panel = {"open": opn, "high": high, "low": low, "close": close, "volume": vol}
+    alp = {s: pd.DataFrame({"o": opn[s], "h": high[s], "l": low[s], "c": close[s], "v": vol[s]}) for s in close}
+
+    def load(day: pd.Timestamp) -> pd.DataFrame:
+        rows = []
+        for s in close.columns:
+            path = np.interp(np.arange(390), [0, 60, 200, 389],
+                             [opn.at[day, s], high.at[day, s], low.at[day, s], close.at[day, s]])
+            rows.append(pd.DataFrame({"symbol": s, "minute": np.arange(390), "o": path, "h": path * 1.0005,
+                                      "l": path * 0.9995, "c": path, "v": 1e6 / 390}))
+        return pd.concat(rows, ignore_index=True)
+
+    cash = pd.Series(np.cumprod(np.full(len(idx), 1.0001)), index=idx)
+    rows, info = qi.run(panel, close.mean(axis=1), close.mean(axis=1), close.mean(axis=1), cash,
+                        pd.Series("X", index=close.columns), load, alp, workers=1)
+    out = pd.DataFrame(rows)
+    assert len(out) == 48 + 3 + 1 and out["name"].is_unique
+    assert info["entries"] >= 0 and set(info["dropped"]) == {"no_minutes", "no_daily", "price_mismatch"}

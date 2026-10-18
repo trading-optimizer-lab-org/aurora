@@ -25,7 +25,7 @@ def _net(entry: float, exit_px: float, side: int = 1) -> float:
 def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, stops: pd.DataFrame | None,
                exit_rule: str, start: pd.Timestamp = sc.TRAIN_START, limits: pd.DataFrame | None = None,
                rsi: pd.DataFrame | None = None, side: int = 1,
-               entry_px: pd.DataFrame | None = None) -> pd.DataFrame:
+               entry_px: pd.DataFrame | None = None, same_day_px: pd.DataFrame | None = None) -> pd.DataFrame:
     dates = panel["close"].index
     f32 = np.float32
     O, H, L, C = (panel[k].to_numpy(dtype=f32) for k in ("open", "high", "low", "close"))
@@ -43,6 +43,7 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
     LO50 = ind["low50"].to_numpy(dtype=f32) if "low50" in ind else None
     E10 = ind["ema10"].to_numpy(dtype=f32) if "ema10" in ind else None
     EPX = entry_px.to_numpy(dtype=f32) if entry_px is not None else None
+    SDX = same_day_px.to_numpy(dtype=f32) if same_day_px is not None else None
     QD = QMA = 0
     if exit_rule.startswith("XQ") and not exit_rule.startswith("XQC"):
         QD, QMA = (int(x) for x in exit_rule[2:].split("_"))
@@ -92,7 +93,13 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
         if not (np.isfinite(entry) and np.isfinite(stop) and np.isfinite(C[t, i])) or side * (entry - stop) <= 0:
             continue
         risk = abs(entry - stop) / entry
-        if intraday:  # bought on a level during the day: the stop is live the same day
+        if intraday and SDX is not None:  # same-day exit known from minute bars
+            if np.isfinite(SDX[t, i]):
+                busy_until[i] = t
+                px_out = float(SDX[t, i])
+                out.append((i, dates[t], dates[t], entry, px_out, risk, 0, _net(entry, px_out, side)))
+                continue
+        elif intraday:  # bought on a level during the day: the stop is live the same day
             lo_t, hi_t = L[t, i], H[t, i]
             if (side > 0 and lo_t <= stop) or (side < 0 and hi_t >= stop):
                 busy_until[i] = t

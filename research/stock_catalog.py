@@ -207,7 +207,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
              exit_rule: str, cash_r: pd.Series, rank: pd.DataFrame, start: pd.Timestamp = TRAIN_START,
              limits: pd.DataFrame | None = None, rsi: pd.DataFrame | None = None,
              trades: list | None = None, risk: float = RISK, side: int = 1,
-             entry_px: pd.DataFrame | None = None) -> pd.DataFrame:
+             entry_px: pd.DataFrame | None = None, same_day_px: pd.DataFrame | None = None) -> pd.DataFrame:
     """Daily net return and invested fraction from ``start``.
 
     Entries fill at the close of the signal day (S8: limit order the next day,
@@ -234,6 +234,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     LO50 = ind["low50"].to_numpy(dtype=f32) if "low50" in ind else None
     E10 = ind["ema10"].to_numpy(dtype=f32) if "ema10" in ind else None
     EPX = entry_px.to_numpy(dtype=f32) if entry_px is not None else None
+    SDX = same_day_px.to_numpy(dtype=f32) if same_day_px is not None else None
     QD = QMA = 0
     if exit_rule.startswith("XQ") and not exit_rule.startswith("XQC"):
         QD, QMA = (int(x) for x in exit_rule[2:].split("_"))
@@ -447,7 +448,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     pos[i] = {"shares": value / px, "entry": px, "stop": st, "t": t, "half": False,
                               "hc": float(px), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0,
                               "r0": abs(float(px) - float(st)), "hh": float(px), "af": 0.02, "kell": False}
-                    if intraday:  # bought on a level during the day: the stop is live the same day
+                    if intraday and SDX is not None:  # same-day exit known from minute bars
+                        if np.isfinite(SDX[t, i]):
+                            sell(i, float(SDX[t, i]))
+                    elif intraday:  # bought on a level during the day: the stop is live the same day
                         lo, hi = L[t, i], H[t, i]
                         if (side > 0 and lo <= st) or (side < 0 and hi >= st):
                             sell(i, float(st))
