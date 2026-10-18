@@ -1,5 +1,5 @@
 {
- "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375",
+ "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375; qullamaggie_sizing (16 trials) from GitHub run 39130036578",
  "v1": {
   "felipe_5d": -0.12390925336417466,
   "felipe_s20": 0.44860231190397754,
@@ -249187,5 +249187,23 @@
   "I_MIX_MODEL_N1_E3_C10": 0.91498,
   "I_MIX_MODEL_N3_E0": 1.2339,
   "I_MIX_MODEL_N3_E3_C10": 1.07192
+ },
+ "qullamaggie_sizing": {
+  "SIZE_S1_P0_C0_X0": 1.00173,
+  "SIZE_S1_P0_C0_X1": 1.13555,
+  "SIZE_S1_P0_C1_X0": 0.7739,
+  "SIZE_S1_P0_C1_X1": 0.85381,
+  "SIZE_S1_P1_C0_X0": 1.01306,
+  "SIZE_S1_P1_C0_X1": 1.06043,
+  "SIZE_S1_P1_C1_X0": 0.9065,
+  "SIZE_S1_P1_C1_X1": 0.78322,
+  "SIZE_S2_P0_C0_X0": 1.2339,
+  "SIZE_S2_P0_C0_X1": 1.33542,
+  "SIZE_S2_P0_C1_X0": 1.10506,
+  "SIZE_S2_P0_C1_X1": 1.18232,
+  "SIZE_S2_P1_C0_X0": 1.18393,
+  "SIZE_S2_P1_C0_X1": 1.22745,
+  "SIZE_S2_P1_C1_X0": 1.0204,
+  "SIZE_S2_P1_C1_X1": 1.05017
  }
 }

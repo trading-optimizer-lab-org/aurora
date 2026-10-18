@@ -758,3 +758,29 @@ def test_sizing_grid() -> None:
 
     names = [t.name for t in qz.trials()]
     assert len(names) == len(set(names)) == 16 and "SIZE_S2_P0_C0_X0" in names
+
+
+def test_catalyst_labels_and_sec_parsing() -> None:
+    import runpy
+    from pathlib import Path
+
+    from aurora.research import qullamaggie_catalyst as qc
+
+    assert len({t.name for t in qc.trials()}) == 16
+    assert qc.quarter_frames(pd.Timestamp("2019-02-05")) == ("CY2018Q4", "CY2017Q4")
+    assert qc.quarter_frames(pd.Timestamp("2019-04-03")) == ("CY2018Q4", "CY2017Q4")  # Mar 31 only 3 days back
+    assert qc.quarter_frames(pd.Timestamp("2019-04-10")) == ("CY2019Q1", "CY2018Q1")
+    dates = pd.bdate_range("2019-04-15", periods=6)
+    cells = pd.DataFrame({"date": [dates[2], dates[3], dates[4], dates[5]], "symbol": ["A", "A", "B", "C"]})
+    earnings = {"A": [dates[1]], "B": [dates[4]]}
+    revenue = {"CY2019Q1": {1: 130.0, 2: 100.0}, "CY2018Q1": {1: 100.0, 2: 100.0}}
+    lab = qc.labels(cells, dates, earnings, {"A", "B"}, {"A": 1, "B": 2}, revenue)
+    assert lab["label"].tolist() == ["EARN", "NOEARN", "EARN", "UNKNOWN"]  # A: filed the day before; C: no data
+    assert lab["growth"].round(2).tolist()[:3] == [0.30, 0.30, 0.0]
+    like = pd.DataFrame(False, index=dates, columns=["A", "B", "C"])
+    assert int(qc.label_mask(lab, "EARNG", like).to_numpy().sum()) == 1
+    assert int(qc.label_mask(lab, "ANY", like).to_numpy().sum()) == 4
+    script = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts" / "run_qullamaggie_catalyst.py"))
+    block = {"form": ["8-K", "10-Q", "8-K", "8-K"], "filingDate": ["2019-05-01", "2019-05-02", "2019-06-01", "2014-01-01"],
+             "items": ["2.02,9.01", "", "5.07", "2.02"]}
+    assert script["_item_202_dates"](block) == ["2019-05-01"]
