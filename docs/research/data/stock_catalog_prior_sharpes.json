@@ -1,5 +1,5 @@
 {
- "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375; qullamaggie_sizing (16 trials) from GitHub run 39130036578; qullamaggie_catalyst (16 trials) from GitHub run 39131901612",
+ "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375; qullamaggie_sizing (16 trials) from GitHub run 39130036578; qullamaggie_catalyst (16 trials) from GitHub run 39131901612; combination_7a (12 combinations) from GitHub run 39147489147",
  "v1": {
   "felipe_5d": -0.12390925336417466,
   "felipe_s20": 0.44860231190397754,
@@ -249223,5 +249223,19 @@
   "CAT_NOEARN_N1_MIX": 1.07724,
   "CAT_NOEARN_N0_EP": 0.66166,
   "CAT_NOEARN_N0_MIX": 0.98118
+ },
+ "combination_7a": {
+  "INTRADAY_EQ": 1.32484,
+  "INTRADAY_RP": 1.26628,
+  "INTRADAY_RPH": 1.08897,
+  "INTRADAY_RPH_VT": 0.88708,
+  "DAILY_EQ": 1.2939,
+  "DAILY_RP": 1.40115,
+  "DAILY_RPH": 1.05611,
+  "DAILY_RPH_VT": 0.74417,
+  "ALL_EQ": 1.68234,
+  "ALL_RP": 1.69439,
+  "ALL_RPH": 1.38709,
+  "ALL_RPH_VT": 1.00242
  }
 }

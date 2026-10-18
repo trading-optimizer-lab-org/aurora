@@ -812,3 +812,30 @@ def test_combination_math() -> None:
     assert hedged.iloc[200:].std() < 0.2 * spy.iloc[200:].std()
     vt = cb.vol_target(R["a"], cash, target=0.30, lookback=63)
     assert vt.iloc[200:].std() * np.sqrt(252) == pytest.approx(0.30, rel=0.25)
+
+
+def test_intraday_shorts_day_trades_and_leverage() -> None:
+    from aurora.research import combination_plus as cp
+    from aurora.research import intraday_more as im
+
+    assert len(cp.trials()) == len(set(cp.trials())) == 18
+    minute = np.arange(120)
+    o = np.full(120, 10.0)
+    h, low = o + 0.05, o - 0.05
+    low[3] = 9.8  # opening-range low (5 minutes)
+    h[2] = 10.3  # high of the day before the entry
+    low[12], o[12] = 9.6, 9.75  # breaks the opening-range low
+    h[40], o[40] = 10.5, 10.4  # later goes above the high of the day
+    entry, stop, m, exit_px = im.intraday_short_entry(minute, o, h, low, k=5)
+    assert (entry, stop, m) == (9.75, 10.3, 12) and exit_px == pytest.approx(10.4)
+    assert im.intraday_short_entry(minute, o, h, low, k=5, level_max=9.5) is None  # pivot low never broken
+    idx = _dates(3)
+    like = pd.DataFrame({"A": [10.0, 11.0, 12.0]}, index=idx)
+    e = pd.DataFrame({"A": [False, True, False]}, index=idx)
+    sd = pd.DataFrame({"A": [np.nan, np.nan, np.nan]}, index=idx)
+    out = im.day_trade((e, like, like, sd), like)
+    assert out[3].iloc[1, 0] == 11.0 and np.isnan(out[3].iloc[0, 0])  # not stopped: out at the day's close
+    cash = pd.Series(0.0001, index=idx)
+    r = pd.Series([0.01, -0.02, 0.0], index=idx)
+    lev = cp.leverage(r, cash, 2.0)
+    assert lev.iloc[0] == pytest.approx(0.0001 + 2 * (0.01 - 0.0001) - 0.015 / 252)
