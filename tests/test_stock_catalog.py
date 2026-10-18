@@ -466,3 +466,76 @@ def test_v7_exits_agree_between_portfolio_and_trade_engines(rule: str) -> None:
     if rule == "XT8H":
         assert len(trades) == 2 and trades[0]["fraction"] == 0.5
         assert trades[0]["exit"] >= 1.5 * close.iloc[149, 0] * (1 - 1e-6)
+
+
+def test_intraday_fill_stops_the_same_day_or_moves_to_the_day_low() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(10)
+    close = pd.DataFrame({"A": [100.0] * 10}, index=idx)
+    panel = _panel(close)
+    entries, px = _entry(close, 2), close * np.nan
+    px.iloc[2, 0] = 101.0
+    stops = close * 0 + 96.0  # 101 x (1 - ~5%)
+    # the day's low (97) stays above the stop: the stop moves up to 97, hit on day 5
+    panel["low"].iloc[2, 0] = 97.0
+    panel["low"].iloc[5, 0] = 96.5
+    t = st.trade_list(panel, _ind(close), entries, stops, "XS20", start=idx[0], entry_px=px)
+    assert t["entry"].iloc[0] == pytest.approx(101.0) and t["exit"].iloc[0] == pytest.approx(97.0)
+    assert t["exit_date"].iloc[0] == idx[5]
+    trades: list[dict] = []
+    _run(panel, _ind(close), entries, stops, "XS20", trades=trades, entry_px=px)
+    assert trades[0]["exit"] == pytest.approx(97.0) and trades[0]["exit_date"] == idx[5]
+    # the day's low reaches the stop: out the same day at the stop
+    panel["low"].iloc[2, 0] = 95.0
+    t = st.trade_list(panel, _ind(close), entries, stops, "XS20", start=idx[0], entry_px=px)
+    assert t["days"].iloc[0] == 0 and t["exit"].iloc[0] == pytest.approx(96.0)
+    trades = []
+    _run(panel, _ind(close), entries, stops, "XS20", trades=trades, entry_px=px)
+    assert trades[0]["exit_date"] == idx[2] and trades[0]["exit"] == pytest.approx(96.0)
+
+
+def test_qullamaggie_exit_sells_a_third_on_day_five_then_trails_the_sma20() -> None:
+    from aurora.research import stock_trades as st
+
+    idx = _dates(14)
+    close = pd.DataFrame({"A": [100.0, 100, 100, 104, 106, 108, 110, 115, 112, 112, 112, 112, 112, 112]}, index=idx)
+    panel = _panel(close)
+    ind = _ind(close)
+    ind["sma20"].iloc[4, 0] = 200.0  # below SMA20 before the partial day: ignored
+    ind["sma20"].iloc[10, 0] = 120.0  # first close below SMA20 after day 5
+    entries, stops = _entry(close, 2), close * 0 + 95.0
+    t = st.trade_list(panel, ind, entries, stops, "XQ5_20", start=idx[0])
+    third = 115 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
+    rest = 112 * (1 - sc.COST) / (100 * (1 + sc.COST)) - 1
+    assert t["exit_date"].iloc[0] == idx[10]
+    assert t["return"].iloc[0] == pytest.approx(third / 3 + 2 * rest / 3)
+    trades: list[dict] = []
+    _run(panel, ind, entries, stops, "XQ5_20", trades=trades)
+    assert [round(x["fraction"], 4) for x in trades] == [round(1 / 3, 4), 1.0]
+    assert trades[0]["exit_date"] == idx[7] and trades[1]["exit_date"] == idx[10]
+
+
+def test_qullamaggie_grid_and_signal_shapes() -> None:
+    from aurora.research import qullamaggie as q
+
+    names = [t.name for t in q.trials()]
+    assert len(names) == len(set(names)) == 85 and len(q.groups()) == 12
+    assert set(q.CANONICAL) <= set(names)
+    assert {t.group for t in q.trials()} == set(q.groups())
+    rng = np.random.default_rng(7)
+    idx = pd.bdate_range("1993-01-04", periods=400)
+    close = pd.DataFrame(20 * np.cumprod(1 + rng.normal(0.002, 0.05, (400, 6)), axis=0), index=idx,
+                         columns=list("abcdef"))
+    panel = _panel(close)
+    panel["volume"] = close * 0 + rng.uniform(2e5, 2e6, close.shape)
+    panel["open"] = close.shift(1).fillna(close) * (1 + rng.normal(0, 0.03, close.shape))
+    ind = sc.indicators(panel, close["a"], pd.Series(dict.fromkeys("abcdef", "X")))
+    nasdaq = close.mean(axis=1)
+    m1 = q.nasdaq_filter(nasdaq, idx)
+    assert not m1.iloc[:20].any()
+    ctx = q.context(panel, ind, nasdaq)
+    for g in q.groups():
+        for key, (e, s, px) in q.build_group(g, panel, ind, ctx).items():
+            assert e.shape == close.shape and s.shape == close.shape, (g, key)
+            assert px is None or px.shape == close.shape

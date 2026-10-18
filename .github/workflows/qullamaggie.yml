@@ -1,0 +1,106 @@
+name: Qullamaggie literal rules (pre-registered)
+
+# docs/research/QULLAMAGGIE_PREREGISTRATION.md: 85 trials in 12 shard groups
+# on the cached price panel (built by stock-ideas.yml) plus the Nasdaq
+# Composite up to 2020-12-31, then one job merges them. Only reports are
+# uploaded, not prices.
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - research/qullamaggie.py
+      - scripts/run_qullamaggie.py
+      - .github/workflows/qullamaggie.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qullamaggie
+  cancel-in-progress: true
+
+jobs:
+  shard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - name: Run shard
+        run: >-
+          python scripts/run_qullamaggie.py shard --shard ${{ matrix.shard }} --workers 4
+          --panel-dir outputs/stock_panel --out outputs/qulla/shard_${{ matrix.shard }}.parquet
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: qulla-shard-${{ matrix.shard }}
+          path: outputs/qulla
+          retention-days: 30
+
+  report:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: qulla-shard-*
+          path: outputs/qulla
+          merge-multiple: true
+
+      - name: Merge shards
+        run: python scripts/run_qullamaggie.py report --parts outputs/qulla --output-dir outputs/qullamaggie
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f outputs/qullamaggie/REPORT.md ]; then
+            cat outputs/qullamaggie/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: qullamaggie
+          path: outputs/qullamaggie
+          if-no-files-found: warn
+          retention-days: 90

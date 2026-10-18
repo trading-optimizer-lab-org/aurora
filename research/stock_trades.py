@@ -24,7 +24,8 @@ def _net(entry: float, exit_px: float, side: int = 1) -> float:
 
 def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, stops: pd.DataFrame | None,
                exit_rule: str, start: pd.Timestamp = sc.TRAIN_START, limits: pd.DataFrame | None = None,
-               rsi: pd.DataFrame | None = None, side: int = 1) -> pd.DataFrame:
+               rsi: pd.DataFrame | None = None, side: int = 1,
+               entry_px: pd.DataFrame | None = None) -> pd.DataFrame:
     dates = panel["close"].index
     f32 = np.float32
     O, H, L, C = (panel[k].to_numpy(dtype=f32) for k in ("open", "high", "low", "close"))
@@ -41,6 +42,11 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
     S100 = ind["sma100"].to_numpy(dtype=f32) if "sma100" in ind else None
     LO50 = ind["low50"].to_numpy(dtype=f32) if "low50" in ind else None
     E10 = ind["ema10"].to_numpy(dtype=f32) if "ema10" in ind else None
+    EPX = entry_px.to_numpy(dtype=f32) if entry_px is not None else None
+    QD = QMA = 0
+    if exit_rule.startswith("XQ") and not exit_rule.startswith("XQC"):
+        QD, QMA = (int(x) for x in exit_rule[2:].split("_"))
+    part = 1 / 3 if QD == 5 else 0.5
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
@@ -80,10 +86,22 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             out.append((i, dates[u], dates[exit_t], entry, exit_px, np.nan, exit_t - u, _net(entry, exit_px)))
             continue
         assert ST is not None
-        entry, stop = float(C[t, i]), float(ST[t, i])
-        if not (np.isfinite(entry) and np.isfinite(stop)) or side * (entry - stop) <= 0:
+        intraday = EPX is not None and bool(np.isfinite(EPX[t, i]))
+        entry = float(EPX[t, i]) if EPX is not None and intraday else float(C[t, i])
+        stop = float(ST[t, i])
+        if not (np.isfinite(entry) and np.isfinite(stop) and np.isfinite(C[t, i])) or side * (entry - stop) <= 0:
             continue
         risk = abs(entry - stop) / entry
+        if intraday:  # bought on a level during the day: the stop is live the same day
+            lo_t, hi_t = L[t, i], H[t, i]
+            if (side > 0 and lo_t <= stop) or (side < 0 and hi_t >= stop):
+                busy_until[i] = t
+                out.append((i, dates[t], dates[t], entry, stop, risk, 0, _net(entry, stop, side)))
+                continue
+            if side > 0 and np.isfinite(lo_t):
+                stop = max(stop, float(lo_t))
+            elif side < 0 and np.isfinite(hi_t):
+                stop = min(stop, float(hi_t))
         adr_e = float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0
         hc = hh = entry
         af, kell = 0.02, False
@@ -165,6 +183,13 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             elif exit_rule == "XT8H":
                 hc = max(hc, float(c))
                 stop = max(stop, hc * (1 - 8 * adr_e))
+            elif QD:
+                if days == QD and half_ret is None:
+                    half_ret, stop = _net(entry, float(c)), max(stop, entry)
+                if days >= QD and c < (S10 if QMA == 10 else S20)[u, i]:
+                    exit_t, exit_px = u, float(c)
+            elif exit_rule in ("XQC10", "XQC20") and c <= (S10 if exit_rule == "XQC10" else S20)[u, i]:
+                exit_t, exit_px = u, float(c)
             elif XC is not None and XC[u, i]:
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XWK" and S50 is not None and WK is not None and WK[u] and c < S50[u, i]:
@@ -190,7 +215,7 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
         assert exit_px is not None
         ret = _net(entry, exit_px, side)
         if half_ret is not None:
-            ret = 0.5 * half_ret + 0.5 * ret
+            ret = part * half_ret + (1 - part) * ret
         busy_until[i] = exit_t
         out.append((i, dates[t], dates[exit_t], entry, exit_px, risk, exit_t - t, ret))
     df = pd.DataFrame(out, columns=["col", "entry_date", "exit_date", "entry", "exit", "risk", "days", "return"])

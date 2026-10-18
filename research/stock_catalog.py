@@ -206,7 +206,8 @@ def entry_mask(sig: pd.DataFrame, ind: dict, filters: tuple[str, ...]) -> pd.Dat
 def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, stops: pd.DataFrame | None,
              exit_rule: str, cash_r: pd.Series, rank: pd.DataFrame, start: pd.Timestamp = TRAIN_START,
              limits: pd.DataFrame | None = None, rsi: pd.DataFrame | None = None,
-             trades: list | None = None, risk: float = RISK, side: int = 1) -> pd.DataFrame:
+             trades: list | None = None, risk: float = RISK, side: int = 1,
+             entry_px: pd.DataFrame | None = None) -> pd.DataFrame:
     """Daily net return and invested fraction from ``start``.
 
     Entries fill at the close of the signal day (S8: limit order the next day,
@@ -232,6 +233,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     S100 = ind["sma100"].to_numpy(dtype=f32) if "sma100" in ind else None
     LO50 = ind["low50"].to_numpy(dtype=f32) if "low50" in ind else None
     E10 = ind["ema10"].to_numpy(dtype=f32) if "ema10" in ind else None
+    EPX = entry_px.to_numpy(dtype=f32) if entry_px is not None else None
+    QD = QMA = 0
+    if exit_rule.startswith("XQ") and not exit_rule.startswith("XQC"):
+        QD, QMA = (int(x) for x in exit_rule[2:].split("_"))
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -382,6 +387,15 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     p["half"] = True
                 p["hc"] = max(p["hc"], float(c))
                 p["stop"] = max(p["stop"], p["hc"] * (1 - 8 * p["adr"]))
+            elif QD:
+                if days == QD and not p["half"]:
+                    sell(i, c, 0.5 if QD == 3 else 1 / 3)
+                    p["half"], p["stop"] = True, max(p["stop"], p["entry"])
+                if i in pos and days >= QD and c < (S10 if QMA == 10 else S20)[t, i]:
+                    sell(i, c)
+            elif exit_rule in ("XQC10", "XQC20"):
+                if c <= (S10 if exit_rule == "XQC10" else S20)[t, i]:
+                    sell(i, c)
             elif exit_rule.startswith("XC_"):
                 assert XC is not None
                 if XC[t, i]:
@@ -422,15 +436,25 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                 assert ST is not None
                 for i in order:
                     c, st = Craw[t, i], ST[t, i]
-                    if not (np.isfinite(c) and np.isfinite(st)) or side * (c - st) <= 0:
+                    intraday = EPX is not None and np.isfinite(EPX[t, i])
+                    px = EPX[t, i] if EPX is not None and intraday else c
+                    if not (np.isfinite(c) and np.isfinite(px) and np.isfinite(st)) or side * (px - st) <= 0:
                         continue
-                    value = min(risk * equity / (abs(c - st) / c), CAP * equity, cash / (1 + COST))
+                    value = min(risk * equity / (abs(px - st) / px), CAP * equity, cash / (1 + COST))
                     if value <= 1e-6 * equity:
                         break
                     cash -= value * (1 + COST)
-                    pos[i] = {"shares": value / c, "entry": c, "stop": st, "t": t, "half": False,
-                              "hc": float(c), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0,
-                              "r0": abs(float(c) - float(st)), "hh": float(c), "af": 0.02, "kell": False}
+                    pos[i] = {"shares": value / px, "entry": px, "stop": st, "t": t, "half": False,
+                              "hc": float(px), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0,
+                              "r0": abs(float(px) - float(st)), "hh": float(px), "af": 0.02, "kell": False}
+                    if intraday:  # bought on a level during the day: the stop is live the same day
+                        lo, hi = L[t, i], H[t, i]
+                        if (side > 0 and lo <= st) or (side < 0 and hi >= st):
+                            sell(i, float(st))
+                        elif side > 0 and np.isfinite(lo):
+                            pos[i]["stop"] = max(float(st), float(lo))
+                        elif side < 0 and np.isfinite(hi):
+                            pos[i]["stop"] = min(float(st), float(hi))
         equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
         rets.append(equity / eq_prev - 1)
         inv.append(1 - cash / equity if equity > 0 else 0.0)
