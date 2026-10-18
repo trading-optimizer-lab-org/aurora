@@ -1,5 +1,5 @@
 {
- "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375; qullamaggie_sizing (16 trials) from GitHub run 39130036578",
+ "source": "GitHub runs 39042775310 (v1) and 39047042615 (v2), validation annualised Sharpe; v3 from GitHub run 39049473123; v4 from GitHub run 39055147633; v5 from GitHub run 39057613396; v6 from GitHub run 39058687586; v7 from GitHub run 39110100315 (list of validation Sharpes in trial order); qullamaggie (85 daily trials) from GitHub run 39116321086; qullamaggie_intraday (48 trials, 2016-2020 Sharpe) from GitHub run 39118575331; qullamaggie_wind (35 trials) from GitHub run 39122737620; qullamaggie_stars (24 trials) from GitHub run 39126912375; qullamaggie_sizing (16 trials) from GitHub run 39130036578; qullamaggie_catalyst (16 trials) from GitHub run 39131901612",
  "v1": {
   "felipe_5d": -0.12390925336417466,
   "felipe_s20": 0.44860231190397754,
@@ -249205,5 +249205,23 @@
   "SIZE_S2_P1_C0_X1": 1.22745,
   "SIZE_S2_P1_C1_X0": 1.0204,
   "SIZE_S2_P1_C1_X1": 1.05017
+ },
+ "qullamaggie_catalyst": {
+  "CAT_ANY_N1_EP": 1.07364,
+  "CAT_ANY_N1_MIX": 1.2339,
+  "CAT_ANY_N0_EP": 1.00891,
+  "CAT_ANY_N0_MIX": 1.15987,
+  "CAT_EARN_N1_EP": 0.94988,
+  "CAT_EARN_N1_MIX": 0.97765,
+  "CAT_EARN_N0_EP": 1.25331,
+  "CAT_EARN_N0_MIX": 1.12036,
+  "CAT_EARNG_N1_EP": -0.02544,
+  "CAT_EARNG_N1_MIX": 0.7361,
+  "CAT_EARNG_N0_EP": 0.52543,
+  "CAT_EARNG_N0_MIX": 0.85938,
+  "CAT_NOEARN_N1_EP": 0.7877,
+  "CAT_NOEARN_N1_MIX": 1.07724,
+  "CAT_NOEARN_N0_EP": 0.66166,
+  "CAT_NOEARN_N0_MIX": 0.98118
  }
 }

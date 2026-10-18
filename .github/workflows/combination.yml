@@ -1,0 +1,120 @@
+name: Phase 7a combination (pre-registered)
+
+# docs/research/COMBINATION_PREREGISTRATION.md: rebuilds the best strategy
+# streams (daily panel, phase 1 minute bars and SEC filings, which come
+# from the Actions cache (fetched from Alpaca only if missing, 2016-2020 only).
+# Only the report is uploaded.
+# Needs the repository secrets ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY and
+# SEC_USER_AGENT (a name and contact email, as the SEC requires).
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - research/combination.py
+      - scripts/run_combination.py
+      - .github/workflows/combination.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: combination
+  cancel-in-progress: true
+
+jobs:
+  combination:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Check credentials
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          if [ -z "$APCA_API_KEY_ID" ] || [ -z "$APCA_API_SECRET_KEY" ]; then
+            echo "::error::Add the repository secrets ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY"
+            exit 1
+          fi
+          if [ -z "$SEC_USER_AGENT" ]; then
+            echo "::error::Add the repository secret SEC_USER_AGENT (for example: Your Name you@example.com)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - name: Restore Alpaca minute cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/alpaca
+          key: alpaca-minutes-v1-${{ github.run_id }}
+          restore-keys: alpaca-minutes-v1-
+
+      - name: Restore SEC cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/sec
+          key: sec-v1-${{ github.run_id }}
+          restore-keys: sec-v1-
+
+      - name: Run the study
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: >-
+          python scripts/run_combination.py run --panel-dir outputs/stock_panel
+          --cache outputs/alpaca --sec-cache outputs/sec --output-dir outputs/combination
+
+      - name: Save Alpaca minute cache
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/alpaca
+          key: alpaca-minutes-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save SEC cache
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/sec
+          key: sec-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f outputs/combination/REPORT.md ]; then
+            cat outputs/combination/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: combination
+          path: |
+            outputs/combination/REPORT.md
+            outputs/combination/results.parquet
+            outputs/combination/streams.parquet
+            outputs/combination/correlations.csv
+          if-no-files-found: warn
+          retention-days: 90

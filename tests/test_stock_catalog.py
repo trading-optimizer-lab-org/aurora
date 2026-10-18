@@ -784,3 +784,31 @@ def test_catalyst_labels_and_sec_parsing() -> None:
     block = {"form": ["8-K", "10-Q", "8-K", "8-K"], "filingDate": ["2019-05-01", "2019-05-02", "2019-06-01", "2014-01-01"],
              "items": ["2.02,9.01", "", "5.07", "2.02"]}
     assert script["_item_202_dates"](block) == ["2019-05-01"]
+
+
+def test_combination_math() -> None:
+    from aurora.research import combination as cb
+
+    assert len(cb.trials()) == 12
+    rng = np.random.default_rng(1)
+    idx = pd.bdate_range("2015-01-01", periods=400)
+    R = pd.DataFrame({"a": rng.normal(0, 0.01, 400), "b": rng.normal(0, 0.02, 400)}, index=idx)
+    r = cb.risk_parity(R, lookback=126)
+    day = idx[300]
+    ms = idx[cb._month_starts(idx)]
+    start = ms[ms <= day][-1]
+    vol = R.loc[:idx[idx.get_loc(start) - 1]].iloc[-126:].std()
+    w = (1 / vol) / (1 / vol).sum()
+    assert r.loc[day] == pytest.approx(float((R.loc[day] * w).sum()), rel=1e-9)
+    assert w["a"] == pytest.approx(2 / 3, abs=0.05)  # half the volatility, twice the weight
+    early = cb.risk_parity(R, lookback=126).iloc[:100]
+    assert np.allclose(early, R.iloc[:100].mean(axis=1))  # equal weights until 126 sessions exist
+    idle = R.assign(c=0.0)
+    w_idle = cb.risk_parity(idle, lookback=126)
+    assert np.isfinite(w_idle).all()  # the volatility floor keeps a cash-only stream from taking all the weight
+    spy = pd.Series(rng.normal(0.0005, 0.01, 400), index=idx)
+    cash = pd.Series(0.0, index=idx)
+    hedged = cb.beta_hedge(0.8 * spy + rng.normal(0, 0.001, 400), spy, cash)
+    assert hedged.iloc[200:].std() < 0.2 * spy.iloc[200:].std()
+    vt = cb.vol_target(R["a"], cash, target=0.30, lookback=63)
+    assert vt.iloc[200:].std() * np.sqrt(252) == pytest.approx(0.30, rel=0.25)
