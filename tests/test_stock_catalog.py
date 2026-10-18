@@ -671,3 +671,47 @@ def test_wind_has_no_lookahead_and_policies_follow_the_state() -> None:
     scale, gross, cap = qw.policy("E4_C10", w)
     assert list(scale) == [1.0, 2.0, 1.0, 0.0] and list(gross) == [1.0, 2.0, 1.0, 1.0] and cap == 0.10
     assert list(qw.policy("E0", w)[0]) == [1.0] * 4 and list(qw.policy("E1", w)[0]) == [1.0, 1.0, 1.0, 0.0]
+
+
+def test_stars_scoring_model_and_selection() -> None:
+    from aurora.research import qullamaggie_stars as qs
+
+    assert len({t.name for t in qs.trials()}) == 24
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(4000, 3))
+    true = np.array([-1.0, 1.5, 0.0, -0.8])
+    y = (rng.random(4000) < 1 / (1 + np.exp(-(true[0] + X @ true[1:])))).astype(float)
+    w = qs.fit_logit(X, y, l2=0.0)
+    assert np.allclose(w, true, atol=0.15)
+    assert qs.auc(np.array([0.1, 0.2, 0.8, 0.9]), np.array([0, 0, 1, 1])) == 1.0
+    idx = pd.bdate_range("2000-01-03", periods=2)
+    score = pd.DataFrame([[3.0, 5.0, 5.0, 1.0], [2.0, np.nan, 4.0, 9.0]], index=idx, columns=list("abcd"))
+    cands = pd.DataFrame([[True, True, True, False], [True, True, True, True]], index=idx, columns=list("abcd"))
+    tie = pd.DataFrame([[0.1, 0.2, 0.9, 0.5]] * 2, index=idx, columns=list("abcd"))
+    kept = qs.top_n(score, cands, tie, 1)
+    assert kept.loc[idx[0]].tolist() == [False, False, True, False]  # tie 5 vs 5: higher tiebreak wins
+    assert kept.loc[idx[1]].tolist() == [False, False, False, True]
+    feats = {k: pd.DataFrame([[0.0]], columns=["a"]) for k in qs.FEATURES}
+    feats.update(steady=pd.DataFrame([[0.9]], columns=["a"]), tight=pd.DataFrame([[1.5]], columns=["a"]),
+                 gap=pd.DataFrame([[0.05]], columns=["a"]))
+    # stars: steady, tight, dry-up (0 <= 0.7), near10 (0), market (0 < 5%); not the 5% gap, industry, RS or 1-month gain
+    assert qs.stars(feats).iloc[0, 0] == 5
+
+
+def test_stars_features_use_only_the_prior_close() -> None:
+    from aurora.research import qullamaggie_stars as qs
+
+    rng = np.random.default_rng(2)
+    idx = pd.bdate_range("1993-01-04", periods=400)
+    close = pd.DataFrame(20 * np.cumprod(1 + rng.normal(0.002, 0.03, (400, 5)), axis=0), index=idx, columns=list("abcde"))
+    panel = _panel(close)
+    panel["volume"] = close * 0 + rng.uniform(1e5, 1e6, close.shape)
+
+    def feats_at(n: int) -> dict:
+        p = {k: v.iloc[:n] for k, v in panel.items()}
+        ind = sc.indicators(p, p["close"].mean(axis=1), pd.Series("X", index=close.columns))
+        return qs.features(p, ind, p["close"].mean(axis=1))
+
+    full, cut = feats_at(400), feats_at(300)
+    for k in qs.FEATURES:
+        assert full[k].iloc[:300].equals(cut[k]), k
