@@ -229,6 +229,9 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     R14 = ind["rsi14"].to_numpy(dtype=f32) if "rsi14" in ind else None
     WK = ind["week_end"].to_numpy() if "week_end" in ind else None
     XC = ind[exit_rule].to_numpy() if exit_rule.startswith("XC_") else None
+    S100 = ind["sma100"].to_numpy(dtype=f32) if "sma100" in ind else None
+    LO50 = ind["low50"].to_numpy(dtype=f32) if "low50" in ind else None
+    E10 = ind["ema10"].to_numpy(dtype=f32) if "ema10" in ind else None
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -345,6 +348,40 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                 assert S50 is not None
                 if c >= 1.25 * S50[t, i] or c < S50[t, i]:
                     sell(i, c)
+            elif exit_rule in ("XCH", "XSAR"):
+                hi = float(H[t, i]) if np.isfinite(H[t, i]) else float(c)
+                if exit_rule == "XCH":
+                    p["hh"] = max(p["hh"], hi)
+                    p["stop"] = max(p["stop"], p["hh"] * (1 - 3 * p["adr"]))
+                else:
+                    if hi > p["hh"]:
+                        p["hh"], p["af"] = hi, min(p["af"] + 0.02, 0.2)
+                    p["stop"] = p["stop"] + p["af"] * (p["hh"] - p["stop"])
+            elif exit_rule == "XDEC":
+                p["hc"] = max(p["hc"], float(c))
+                k = max(2.0, 8.0 - 0.25 * (days // 5))
+                p["stop"] = max(p["stop"], p["hc"] * (1 - k * p["adr"]))
+            elif exit_rule == "XS100":
+                assert S100 is not None
+                if c < S100[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XLOW50":
+                assert LO50 is not None
+                if c < LO50[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XKELL":
+                assert E10 is not None and S50 is not None
+                if c >= 1.2 * p["entry"]:
+                    p["kell"] = True
+                if c < (E10 if p["kell"] else S50)[t, i]:
+                    sell(i, c)
+            elif exit_rule == "XT8H":
+                target = p["entry"] * 1.5
+                if not p["half"] and np.isfinite(H[t, i]) and H[t, i] >= target:
+                    sell(i, max(O[t, i], target) if np.isfinite(O[t, i]) else target, 0.5)
+                    p["half"] = True
+                p["hc"] = max(p["hc"], float(c))
+                p["stop"] = max(p["stop"], p["hc"] * (1 - 8 * p["adr"]))
             elif exit_rule.startswith("XC_"):
                 assert XC is not None
                 if XC[t, i]:
@@ -393,7 +430,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     cash -= value * (1 + COST)
                     pos[i] = {"shares": value / c, "entry": c, "stop": st, "t": t, "half": False,
                               "hc": float(c), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0,
-                              "r0": abs(float(c) - float(st))}
+                              "r0": abs(float(c) - float(st)), "hh": float(c), "af": 0.02, "kell": False}
         equity = cash + sum(mark(p, C[t, i]) for i, p in pos.items())
         rets.append(equity / eq_prev - 1)
         inv.append(1 - cash / equity if equity > 0 else 0.0)

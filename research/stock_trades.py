@@ -38,6 +38,9 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
     R14 = ind["rsi14"].to_numpy(dtype=f32) if "rsi14" in ind else None
     WK = ind["week_end"].to_numpy() if "week_end" in ind else None
     XC = ind[exit_rule].to_numpy() if exit_rule.startswith("XC_") else None
+    S100 = ind["sma100"].to_numpy(dtype=f32) if "sma100" in ind else None
+    LO50 = ind["low50"].to_numpy(dtype=f32) if "low50" in ind else None
+    E10 = ind["ema10"].to_numpy(dtype=f32) if "ema10" in ind else None
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
     R2 = rsi.to_numpy(dtype=f32) if rsi is not None else None
@@ -82,7 +85,8 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
             continue
         risk = abs(entry - stop) / entry
         adr_e = float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0
-        hc = entry
+        hc = hh = entry
+        af, kell = 0.02, False
         half_ret: float | None = None
         exit_t, exit_px = None, None
         for u in range(t + 1, min(t + MAX_HOLD, last) + 1):
@@ -97,6 +101,8 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
                 tgt = entry * (1 + 3 * risk)
                 exit_t, exit_px = u, float(max(O[u, i], tgt)) if np.isfinite(O[u, i]) else tgt
                 break
+            if exit_rule == "XT8H" and half_ret is None and np.isfinite(hi) and hi >= entry * 1.5:
+                half_ret = _net(entry, float(max(O[u, i], entry * 1.5)) if np.isfinite(O[u, i]) else entry * 1.5)
             if exit_rule == "XO25" and half_ret is None and np.isfinite(hi) and hi >= entry * 1.25:
                 half_ret = _net(entry, float(max(O[u, i], entry * 1.25)) if np.isfinite(O[u, i]) else entry * 1.25)
             if not np.isfinite(c):
@@ -136,6 +142,29 @@ def trade_list(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame,
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XEXT" and S50 is not None and (c >= 1.25 * S50[u, i] or c < S50[u, i]):
                 exit_t, exit_px = u, float(c)
+            elif exit_rule in ("XCH", "XSAR"):
+                h_u = float(hi) if np.isfinite(hi) else float(c)
+                if exit_rule == "XCH":
+                    hh = max(hh, h_u)
+                    stop = max(stop, hh * (1 - 3 * adr_e))
+                else:
+                    if h_u > hh:
+                        hh, af = h_u, min(af + 0.02, 0.2)
+                    stop = stop + af * (hh - stop)
+            elif exit_rule == "XDEC":
+                hc = max(hc, float(c))
+                stop = max(stop, hc * (1 - max(2.0, 8.0 - 0.25 * (days // 5)) * adr_e))
+            elif exit_rule == "XS100" and S100 is not None and c < S100[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XLOW50" and LO50 is not None and c < LO50[u, i]:
+                exit_t, exit_px = u, float(c)
+            elif exit_rule == "XKELL" and E10 is not None and S50 is not None:
+                kell = kell or c >= 1.2 * entry
+                if c < (E10 if kell else S50)[u, i]:
+                    exit_t, exit_px = u, float(c)
+            elif exit_rule == "XT8H":
+                hc = max(hc, float(c))
+                stop = max(stop, hc * (1 - 8 * adr_e))
             elif XC is not None and XC[u, i]:
                 exit_t, exit_px = u, float(c)
             elif exit_rule == "XWK" and S50 is not None and WK is not None and WK[u] and c < S50[u, i]:

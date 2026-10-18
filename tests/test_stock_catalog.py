@@ -376,3 +376,93 @@ def test_v6_grid_and_volume_setups() -> None:
     for key in v6.VOLUME_SETUPS:
         sig, stop = v6.build_volume(key, *args, ind, vc)
         assert sig.shape == close.shape and stop.shape == close.shape, key
+
+
+def _v7_inputs(seed: int):
+    from aurora.research import stock_catalog_v2 as v2
+    from aurora.research import stock_catalog_v5 as v5
+    from aurora.research import stock_catalog_v6 as v6
+
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("1993-01-04", periods=400)
+    close = pd.DataFrame(100 * np.cumprod(1 + rng.normal(0.001, 0.03, (400, 3)), axis=0), index=idx, columns=list("abc"))
+    panel = _panel(close)
+    panel["volume"] = close * 0 + rng.uniform(5e5, 2e6, close.shape)
+    industry = pd.Series({"a": "X", "b": "X", "c": "Y"})
+    ind = sc.indicators(panel, close["a"], industry)
+    ind["rsi14"] = v5.rsi(close, 14)
+    ind["ema10"] = sc.ema(close, 10)
+    args = [panel[k] for k in ("open", "high", "low", "close", "volume")]
+    vc = v6.volume_context(*args, ind)
+    ctx = {"sma200": sc.sma(close, 200), "stage2": v2.stage2(close), "week_end": sc.week_ends(idx),
+           "month_end": v5.month_ends(idx), "index": close["a"], "index_close": close["a"], "industry": industry}
+    return close, ind, args, vc, ctx
+
+
+def test_v7_grid_shards_and_new_setups() -> None:
+    from aurora.research import stock_catalog_v7 as v7
+
+    names = [t.name for t in v7.trials()]
+    assert len(set(names)) == len(names) == 235_200
+    assert (len(v7.SETUPS), len(v7.EXITS), len(v7.FILTER_SETS), len(v7.STOPS)) == (80, 30, 14, 7)
+    assert v7.SHARDS == 320
+    assert sorted(t.name for k in range(v7.SHARDS) for t in v7.shard_trials(k)) == sorted(names)
+    close, ind, args, vc, ctx = _v7_inputs(5)
+    for key in v7.NEW_SETUPS:
+        sig, stop = v7.build(key, *args, ind, ctx, vc)
+        assert sig.shape == close.shape and stop.shape == close.shape, key
+
+
+def test_v7_calendar_flags_masks_and_deflated_sharpe() -> None:
+    from aurora.research import multiasset_baselines as mab
+    from aurora.research import stock_catalog_v7 as v7
+
+    idx = pd.DatetimeIndex(["2019-12-27", "2019-12-30", "2019-12-31", "2020-01-02", "2020-01-03"])
+    assert list(v7._holiday_eves(idx)) == [False, False, True, False, False]
+    assert list(v7._new_year_firsts(idx)) == [False, False, False, True, False]
+    d = pd.bdate_range("2000-08-21", periods=60)
+    sig = pd.DataFrame(True, index=d, columns=["a"])
+    ind = {"universe": sig, "mf": pd.Series(True, index=d), "adr": sig * 0 + 0.05, "ind_rs": sig * 0 + 90}
+    calm = pd.Series(d.day % 2 == 0, index=d)
+    extra = {"calm": calm, "breadth": pd.Series(True, index=d)}
+    m = v7.mask_v7(sig, ind, v7.FILTER_SETS["G13"], extra, own_universe=False)
+    assert not m.loc[d.month.isin([9, 10])].any().any() and m.loc[d.month == 8].all().all()
+    m = v7.mask_v7(sig, ind, v7.FILTER_SETS["G10"], extra, own_universe=False)
+    assert (m["a"] == calm).all()
+    pool = [0.2, 0.5, 0.9, 1.1, 1.4, 0.3, -0.2, 0.8]
+    got = v7.deflated_sharpe(np.array([1.4, 0.5]), pool, np.array([2520, 2520]), np.array([-0.3, 0.1]),
+                             np.array([5.0, 4.0]))
+    want = [mab.deflated_sharpe(1.4, pool, 2520, -0.3, 5.0), mab.deflated_sharpe(0.5, pool, 2520, 0.1, 4.0)]
+    assert got == pytest.approx(want)
+
+
+def _v7_path() -> tuple[dict, dict, pd.DataFrame]:
+    from aurora.research import stock_catalog_v5 as v5
+
+    up = 100 * 1.01 ** np.arange(1, 51)
+    down = up[-1] * 0.985 ** np.arange(1, 81)
+    close = pd.DataFrame({"A": np.r_[np.full(150, 100.0) * (1 + 0.002 * np.sin(np.arange(150))), up, down]},
+                         index=_dates(280))
+    panel = _panel(close)
+    ind = sc.indicators(panel, close["A"], pd.Series({"A": "X"}))
+    ind.update(sma100=sc.sma(close, 100), ema10=sc.ema(close, 10), rsi14=v5.rsi(close, 14),
+               low50=panel["low"].shift(1).rolling(50, min_periods=50).min())
+    return panel, ind, close
+
+
+@pytest.mark.parametrize("rule", ["XCH", "XSAR", "XDEC", "XS100", "XLOW50", "XKELL", "XT8H"])
+def test_v7_exits_agree_between_portfolio_and_trade_engines(rule: str) -> None:
+    from aurora.research import stock_trades as st
+
+    panel, ind, close = _v7_path()
+    entries, stops = _entry(close, 149), close * (1 - 2 * ind["adr"])
+    trades: list[dict] = []
+    _run(panel, ind, entries, stops, rule, trades=trades)
+    t = st.trade_list(panel, ind, entries, stops, rule, start=close.index[0])
+    assert trades and len(t) == 1
+    assert trades[-1]["exit_date"] == t["exit_date"].iloc[0]
+    assert trades[-1]["exit"] == pytest.approx(t["exit"].iloc[0], rel=1e-5)
+    assert t["exit_date"].iloc[0] > close.index[150]
+    if rule == "XT8H":
+        assert len(trades) == 2 and trades[0]["fraction"] == 0.5
+        assert trades[0]["exit"] >= 1.5 * close.iloc[149, 0] * (1 - 1e-6)
