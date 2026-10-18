@@ -24,8 +24,9 @@ Las 8 estrategias reconstruidas coinciden con sus resultados publicados (diferen
   en 2011-2020, caída máxima -5,8% / -8,4%, pero solo 9-10%/año.
 - **La cobertura con SPY baja las caídas y el peor mes pero también la rentabilidad**: el Sortino no mejora salvo
   en 1995-2010. **Apuntar a un 15% de volatilidad empeora** en todos los grupos.
-- **Sortino 10: no.** El máximo es 4,92. Con correlaciones de ~0,2 entre estrategias de Sortino ~3, harían falta
-  del orden de 15-20 estrategias igual de buenas e independientes.
+- **Sortino 10: no.** El máximo es 4,92. Con correlaciones de ~0,2 entre estrategias de Sortino ~3, el límite es
+  ~6,7 aunque se junten infinitas (3 x raíz de 1/0,2). Para llegar a 10 harían falta ~20 estrategias de Sortino 3
+  con correlación ~0,05 entre ellas.
 
 ## Informe completo (generado por el código)
 
