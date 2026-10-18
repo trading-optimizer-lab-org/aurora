@@ -1,0 +1,307 @@
+name: v9 everything at once (pre-registered, 3,658 trials, 320 runners)
+
+# docs/research/V9_PREREGISTRATION.md. Two download jobs (Alpaca 15-minute bars;
+# ETF prices and SEC 8-K dates) fill the Actions cache, 160 runners run the daily
+# stock books right away, 160 more run the other families once the downloads are
+# done, 4 worker processes each, and one job merges everything and writes the
+# report. Market data stays in the cache; only strategy returns and reports are
+# uploaded. Needs the secrets ALPACA_API_KEY_ID, ALPACA_API_SECRET_KEY and
+# SEC_USER_AGENT.
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - research/v9_common.py
+      - research/v9_daily.py
+      - research/v9_events.py
+      - research/v9_etf.py
+      - research/v9_intraday.py
+      - research/v9_overlay.py
+      - scripts/run_v9.py
+      - .github/workflows/v9.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v9
+  cancel-in-progress: true
+
+jobs:
+  fetch-bars:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Check Alpaca credentials
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+        run: |
+          if [ -z "$APCA_API_KEY_ID" ] || [ -z "$APCA_API_SECRET_KEY" ]; then
+            echo "::error::Add the repository secrets ALPACA_API_KEY_ID and ALPACA_API_SECRET_KEY"
+            exit 1
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - name: Restore earlier 15-minute bars
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/alpaca15/bars15
+          key: alpaca-15m-v1-${{ github.run_id }}
+          restore-keys: alpaca-15m-v1-
+
+      - name: Fetch missing days and build the array file
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+        run: python scripts/run_v9.py fetch-bars --panel-dir outputs/stock_panel --cache outputs/alpaca15 --workers 4
+
+      - name: Save the 15-minute bars
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/alpaca15/bars15
+          key: alpaca-15m-v1-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save the array file for the shards
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/alpaca15/bars15.npz
+          key: v9-bars-${{ github.run_id }}
+
+  fetch-inputs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check SEC user agent
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: |
+          if [ -z "$SEC_USER_AGENT" ]; then
+            echo "::error::Add the repository secret SEC_USER_AGENT"
+            exit 1
+          fi
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - name: Restore SEC cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/sec9
+          key: sec-v9-${{ github.run_id }}
+          restore-keys: sec-v9-
+
+      - name: Fetch ETF prices and SEC 8-K dates
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: >-
+          python scripts/run_v9.py fetch-inputs --panel-dir outputs/stock_panel --sec-cache outputs/sec9
+          --out outputs/v9_inputs --workers 4
+
+      - name: Save SEC cache
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/sec9
+          key: sec-v9-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save inputs for the shards
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v9_inputs
+          key: v9-inputs-${{ github.run_id }}
+
+  shard-daily:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - name: Run shard
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: >-
+          python scripts/run_v9.py shard --group daily --shard ${{ matrix.shard }} --workers 4
+          --panel-dir outputs/stock_panel --inputs outputs/v9_inputs --bars outputs/alpaca15/bars15.npz
+          --out outputs/v9/daily_${{ matrix.shard }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-part-daily-${{ matrix.shard }}
+          path: outputs/v9/daily_${{ matrix.shard }}
+          retention-days: 30
+
+  shard-mixed:
+    needs: [fetch-bars, fetch-inputs]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - name: Restore v9 inputs (ETFs, SEC dates)
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v9_inputs
+          key: v9-inputs-${{ github.run_id }}
+          fail-on-cache-miss: true
+
+      - name: Restore 15-minute bars
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/alpaca15/bars15.npz
+          key: v9-bars-${{ github.run_id }}
+          fail-on-cache-miss: true
+
+      - name: Run shard
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: >-
+          python scripts/run_v9.py shard --group mixed --shard ${{ matrix.shard }} --workers 4
+          --panel-dir outputs/stock_panel --inputs outputs/v9_inputs --bars outputs/alpaca15/bars15.npz
+          --out outputs/v9/mixed_${{ matrix.shard }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v9-part-mixed-${{ matrix.shard }}
+          path: outputs/v9/mixed_${{ matrix.shard }}
+          retention-days: 30
+
+  report:
+    needs: [shard-daily, shard-mixed]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v9-part-*
+          path: outputs/v9
+
+      - name: Merge and report
+        run: python scripts/run_v9.py report --parts outputs/v9 --panel-dir outputs/stock_panel --output-dir outputs/v9_report
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f outputs/v9_report/REPORT.md ]; then
+            head -c 900000 outputs/v9_report/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: v9-report
+          path: outputs/v9_report
+          if-no-files-found: warn
+          retention-days: 90
