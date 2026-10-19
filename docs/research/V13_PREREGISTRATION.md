@@ -15,7 +15,9 @@ All Alpaca `us_equity` assets, active and inactive, listed on NYSE, NASDAQ or AM
 excluded). Daily bars adjusted for splits and dividends (`adjustment=all`, SIP) from 2015-01-01 to 2026-10-16.
 When a ticker's history has a gap of 20 or more sessions (usually a ticker reused by another company), only the
 latest segment is kept; the number of such tickers is reported. Each series goes through the same data checks as
-the earlier panel (`stock_data_checks`). Industry is known only for the tickers of the earlier list (others: none).
+the earlier panel (`stock_data_checks`), and only stocks that at some point meet the rules' own liquidity floor
+(price >= $1 and 20-session dollar volume >= $1.5M) are kept, so no candidate is lost (added before the run, for
+memory). Industry is known only for the tickers of the earlier list (others: none).
 The intraday rules, filters, minute-bar fills and costs are those of phases 1-7; minute bars and raw daily bars are
 fetched for the new candidate days. The breakout model keeps its 1995-2010 training on the earlier panel (fixed
 weights), applied to the new panel's features. Everything is also run on the earlier survivors-only panel, to measure
@@ -31,7 +33,8 @@ index-trend configurations of v10.
 ## 3. Walk-forward (primary)
 
 For each year Y from 2018 to 2026, using only data before Y: each configuration's score is the smaller of the
-monthly Sortinos of the two halves of its training window (2016 to Y-1), and its **plateau score** is the mean score
+monthly Sortinos of the two halves of its training window (2016 to Y-1) (a stretch without a losing month counts
+as 20, the cap, instead of infinity; added before the run), and its **plateau score** is the mean score
 of itself and its neighbours (the configurations that differ from it in one dimension). Year Y is traded with:
 - `WF_ONE`: the configuration with the best plateau score;
 - `WF_ENS5`: equal capital in the 5 best plateau scores (**primary**);

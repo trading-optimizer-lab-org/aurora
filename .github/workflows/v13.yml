@@ -1,0 +1,133 @@
+name: v13 honest estimate without overfitting (pre-registered)
+
+# docs/research/V13_PREREGISTRATION.md: survivorship-free universe from Alpaca,
+# 144 configurations fixed in advance, walk-forward and CPCV/PBO. The bottleneck
+# is the Alpaca rate limit, so one job runs everything. Market data stays in the
+# Actions cache; only strategy returns and the report are uploaded.
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - research/v13.py
+      - scripts/run_v13.py
+      - .github/workflows/v13.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v13
+  cancel-in-progress: true
+
+jobs:
+  v13:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Aurora
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Restore price panel
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/stock_panel
+          key: stock-panel-v1-${{ hashFiles('docs/research/data/stock_catalog_symbols.csv', 'research/stock_data_checks.py', 'scripts/build_stock_panel.py') }}
+          fail-on-cache-miss: true
+
+      - name: Restore phase 7 minute cache (for the Nasdaq series)
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/alpaca
+          key: alpaca-minutes-v1-${{ github.run_id }}
+          restore-keys: alpaca-minutes-v1-
+          fail-on-cache-miss: true
+
+      - name: Restore the locked-test downloads
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/alpaca_locked
+            outputs/sec_locked
+          key: intraday-locked-data-${{ github.run_id }}
+          restore-keys: intraday-locked-data-
+
+      - name: Restore the v12 inputs (survivors-only universe)
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v10/inputs
+          key: v12-inputs-39277053568
+          fail-on-cache-miss: true
+
+      - name: Restore earlier adjusted daily bars
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v13_adj
+          key: v13-adj-${{ github.run_id }}
+          restore-keys: v13-adj-
+
+      - name: Build the survivorship-free universe
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: >-
+          python scripts/run_v13.py universe --panel-dir outputs/stock_panel --nasdaq outputs/alpaca/ixic.csv
+          --cache outputs/v13_adj --out outputs/v13
+
+      - name: Save the adjusted daily bars
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v13_adj
+          key: v13-adj-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Build signals and run the 144 configurations on both universes
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: >-
+          python scripts/run_v13.py build --panel-dir outputs/stock_panel --nasdaq outputs/alpaca/ixic.csv
+          --inputs outputs/v10/inputs --cache outputs/alpaca_locked --out outputs/v13
+
+      - name: Save the minute bars
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/alpaca_locked
+            outputs/sec_locked
+          key: intraday-locked-data-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Walk-forward, CPCV and report
+        run: python scripts/run_v13.py analyze --inputs outputs/v10/inputs --out outputs/v13
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f outputs/v13/REPORT.md ]; then cat outputs/v13/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: v13-report
+          path: |
+            outputs/v13/REPORT.md
+            outputs/v13/verdict.json
+            outputs/v13/universe.json
+            outputs/v13/streams_full.parquet
+            outputs/v13/streams_survivors.parquet
+          if-no-files-found: warn
+          retention-days: 90
