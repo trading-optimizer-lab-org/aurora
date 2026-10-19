@@ -55,3 +55,12 @@ distribution of its test Sortino.
 is at least 3 in both 2018-2021 and 2022-2026, and the PBO is below 20%, on the survivorship-free universe. Also
 reported: CAGR, maximum drawdown, total, every year, the same on the survivors-only panel, and a gate check (the v11
 robust pick rebuilt on the survivors-only panel must reproduce its published 2021-2026 Sortino of 3.59).
+
+## Amendment before the analysis (2026-10-19)
+
+The first run (GitHub run 39293921657) stopped at the gate: rebuilt from the v12 run's inputs, the v11 robust pick
+made a 2021-2026 Sortino of 3.48 instead of the published 3.59. 2016-2020 is identical in every rebuild; the 2021+
+Yahoo prices are downloaded again in each run and shift slightly, and that alone moves the pick from 3.59 to 3.48
+(reported as a finding on data sensitivity). The survivors-only side now uses the inputs of the v11 run itself, so
+the gate compares like with like; the survivorship-free side is unchanged. No result of the analysis had been seen.
+

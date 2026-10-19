@@ -51,7 +51,7 @@ def _script(name: str):
     return module
 
 
-LK, R10, R12, V9 = _script("run_intraday_locked"), _script("run_v10"), _script("run_v12"), _script("run_v9")
+LK, R10, V9 = _script("run_intraday_locked"), _script("run_v10"), _script("run_v9")
 
 
 def _open() -> None:
@@ -194,9 +194,10 @@ def train_model(panel_dir: Path, nasdaq_csv: Path) -> dict:
 
 def cmd_build(args) -> int:
     _open()
-    # survivors-only universe: the v10-v12 inputs
-    G_s, X_s = R12.load(args.inputs)
-    reg_s = {k: X_s["regime"][k] for k in ("M1", "N50", "M1_N50")}
+    # survivors-only universe: the inputs of the v11 run, which published the gate value
+    G_s = R10.qb_globals(R10._load(args.inputs / "qb.pkl"))
+    nasdaq_ext = pd.read_csv(args.out / "panel" / "ixic.csv", index_col=0, parse_dates=True).iloc[:, 0]
+    reg_s = _regimes(pd.Series(G_s["m1"], index=G_s["dates"]), nasdaq_ext, G_s["dates"])
     pick = {"set": "MIX3", "exit": "XQ3_20", "stop": "DAY", "rank": "GAP", "regime": "M1", "risk": 0.01, "cap": 0.35,
             "gross": 1.0, "pyramid": False, "max_pos": 8}
     gate_r = v10.qb_sim(pick, G_s)
@@ -209,7 +210,7 @@ def cmd_build(args) -> int:
     cfgs = v13.grid()
     R_s = pd.DataFrame({v13.cname(g): sim(g, G_s, reg_s) for g in cfgs})
     dates_s, cash_s = G_s["dates"], G_s["cash"]
-    del G_s, X_s, reg_s
+    del G_s, reg_s
     print("survivors universe done", flush=True)
     # survivorship-free universe
     model = train_model(args.panel_dir, args.nasdaq)
