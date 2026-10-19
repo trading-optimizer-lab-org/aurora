@@ -64,3 +64,6 @@ Yahoo prices are downloaded again in each run and shift slightly, and that alone
 (reported as a finding on data sensitivity). The survivors-only side now uses the inputs of the v11 run itself, so
 the gate compares like with like; the survivorship-free side is unchanged. No result of the analysis had been seen.
 
+The second run (39296910638) passed the gate (3.586781 against 3.586781) and was then stopped by the runner's
+memory limit at the feature step of the 7,052-stock panel, before any configuration of that universe was run. The
+workflow now adds swap and downloads the minute bars in their own step; the rules are unchanged.

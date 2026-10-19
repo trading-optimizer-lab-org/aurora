@@ -192,6 +192,35 @@ def train_model(panel_dir: Path, nasdaq_csv: Path) -> dict:
     return qs.train_model(feats, stream)
 
 
+def _mem(tag: str) -> None:
+    import resource  # POSIX only; the run is on Linux
+
+    print(f"{tag}: peak memory {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20:.1f} GB", flush=True)
+
+
+def _new_universe(args) -> tuple:
+    """The survivorship-free panel, its indicators and context, and the minute bars its candidates need."""
+    panel, bench = LK.PANEL.load_panel(args.out / "panel")
+    nasdaq = pd.read_csv(args.out / "panel" / "ixic.csv", index_col=0, parse_dates=True).iloc[:, 0]
+    industry = pd.read_csv(SYMBOLS).set_index("symbol")["industry"].reindex(panel["close"].columns)
+    ind = sc.indicators(panel, bench["gspc"], industry)
+    ctx = q.context(panel, ind, nasdaq)
+    need = qi.needed(qi.candidates(panel, ind, ctx))
+    api = LK.FETCH.Alpaca()
+    alp_daily = LK.FETCH.fetch_daily(api, args.cache, sorted({s for v in need.values() for s in v}))
+    LK.FETCH.fetch_minutes(api, args.cache, need)
+    print(f"Alpaca calls for the new candidates: {api.calls}", flush=True)
+    _mem("new universe inputs")
+    return panel, nasdaq, ind, ctx, alp_daily
+
+
+def cmd_fetch(args) -> int:
+    """Downloads only, in their own step, so the cache is saved even if the build later fails."""
+    _open()
+    _new_universe(args)
+    return 0
+
+
 def cmd_build(args) -> int:
     _open()
     # survivors-only universe: the inputs of the v11 run, which published the gate value
@@ -214,26 +243,19 @@ def cmd_build(args) -> int:
     print("survivors universe done", flush=True)
     # survivorship-free universe
     model = train_model(args.panel_dir, args.nasdaq)
-    panel, bench = LK.PANEL.load_panel(args.out / "panel")
-    nasdaq = pd.read_csv(args.out / "panel" / "ixic.csv", index_col=0, parse_dates=True).iloc[:, 0]
+    _mem("model trained")
+    panel, nasdaq, ind, ctx, alp_daily = _new_universe(args)
     cash_index = LK.MAB.tbill_index({}).loc[:v13.LAST]
-    industry = pd.read_csv(SYMBOLS).set_index("symbol")["industry"].reindex(panel["close"].columns)
-    ind = sc.indicators(panel, bench["gspc"], industry)
-    ctx = q.context(panel, ind, nasdaq)
-    cands = qi.candidates(panel, ind, ctx)
-    need = qi.needed(cands)
-    del cands
-    api = LK.FETCH.Alpaca()
-    alp_daily = LK.FETCH.fetch_daily(api, args.cache, sorted({s for v in need.values() for s in v}))
-    LK.FETCH.fetch_minutes(api, args.cache, need)
-    print(f"Alpaca calls for the new candidates: {api.calls}", flush=True)
     feats = qs.features(panel, ind, nasdaq)
     setup5, _ = q.breakout_setup(panel, ind, ctx, *q.BO_SELECTIONS["SCAN5"])
     tiebreak = (panel["close"] / panel["close"].shift(63) - 1).rank(axis=1, pct=True).shift(1)
     score = qs.model_score(feats, model)
     kept = {n: qs.top_n(score, setup5, tiebreak, n) for n in (1, 3)}
-    del feats, score
+    del feats, score, setup5, tiebreak
+    _mem("model selections")
     prep = qi.prepare(panel, ind, ctx, cash_index, LK.FETCH.minute_loader(args.cache), alp_daily)
+    del panel, ind, ctx, alp_daily
+    _mem("intraday table")
     _, ie, _ = qs.intraday_signals(prep, None)
     sigs = {"EP_N1": ie, "MIX1": qs.intraday_signals(prep, kept[1])[2], "MIX3": qs.intraday_signals(prep, kept[3])[2]}
     dates, cols = prep["panel"]["close"].index, prep["panel"]["close"].columns
@@ -330,7 +352,7 @@ def cmd_analyze(args) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("universe", "build", "analyze"):
+    for name in ("universe", "fetch", "build", "analyze"):
         a = sub.add_parser(name)
         a.add_argument("--panel-dir", type=Path, default=Path("outputs/stock_panel"))
         a.add_argument("--nasdaq", type=Path, default=Path("outputs/alpaca/ixic.csv"))
@@ -338,7 +360,7 @@ def main() -> int:
         a.add_argument("--cache", type=Path, default=Path("outputs/v13_adj" if name == "universe" else "outputs/alpaca_locked"))
         a.add_argument("--out", type=Path, default=Path("outputs/v13"))
     args = ap.parse_args()
-    return {"universe": cmd_universe, "build": cmd_build, "analyze": cmd_analyze}[args.cmd](args)
+    return {"universe": cmd_universe, "fetch": cmd_fetch, "build": cmd_build, "analyze": cmd_analyze}[args.cmd](args)
 
 
 if __name__ == "__main__":
