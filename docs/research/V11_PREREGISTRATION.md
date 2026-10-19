@@ -12,7 +12,8 @@ Exact rules are the code in `research/v11.py` and `scripts/run_v11.py`, reusing 
 
 - `QB`: the v10 intraday grid at gross 1x (the Sortino barely depends on scale): 9 signal sets x 45 exits x 3 stops x
   4 priorities x 3 regimes x risk {0.5%, 1%} x cap {20%, 35%} x pyramid {no, yes} x position limit {none, 8}
-  = 349,920 configurations.
+  = 233,280 configurations (the first version of this note said 349,920, an arithmetic slip corrected before
+  the run).
 - `LT` (1,920), `CT` (25) and `MR` (576): the v10 grids unchanged.
 - `TSMOM` (60), `XSETF` (72) and `SEASON` (30): the v9 ETF families, extended to 2026-10-16 with the same rules and
   the 36 ETFs from Yahoo.
@@ -38,4 +39,4 @@ month and every year, for the three combinations, each member and SPY. Also the 
 Sortino among the shortlisted streams, labelled as hindsight. Deflated Sharpe over all v11 trials plus every earlier
 one. 2021-2026 had already been opened for the related intraday books and crypto streams; the selection never sees it.
 
-Total 352,603 configurations on 320 runners (300 for QB, 20 for the rest), 4 worker processes each.
+Total 235,963 configurations on 320 runners (300 for QB, 20 for the rest), 4 worker processes each.
