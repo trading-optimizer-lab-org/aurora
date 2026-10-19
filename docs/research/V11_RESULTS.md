@@ -65,4 +65,3 @@ Greedy path (2016-2020 Sortino as streams are added): 4.90 -> 6.81 -> 11.08 -> 1
 | 4 | +0.44 | +0.13 | +0.21 | +1.00 |
 
 Hindsight bound (not tradable): the best 2021-2026 Sortino among the 70 shortlisted streams is 4.05 (QB_MIX3_XQ3_20_DAY_RS63_M1_R1_C35_G1_P0_M0).
-

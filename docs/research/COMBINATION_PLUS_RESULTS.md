@@ -95,4 +95,3 @@ SPY: 1.45 | 15.1% | -33.7% | +102% | -12.5% | 77% (Sortino | CAGR | max DD | tot
 ## 5. Pre-registered criteria on 2016-2020
 
 Passed: INTRADAY_EQ_L1.5, INTRADAY_EQ_L2, INTRADAY_EQ_L3, ALL13_EQ_L2, ALL13_EQ_L3.
-

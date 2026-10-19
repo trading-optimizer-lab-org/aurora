@@ -94,4 +94,3 @@ Daily streams over the long history (1995-2010 / 2011-2020): ACCUM Sortino 2.03 
 ## 5. Pre-registered criteria (2016-2020; 2011-2020 for DAILY)
 
 Passed: INTRADAY_EQ.
-

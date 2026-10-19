@@ -96,4 +96,3 @@ Average trade return by number of stars (trades in brackets):
 ## 4. Pre-registered criteria (2011-2020 daily, 2016-2020 intraday)
 
 Passed: I_MIX_STARS_N1_E0, I_MIX_STARS_N1_E3_C10, I_MIX_STARS_N3_E0, I_MIX_STARS_N3_E3_C10, I_MIX_MODEL_N1_E0, I_MIX_MODEL_N1_E3_C10, I_MIX_MODEL_N3_E0, I_MIX_MODEL_N3_E3_C10.
-

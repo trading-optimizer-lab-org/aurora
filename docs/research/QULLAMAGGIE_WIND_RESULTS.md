@@ -92,4 +92,3 @@ SPY: 1995-2010 0.54 | 8.4% | -55.2% · 2011-2020 1.60 | 13.8% | -33.7% · 2016-2
 ## 3. Pre-registered criteria (2011-2020 daily, 2016-2020 intraday)
 
 Passed: I_EP_E0, I_EP_E1, I_EP_E2, I_EP_E3_C20, I_EP_E3_C10, I_EP_E4_C20.
-
