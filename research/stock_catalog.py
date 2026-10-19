@@ -212,7 +212,7 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
              entry_px: pd.DataFrame | None = None, same_day_px: pd.DataFrame | None = None,
              risk_scale: pd.Series | None = None, max_gross: pd.Series | None = None,
              cap: float = CAP, pyramid: bool = False, cushion: bool = False,
-             extended_sell: float | None = None) -> pd.DataFrame:
+             extended_sell: float | None = None, max_pos: int | None = None) -> pd.DataFrame:
     """Daily net return and invested fraction from ``start``.
 
     Entries fill at the close of the signal day (S8: limit order the next day,
@@ -243,6 +243,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     QD = QMA = 0
     if exit_rule.startswith("XQ") and not exit_rule.startswith("XQC"):
         QD, QMA = (int(x) for x in exit_rule[2:].split("_"))
+    XP = None  # progressive trail XG{a}_{b}_{u}_{d}: a-session average until +u%, then the b-session one
+    if exit_rule.startswith("XG"):
+        xa, xb, xu, xd = (int(x) for x in exit_rule[2:].split("_"))
+        XP = ({10: S10, 20: S20, 50: S50}[xa], {10: S10, 20: S20, 50: S50}[xb], xu / 100, xd)
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -413,6 +417,17 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     p["half"], p["stop"] = True, max(p["stop"], p["entry"])
                 if i in pos and days >= QD and c < (S10 if QMA == 10 else S20)[t, i]:
                     sell(i, c)
+            elif XP is not None:
+                fast, slow, up, xday = XP
+                if xday and days == xday and not p["half"]:
+                    sell(i, c, 1 / 3)
+                    p["half"], p["stop"] = True, max(p["stop"], p["entry"])
+                if i in pos:
+                    if c >= p["entry"] * (1 + up):
+                        p["big"] = True
+                    trail = slow if p.get("big") else fast
+                    if days >= 3 and np.isfinite(trail[t, i]) and c < trail[t, i]:
+                        sell(i, c)
             elif exit_rule in ("XQC10", "XQC20"):
                 if c <= (S10 if exit_rule == "XQC10" else S20)[t, i]:
                     sell(i, c)
@@ -477,6 +492,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     risk_t *= mult
                 gross_t = day_gross
                 for i in (order if risk_t > 0 else []):
+                    if max_pos is not None and len(pos) >= max_pos:
+                        break
                     c, st = Craw[t, i], ST[t, i]
                     intraday = EPX is not None and np.isfinite(EPX[t, i])
                     px = EPX[t, i] if EPX is not None and intraday else c

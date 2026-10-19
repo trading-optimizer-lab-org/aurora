@@ -7,7 +7,7 @@ for a large run on at least 300 runners of 4 CPUs testing all kinds of ideas. Th
 and exits far too early, and that his levers (size, margin) multiply returns and drawdowns.
 
 Exact rules are the code in `research/v10.py`, `scripts/run_v10.py` and two additions to the engine
-(`stock_catalog.simulate`): the `XP` exits and the `max_pos` limit, both inactive by default.
+(`stock_catalog.simulate`): the `XG` exits and the `max_pos` limit, both inactive by default.
 
 ## Periods
 
@@ -28,7 +28,7 @@ must reproduce its published 2016-2020 monthly Sortino and CAGR within 1e-9 befo
   the best 1 or 3 model-scored breakouts), `MIXS3` (EP_N1 plus the 3 best by his star criteria), `ALL` (EP_N0 plus
   all breakouts);
 - exit (45): `XQ3_20`, `XQ5_20`, `XQ3_10`, `XQ5_10`, `XQC10`, `XQC20`, `XE21`, `XS50T60`, `XO25`, and the new
-  progressive `XP{a}_{b}_{u}_{d}`: from day 3 the position is trailed on the a-session average until it has gained
+  progressive `XG{a}_{b}_{u}_{d}` (named `XP` in the first version of this note; renamed before any run because `XPS` already exists): from day 3 the position is trailed on the a-session average until it has gained
   u% (then on the b-session average for good), with a third sold on day d (none when d = 0) and the stop moved to
   break even then; a in {10, 20}, b in {20, 50}, u in {20, 50, 100}, d in {0, 3, 5};
 - initial stop (3): `DAY` (the day's low, same-day exits from the minute bars), `W1`, `W2` (1 or 2 ADR below the
