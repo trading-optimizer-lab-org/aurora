@@ -212,7 +212,8 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
              entry_px: pd.DataFrame | None = None, same_day_px: pd.DataFrame | None = None,
              risk_scale: pd.Series | None = None, max_gross: pd.Series | None = None,
              cap: float = CAP, pyramid: bool = False, cushion: bool = False,
-             extended_sell: float | None = None, max_pos: int | None = None) -> pd.DataFrame:
+             extended_sell: float | None = None, max_pos: int | None = None, max_heat: float | None = None,
+             groups: np.ndarray | None = None, max_per_group: int | None = None) -> pd.DataFrame:
     """Daily net return and invested fraction from ``start``.
 
     Entries fill at the close of the signal day (S8: limit order the next day,
@@ -247,6 +248,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
     if exit_rule.startswith("XG"):
         xa, xb, xu, xd = (int(x) for x in exit_rule[2:].split("_"))
         XP = ({10: S10, 20: S20, 50: S50}[xa], {10: S10, 20: S20, 50: S50}[xb], xu / 100, xd)
+    XN = None  # ladder XN{a}_{b}_{m}_{n}: a third at +aR, a third at +bR, the rest trailed on the m-day average
+    if exit_rule.startswith("XN"):
+        na, nb, nm, nn = (int(x) for x in exit_rule[2:].split("_"))
+        XN = (na, nb, {10: S10, 20: S20, 50: S50}[nm], nn)
     E = entries.to_numpy()
     ST = stops.to_numpy(dtype=f32) if stops is not None else None
     LIM = limits.to_numpy(dtype=f32) if limits is not None else None
@@ -417,6 +422,23 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     p["half"], p["stop"] = True, max(p["stop"], p["entry"])
                 if i in pos and days >= QD and c < (S10 if QMA == 10 else S20)[t, i]:
                     sell(i, c)
+            elif XN is not None:
+                la, lb, trail, tdays = XN
+                r0 = p.get("r0", 0.0)
+                if r0 > 0 and np.isfinite(H[t, i]):
+                    if not p.get("l1") and H[t, i] >= p["entry"] + la * r0:
+                        lvl = p["entry"] + la * r0
+                        sell(i, max(float(O[t, i]), lvl) if np.isfinite(O[t, i]) else lvl, 1 / 3)
+                        p["l1"], p["stop"] = True, max(p["stop"], p["entry"])
+                    if i in pos and p.get("l1") and not p.get("l2") and H[t, i] >= p["entry"] + lb * r0:
+                        lvl = p["entry"] + lb * r0
+                        sell(i, max(float(O[t, i]), lvl) if np.isfinite(O[t, i]) else lvl, 0.5)
+                        p["l2"] = True
+                if i in pos:
+                    if days >= 3 and np.isfinite(trail[t, i]) and c < trail[t, i]:
+                        sell(i, c)
+                    elif tdays and days >= tdays and not p.get("l1") and c < p["entry"]:
+                        sell(i, c)
             elif XP is not None:
                 fast, slow, up, xday = XP
                 if xday and days == xday and not p["half"]:
@@ -491,9 +513,19 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                 if cushion:
                     risk_t *= mult
                 gross_t = day_gross
+                heat = (sum(q["shares"] * max(q["entry"] - q["stop"], 0.0) for q in pos.values() if q["stop"] is not None)
+                        / equity if max_heat is not None and equity > 0 else 0.0)
+                held: dict[int, int] = {}
+                if groups is not None and max_per_group is not None:
+                    for j in pos:
+                        held[int(groups[j])] = held.get(int(groups[j]), 0) + 1
                 for i in (order if risk_t > 0 else []):
                     if max_pos is not None and len(pos) >= max_pos:
                         break
+                    if max_heat is not None and heat + risk_t > max_heat + 1e-12:
+                        break
+                    if groups is not None and max_per_group is not None and groups[i] >= 0                             and held.get(int(groups[i]), 0) >= max_per_group:
+                        continue
                     c, st = Craw[t, i], ST[t, i]
                     intraday = EPX is not None and np.isfinite(EPX[t, i])
                     px = EPX[t, i] if EPX is not None and intraday else c
@@ -504,6 +536,10 @@ def simulate(panel: dict[str, pd.DataFrame], ind: dict, entries: pd.DataFrame, s
                     if value <= 1e-6 * equity:
                         break
                     cash -= value * (1 + COST)
+                    if max_heat is not None and equity > 0:
+                        heat += value * abs(px - st) / px / equity
+                    if groups is not None and max_per_group is not None and groups[i] >= 0:
+                        held[int(groups[i])] = held.get(int(groups[i]), 0) + 1
                     pos[i] = {"shares": value / px, "shares0": value / px, "entry": px, "stop": st, "t": t, "half": False,
                               "hc": float(px), "adr": float(AD[t, i]) if np.isfinite(AD[t, i]) else 0.0,
                               "r0": abs(float(px) - float(st)), "hh": float(px), "af": 0.02, "kell": False}
