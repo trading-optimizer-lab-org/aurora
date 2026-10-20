@@ -58,7 +58,8 @@ DAILY_DIMS = {
     "ON2_NIGHTLONG": {"setup": ("strong20", "strong30", "strong50", "crash20", "crash40"),
                       "exit": ("next_open", "next_close", "close3"), "band": BANDS},
 }
-CARRY = {"next_open": 1, "d2": 1, "d3": 2, "d4": 3, "d5": 4, "d7": 6}  # sessions held after the entry day
+CARRY = {"next_open": 1, "d2": 1, "d3": 2, "d4": 3, "d5": 4, "d7": 6, "g5": 5}  # sessions held after the entry day
+# g5 (v21): held up to five sessions after the entry day, out at the first close against the position
 
 # Cost model: "r1" (v15-v18: price-tier half-spreads, $0.005 a share, the IBKR cells as they are) or "r3" (the
 # realistic model of the v19 amendment: measured half-spreads, 1.5x at the open, IBKR tiered commissions and the
@@ -69,11 +70,15 @@ MODEL = "r1"
 SLIP = 0.0
 R3_HALF = ((2, 0.0048), (5, 0.0036), (10, 0.0033), (np.inf, 0.0037))  # v19 cost study, mean of 20,820 legs
 R3_OPEN, R3_COMM, R3_SEC, R3_TAF = 1.5, 0.0065, 0.0000278, 0.000166
+# r4 (v21): half-spread by tier (<2, 2-5, 5-10, 10-20) and leg (open, session, close); R3's values until calibrated
+R4_HALF = np.array([[v * R3_OPEN, v, v] for _, v in R3_HALF])
 
 
-def set_costs(model: str, slip: float) -> None:
-    global MODEL, SLIP
+def set_costs(model: str, slip: float, half: np.ndarray | None = None) -> None:
+    global MODEL, SLIP, R4_HALF
     MODEL, SLIP = model, slip
+    if half is not None:
+        R4_HALF = np.asarray(half, float)
 
 
 def _slip(level: float, extreme: float) -> float:
@@ -289,7 +294,8 @@ def exit_bar(side: int, j: int, e: float, stop: float, rule: str, b: tuple, line
     raise KeyError(rule)
 
 
-def carry(D: dict, t: int, col: int, side: int, e: float, px: float, stop: float, rule: str) -> list[float]:
+def carry(D: dict, t: int, col: int, side: int, e: float, px: float, stop: float, rule: str,
+          close_level: float = np.nan) -> list[float]:
     """Daily returns after the entry day for the overnight and multi-day exits (daily bars on the entry day's raw
     scale; the stop stays live on the daily highs or lows; the next-open exit has no stop)."""
     O, H, L, C, F, new = D["O"], D["H"], D["L"], D["C"], D["F"], D["new"]
@@ -308,16 +314,24 @@ def carry(D: dict, t: int, col: int, side: int, e: float, px: float, stop: float
             out.append(side * (q - prev) / e)
             break
         out.append(side * (c - prev) / e)
+        if rule == "g5" and (c - C[u - 1, col] / f) * side < 0:
+            break
+        if np.isfinite(close_level) and (c - close_level) * side <= 0:
+            break
         prev = c
     return out
 
 
 def trade_row(D: dict, cd: pd.Series, b: tuple, line: np.ndarray, side: int, j: int, e: float, stop: float,
-              rule: str, prio: float) -> dict:
-    px, held, k = exit_bar(side, j, e, stop, rule, b, line, float(cd["pc"]))
+              rule: str, prio: float, close_level: float = np.nan) -> dict:
+    """``close_level`` (v21): a close-based stop; the intraday ``stop`` is then only the sizing distance."""
+    live = stop if not np.isfinite(close_level) else (np.inf if side < 0 else -np.inf)
+    px, held, k = exit_bar(side, j, e, live, rule, b, line, float(cd["pc"]))
+    if held and k == len(b[4]) - 1 and np.isfinite(close_level) and (px - close_level) * side <= 0:
+        held = False
     rets = [side * (px - e) / e]
     if held:
-        rets += carry(D, int(cd["t"]), int(cd["j"]), side, e, px, stop, rule)
+        rets += carry(D, int(cd["t"]), int(cd["j"]), side, e, px, live, rule, close_level)
     m, c, v, vw = b[0], b[4], b[5], b[6]
     pv = np.where(np.isfinite(vw) & (vw > 0), vw, c)
     return {"date": cd["date"], "t": int(cd["t"]), "symbol": cd["symbol"], "minute": int(m[j]), "side": side,
@@ -325,11 +339,13 @@ def trade_row(D: dict, cd: pd.Series, b: tuple, line: np.ndarray, side: int, j: 
             "liq": float(cd["pmv"]) + float(np.sum(pv[:j] * v[:j])), "prio": prio, "so": float(cd.get("so", np.nan)),
             "rets": np.array(rets), "nights": len(rets) - 1, "rule": rule,
             "opens": int(j == 0 and e == float(b[1][0])) + int(rule == "next_open" and len(rets) == 2),
-            "xmin": -1 if held else int(m[k])}
+            "xmin": -1 if held else int(m[k]),
+            "leg_in": 0 if (j == 0 and e == float(b[1][0])) else 1,
+            "leg_out": (0 if rule == "next_open" else 2) if held else (2 if k == len(c) - 1 else 1)}
 
 
 COLS = ["date", "t", "symbol", "minute", "side", "entry", "stop", "price", "liq", "prio", "so", "rets", "nights",
-        "rule", "opens", "xmin"]
+        "rule", "opens", "xmin", "leg_in", "leg_out"]
 
 
 def intraday_trades(store: vi.Store, D: dict, family: str, g: dict) -> pd.DataFrame:
@@ -400,21 +416,25 @@ def book_paths(paths: list[tuple], dates: pd.DatetimeIndex, max_open: int = 20) 
 
 
 def _costs(price: np.ndarray, so: np.ndarray, side: np.ndarray, nights: np.ndarray, opens: np.ndarray, table: dict,
-           spread: float, fee_mult: float, gross: bool) -> tuple[np.ndarray, np.ndarray]:
+           spread: float, fee_mult: float, gross: bool, legs: tuple | None = None) -> tuple[np.ndarray, np.ndarray]:
     """(cost as a fraction of notional, availability weight) per trade; ``opens`` counts the legs traded at an
     open (0, 1 or 2)."""
     px = np.maximum(np.asarray(price, float), 0.01)
     p_av, fee = v15.lookup(table, px, np.asarray(so, float))
-    if MODEL == "r3":
+    if MODEL in ("r3", "r4"):
         p_av, fee = p_av * 0.8, np.maximum(2 * fee, 100.0)
     short = np.asarray(side) < 0
     avail = np.where(short, p_av, 1.0)
     if gross:
         return np.zeros(len(px)), avail
-    if MODEL == "r3":
+    if MODEL == "r4" and legs is not None:
+        tier = np.select([px < a for a, _ in R3_HALF[:-1]], [0, 1, 2], 3)
+        hs = R4_HALF[tier, np.asarray(legs[0], int)] + R4_HALF[tier, np.asarray(legs[1], int)]
+        cost = hs * spread + 2 * np.minimum(R3_COMM / px, 0.01) + R3_SEC + R3_TAF / px
+    elif MODEL in ("r3", "r4"):
         hs = np.select([px < a for a, _ in R3_HALF[:-1]], [v for _, v in R3_HALF[:-1]], R3_HALF[-1][1])
-        legs = 2 + (R3_OPEN - 1) * np.asarray(opens, float)
-        cost = hs * spread * legs + 2 * np.minimum(R3_COMM / px, 0.01) + R3_SEC + R3_TAF / px
+        legs_n = 2 + (R3_OPEN - 1) * np.asarray(opens, float)
+        cost = hs * spread * legs_n + 2 * np.minimum(R3_COMM / px, 0.01) + R3_SEC + R3_TAF / px
     else:
         cost = 2 * (core.half_spread(px, "mid") * spread + core.COMMISSION / px)
     return cost + np.where(short, fee * fee_mult / 100 / 360 * np.asarray(nights, float), 0.0), avail
@@ -432,8 +452,9 @@ def intra_book(trades: pd.DataFrame, dates: pd.DatetimeIndex, table: dict, sprea
     dist = np.abs(e - s) / e
     w = np.minimum(np.minimum(0.20, 0.005 / np.maximum(dist, 1e-4)), 0.02 * np.nan_to_num(t["liq"].to_numpy(float))
                    / core.ACCOUNT)
+    legs = (t["leg_in"].to_numpy(), t["leg_out"].to_numpy()) if "leg_in" in t else None
     cost, avail = _costs(t["price"].to_numpy(), t["so"].to_numpy(), t["side"].to_numpy(), t["nights"].to_numpy(),
-                         t["opens"].to_numpy(), table, spread, fee_mult, gross)
+                         t["opens"].to_numpy(), table, spread, fee_mult, gross, legs)
     paths = []
     for i, (i0, r, pr) in enumerate(zip(t["t"].to_numpy(), t["rets"], t["prio"].to_numpy(float))):
         rr = np.array(r, float)
@@ -454,8 +475,10 @@ class Spec:
     target: float  # fraction in favour, nan for none
     trail: float  # fraction from the best close since entry, nan for none
     rule: str  # "time", "strength" (short: a close above the prior high), "weak" (long: a close below the prior
-    #            low), "ma10" (long: a close below the 10-day average), "open1" (out at the next open)
+    #            low), "ma10" (long: a close below the 10-day average), "open1" (out at the next open), "green"
+    #            (out at the first close against the position: above the prior close for a short)
     prio: float
+    cstop: float = np.nan  # close-based stop: out at a close this fraction against the entry (v21)
 
 
 def path19(D: dict, s: Spec, table: dict, spread: float, fee_mult: float = 1.0, gross: bool = False,
@@ -505,14 +528,19 @@ def path19(D: dict, s: Spec, table: dict, spread: float, fee_mult: float = 1.0, 
             break
         if s.rule == "ma10" and u >= 9 and c < np.nanmean(C[u - 9:u + 1, j]):
             break
+        if s.rule == "green" and u > 0 and (c - C[u - 1, j]) * side < 0:
+            break
+        if np.isfinite(s.cstop) and (c - entry * (1 - side * s.cstop)) * side <= 0:
+            break
     if not rets:
         return None
     r = np.array(rets)
     nights = max(len(r) - (0 if s.kind == "close" else 1), 0)
     w = min(w_max, 0.01 * D["DV1"][t, j] / core.ACCOUNT) if np.isfinite(D["DV1"][t, j]) else 0.0
     opens = int(s.kind == "open") + int(s.rule == "open1")
+    legs = (np.array([0 if s.kind == "open" else 2]), np.array([0 if s.rule == "open1" else 2]))
     cost, avail = _costs(np.array([raw]), np.array([D["SO"][t, j]]), np.array([side]), np.array([nights]),
-                         np.array([opens]), table, spread, fee_mult, gross)
+                         np.array([opens]), table, spread, fee_mult, gross, legs)
     if not gross and side < 0 and s.kind == "open" and t > 0 and entry <= 0.9 * C[t - 1, j]:
         cost = cost + vs.SSR_EXTRA
     r[0] -= cost[0]
