@@ -3,7 +3,8 @@
 The survivorship-free universe made a walk-forward Sortino of 0.61 against 3.45 on the earlier survivors-only panel.
 This separates the causes: the 144 configurations on subsets of the full panel (the earlier list's tickers, the
 active tickers, everything), with the model's top-N re-ranked inside each subset; the trades of one fixed
-configuration split by ticker group; and the earlier list's daily returns compared between the two panels.
+configuration split by ticker group, instrument type and listing date; two subsets without warrants, units,
+rights and funds; and the earlier list's daily returns compared between the two panels.
 Only aggregates are printed and saved.
 """
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +26,8 @@ from aurora.research import stock_catalog as sc
 from aurora.research import v10
 from aurora.research import v13
 
+DERIV = re.compile(r"\b(Warrants?|Rights?|Units?)\b")
+FUND = re.compile(r"\b(ETF|ETN|Fund|ProShares|Direxion|iShares|Leveraged|[23]X|Invesco|SPDR|Vanguard|WisdomTree|Global X|First Trust)\b")
 FIXED = "V13_MIX3_XQ3_20_M1_R1_C35_M8"  # the v11 robust pick's settings inside the v13 grid
 
 
@@ -40,16 +44,34 @@ R13 = _script("run_v13")
 LK, R10 = R13.LK, R13.R10
 
 
-def _groups(cols: pd.Index) -> dict[str, np.ndarray]:
+def _kind(sym: str, name: str) -> str:
+    """Instrument type from the Alpaca name and the Nasdaq fifth-letter convention."""
+    if DERIV.search(name) or (len(sym) == 5 and sym[-1] in "WRU") or sym[-2:] in ("-U", "-W", "-R"):
+        return "WARRANT_RIGHT_UNIT"
+    if FUND.search(name):
+        return "ETF_FUND"
+    if "Acquisition" in name:
+        return "SPAC_SHELL"
+    return "OPERATING"
+
+
+def _groups(cols: pd.Index, close: pd.DataFrame) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     api = LK.FETCH.Alpaca()
     r = requests.get(R13.ASSETS_URL, params={"asset_class": "us_equity"}, headers=api.headers, timeout=120)
     r.raise_for_status()
-    status = {str(a["symbol"]).replace(".", "-"): a["status"] for a in r.json()}
+    info = {str(a["symbol"]).replace(".", "-"): (a["status"], str(a.get("name") or "")) for a in r.json()}
     old = set(pd.read_csv(R13.SYMBOLS)["symbol"].astype(str))
     in_old = np.array([c in old for c in cols])
-    inactive = np.array([status.get(c) == "inactive" for c in cols])
-    return {"ALL": np.ones(len(cols), bool), "OLD_LIST": in_old, "ACTIVE": ~inactive,
-            "OLD_LIST_PLUS_INACTIVE": in_old | inactive}
+    inactive = np.array([info.get(c, ("", ""))[0] == "inactive" for c in cols])
+    kind = np.array([_kind(c, info.get(c, ("", ""))[1]) for c in cols])
+    first = close.notna().idxmax().reindex(cols)
+    listed = np.where(first <= pd.Timestamp("2016-06-30"), "LISTED_BY_2016",
+                      np.where(first <= pd.Timestamp("2020-12-31"), "LISTED_2016_2020", "LISTED_2021_ON"))
+    origin = np.where(in_old, "OLD_LIST", np.where(inactive, "INACTIVE", "NEW_ACTIVE"))
+    common = (kind == "OPERATING") | (kind == "SPAC_SHELL")
+    groups = {"ALL": np.ones(len(cols), bool), "OLD_LIST": in_old, "ACTIVE": ~inactive,
+              "OLD_LIST_PLUS_INACTIVE": in_old | inactive, "COMMON": common, "OPERATING": kind == "OPERATING"}
+    return groups, {"origin": origin, "kind": kind, "listed": listed}
 
 
 def _stats_block(R: pd.DataFrame, cash: pd.Series, nb: list[list[int]]) -> dict:
@@ -61,7 +83,7 @@ def _stats_block(R: pd.DataFrame, cash: pd.Series, nb: list[list[int]]) -> dict:
     return out
 
 
-def _trade_split(G: dict, reg: dict, group_of: np.ndarray) -> list[dict]:
+def _trade_split(G: dict, reg: dict, labels: dict[str, np.ndarray]) -> list[dict]:
     g = dict(zip(v13.DIMS, ("MIX3", "XQ3_20", "M1", 0.01, 0.35, 8)))
     e, s, px, sd = G["sig"]["MIX3"]
     m = e & reg["M1"][:, None]
@@ -74,17 +96,19 @@ def _trade_split(G: dict, reg: dict, group_of: np.ndarray) -> list[dict]:
                 entry_px=df(px), same_day_px=df(sd), risk=g["risk"], cap=g["cap"], max_gross=G["gross"][1.0],
                 max_pos=g["max_pos"], trades=trades)
     t = pd.DataFrame(trades)
-    t["group"] = group_of[t["symbol"].to_numpy()]
-    t["year"] = pd.to_datetime(t["entry_date"]).dt.year
+    for k, v in labels.items():
+        t[k] = v[t["symbol"].to_numpy()]
+    t["year"] = pd.to_datetime(t["entry_date"]).dt.year.astype(str)
     t["w"] = t["return"] * t["fraction"]
     rows = []
-    for (grp, period), sub in [((k, "2016-2026"), v) for k, v in t.groupby("group")] + \
-            [((k, f"{y}"), v) for (k, y), v in t.groupby(["group", "year"])]:
-        win, loss = sub.loc[sub["w"] > 0, "w"].sum(), -sub.loc[sub["w"] < 0, "w"].sum()
-        rows.append({"group": grp, "period": period, "pieces": int(len(sub)), "symbols": int(sub["symbol"].nunique()),
-                     "mean_return": float(sub["w"].sum() / sub["fraction"].sum()),
-                     "pf": float(win / loss) if loss > 0 else np.nan,
-                     "worst": float(sub["return"].min()), "share_below_-20%": float((sub["return"] < -0.2).mean())})
+    for keys in (["origin"], ["kind"], ["listed"], ["origin", "kind"], ["origin", "listed"], ["origin", "year"]):
+        for val, sub in t.groupby(keys):
+            val = val if isinstance(val, tuple) else (val,)
+            win, loss = sub.loc[sub["w"] > 0, "w"].sum(), -sub.loc[sub["w"] < 0, "w"].sum()
+            rows.append({"by": "+".join(keys), "value": "+".join(map(str, val)), "pieces": int(len(sub)),
+                         "symbols": int(sub["symbol"].nunique()), "mean_return": float(sub["w"].sum() / sub["fraction"].sum()),
+                         "pf": float(win / loss) if loss > 0 else np.nan, "worst": float(sub["return"].min()),
+                         "share_below_-20%": float((sub["return"] < -0.2).mean())})
     return rows
 
 
@@ -118,7 +142,7 @@ def main() -> int:
     panel, nasdaq, ind, ctx, alp_daily = R13._new_universe(args)
     price = _price_check(panel["close"], args.inputs)
     print(json.dumps(price), flush=True)
-    groups = _groups(panel["close"].columns)
+    groups, labels = _groups(panel["close"].columns, panel["close"])
     print(json.dumps({k: int(v.sum()) for k, v in groups.items()}), flush=True)
     cash_index = LK.MAB.tbill_index({}).loc[:v13.LAST]
     feats = qs.features(panel, ind, nasdaq)
@@ -164,8 +188,9 @@ def main() -> int:
             G_all = G
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "diag.json").write_text(json.dumps(report, indent=1, default=float), encoding="utf-8")
-    label = np.where(groups["OLD_LIST"], "OLD_LIST", np.where(groups["ACTIVE"], "NEW_ACTIVE", "INACTIVE"))[pos]
-    report["trades_fixed_all"] = _trade_split(G_all, reg, label)
+    report["kinds"] = {f"{o}+{k}": int(((labels["origin"] == o) & (labels["kind"] == k)).sum())
+                       for o in np.unique(labels["origin"]) for k in np.unique(labels["kind"])}
+    report["trades_fixed_all"] = _trade_split(G_all, reg, {k: v[pos] for k, v in labels.items()})
     print(pd.DataFrame(report["trades_fixed_all"]).to_string(), flush=True)
     (args.out / "diag.json").write_text(json.dumps(report, indent=1, default=float), encoding="utf-8")
     return 0
