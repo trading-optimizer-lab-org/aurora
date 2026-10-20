@@ -1,0 +1,168 @@
+name: v14 data (survivorship-free universe, event minutes, SEC, crypto, macro)
+
+# scripts/run_v14_data.py. Downloads only; every source runs in its own job so the rate limits do not add up.
+# Market data stays in the Actions cache; only coverage statistics reach the logs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - scripts/run_v14_data.py
+      - .github/workflows/v14-data.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v14-data
+  cancel-in-progress: true
+
+jobs:
+  finra:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/finra
+          key: v14-finra-${{ github.run_id }}
+          restore-keys: v14-finra-
+      - run: python scripts/run_v14_data.py finra --cache outputs/v14/finra
+      - if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/finra
+          key: v14-finra-${{ github.run_id }}-${{ github.run_attempt }}
+
+  alpaca:
+    needs: finra
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 58 ? 48 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/finra
+          key: v14-finra-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: v14-finra-
+          fail-on-cache-miss: true
+      - name: Restore Alpaca downloads
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/alpaca
+          key: v14-alpaca-${{ github.run_id }}
+          restore-keys: v14-alpaca-
+      - name: Daily bars
+        run: python scripts/run_v14_data.py daily --cache outputs/v14/alpaca --finra outputs/v14/finra --budget-min 150
+      - name: Save daily bars
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/alpaca
+          key: v14-alpaca-${{ github.run_id }}-${{ github.run_attempt }}-daily
+      - name: Minute bars of the event days
+        run: python scripts/run_v14_data.py minutes --cache outputs/v14/alpaca --budget-min 170
+      - name: Coverage
+        run: python scripts/run_v14_data.py coverage --cache outputs/v14/alpaca --finra outputs/v14/finra
+      - name: Save minute bars
+        if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/alpaca
+          key: v14-alpaca-${{ github.run_id }}-${{ github.run_attempt }}-minutes
+
+  sec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/sec
+          key: v14-sec-${{ github.run_id }}
+          restore-keys: v14-sec-
+      - run: python scripts/run_v14_data.py sec --cache outputs/v14/sec
+      - if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/sec
+          key: v14-sec-${{ github.run_id }}-${{ github.run_attempt }}
+
+  crypto:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/crypto
+          key: v14-crypto-${{ github.run_id }}
+          restore-keys: v14-crypto-
+      - run: python scripts/run_v14_data.py crypto --cache outputs/v14/crypto
+      - if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/crypto
+          key: v14-crypto-${{ github.run_id }}-${{ github.run_attempt }}
+
+  macro:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - run: python scripts/run_v14_data.py macro --cache outputs/v14/macro
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/macro
+          key: v14-macro-${{ github.run_id }}-${{ github.run_attempt }}
