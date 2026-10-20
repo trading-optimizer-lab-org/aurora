@@ -1,0 +1,41 @@
+name: v18 diagnostic of the multi-day and overnight shorts
+
+# scripts/run_v18_diag.py on the inputs of run 39427477103; the trade lists carry no price series.
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - scripts/run_v18_diag.py
+      - .github/workflows/v18-diag.yml
+
+permissions:
+  contents: read
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39427477103-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_v18_diag.py --summary docs/research/data/v18_summary.json --out outputs/v18/diag
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v18-diag
+          path: outputs/v18/diag
+          retention-days: 90
