@@ -90,8 +90,8 @@ Trades of the fixed configuration on the full panel (return per piece, weighted 
   the two panels (median share of days differing by more than 2%: 0.0; 25 of 1,736 tickers above 1%).
 - **Not the instrument type.** Warrants and funds are a handful of trades; removing them makes it worse (funds were
   winners).
-- **The earlier list itself is the edge.** The same rules on operating companies that are not in the list lose
-  money in every listing cohort (listed by 2016: PF 1.08 against 1.76 for the list; 2016-2020: 0.51 against 3.30;
+- **The earlier list itself is the edge.** The same rules on active stocks that are not in the list (91% of their
+  trades in operating companies) lose money in every listing cohort (listed by 2016: PF 1.08 against 1.76 for the list; 2016-2020: 0.51 against 3.30;
   2021 on: 0.87 against 1.18). The list was compiled after the fact from stocks that still had data at its creation,
   so membership carries information about the future; delisted stocks add a further loss (5.08 -> 3.51 when added).
 - **Consequence:** the stock results of phases 1-7 and v10-v12, and the v11 pick's 3.59, were measured on this
