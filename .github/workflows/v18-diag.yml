@@ -1,6 +1,6 @@
 name: v18 diagnostic of the multi-day and overnight shorts
 
-# scripts/run_v18_diag.py on the inputs of run 39427477103; the trade lists carry no price series.
+# scripts/run_v18_diag.py on the inputs of run 39433812183 (v18b); the trade lists carry no price series.
 on:
   push:
     branches: [research/stock-catalog]
@@ -30,7 +30,7 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v18
-          key: v18-inputs-39427477103-1
+          key: v18-inputs-39433812183-1
           fail-on-cache-miss: true
       - run: python scripts/run_v18_diag.py --summary docs/research/data/v18_summary.json --out outputs/v18/diag
       - if: always()
