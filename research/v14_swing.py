@@ -152,8 +152,11 @@ def _shift(a: np.ndarray, k: int) -> np.ndarray:
     return out
 
 
-def path(D: dict, s: Spec, scenario: str) -> tuple[int, np.ndarray, float, float] | None:
-    """(first row with a return, daily net returns, priority, weight) of one trade, or None if it cannot enter."""
+def path(D: dict, s: Spec, scenario: str, w_max: float = 0.05,
+         r1: tuple | None = None) -> tuple[int, np.ndarray, float, float] | None:
+    """(first row with a return, daily net returns, priority, weight) of one trade, or None if it cannot enter.
+    ``r1`` = (spread multiple, lookup): v15's R1 costs instead of ``scenario`` (middle half-spreads x the multiple,
+    commission, a short weighted by its availability and charged its fee per night; lookup(raw, so) -> (p, fee))."""
     O, H, L, C, P, new = D["O"], D["H"], D["L"], D["C"], D["P"], D["new"]
     T = C.shape[0]
     t, j, side = s.t, s.j, s.side
@@ -202,13 +205,22 @@ def path(D: dict, s: Spec, scenario: str) -> tuple[int, np.ndarray, float, float
         return None
     r = np.array(rets)
     nights = max(len(r) - (0 if s.kind == "close" else 1), 0)
-    cost = core.stock_cost(np.array([raw]), scenario)[0]
-    if side < 0:
-        cost += core.short_cost(np.array([raw]), np.array([nights]), scenario)[0]
-        if s.kind != "close" and t > 0 and entry <= 0.9 * C[t - 1, j]:
-            cost += SSR_EXTRA
+    w = min(w_max, 0.01 * D["DV1"][t, j] / core.ACCOUNT) if np.isfinite(D["DV1"][t, j]) else 0.0
+    if r1 is None:
+        cost = core.stock_cost(np.array([raw]), scenario)[0]
+        if side < 0:
+            cost += core.short_cost(np.array([raw]), np.array([nights]), scenario)[0]
+    else:
+        spread, lookup = r1
+        px = max(float(raw), 0.01)
+        cost = 2 * (float(core.half_spread(np.array([px]), "mid")[0]) * spread + core.COMMISSION / px)
+        if side < 0:
+            p_av, fee = lookup(np.array([px]), np.array([D["SO"][t, j]]))
+            cost += float(fee[0]) / 100 / 360 * nights
+            w *= float(p_av[0])
+    if side < 0 and s.kind != "close" and t > 0 and entry <= 0.9 * C[t - 1, j]:
+        cost += SSR_EXTRA
     r[0] -= cost
-    w = min(0.05, 0.01 * D["DV1"][t, j] / core.ACCOUNT) if np.isfinite(D["DV1"][t, j]) else 0.0
     return first, r, s.prio, w
 
 
