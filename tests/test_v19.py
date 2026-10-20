@@ -142,3 +142,41 @@ def test_intraday_triggers() -> None:
     assert v19.trigger("vwaploss", -1, b, line, ok)[0] == -1  # nothing before minute 15
     b = _bars([10.5] * 20 + [9.8] * 10)
     assert v19.trigger("vwaploss", -1, b, np.full(30, 10.0), np.ones(30, bool)) == (21, pytest.approx(9.8))
+
+
+def test_slippage_on_stop_type_fills_only() -> None:
+    b = _bars([10.0, 10.2, 10.4, 10.1, 9.7, 9.5, 9.4, 9.3])
+    line, ok = np.full(8, 10.0), np.ones(8, bool)
+    try:
+        v19.set_costs("r1", 0.5)
+        j, e = v19.trigger("orl1", -1, b, line, ok)
+        assert j == 4 and e == pytest.approx(9.7)  # opened below the level: the open, no slippage
+        m = np.arange(4, dtype=np.int16)
+        o, c = np.array([10.0, 10.0, 10.0, 9.9]), np.array([10.0, 10.0, 9.95, 9.9])
+        b2 = (m, o, o + 0.01, np.array([9.99, 9.995, 9.90, 9.85]), c, np.full(4, 1e3), c)
+        j, e = v19.trigger("orl1", -1, b2, np.full(4, 9.0), np.ones(4, bool))
+        assert j == 2 and e == pytest.approx(9.99 + 0.5 * (9.90 - 9.99))  # halfway to the bar's low
+        b3 = _bars([10.0, 9.0, 9.0, 10.8, 10.8])
+        px, _ = v19.session_exit(-1, 1, 9.0, 10.5, "close", b3, b3[4], 12.0)
+        assert px == pytest.approx(10.8)  # opened above the stop: the open
+        b4 = _bars([10.0, 9.0, 10.4, 10.8])
+        b4 = (b4[0], b4[1], np.array([10.01, 9.009, 10.9, 10.81]), b4[3], b4[4], b4[5], b4[6])
+        px, _ = v19.session_exit(-1, 1, 9.0, 10.5, "close", b4, b4[4], 12.0)
+        assert px == pytest.approx(10.5 + 0.5 * (10.9 - 10.5))
+        px, _ = v19.session_exit(-1, 1, 9.8, 10.3, "r2", _bars([10.0, 9.8, 9.6, 9.2, 8.5, 8.0]), np.full(6, 9.0), 12.0)
+        assert px == pytest.approx(8.5)  # a target is a limit order: no slippage
+    finally:
+        v19.set_costs("r1", 0.0)
+
+
+def test_realistic_costs() -> None:
+    try:
+        v19.set_costs("r3", 0.0)
+        cost, avail = v19._costs(np.array([3.0, 3.0]), np.array([2e7, 2e7]), np.array([-1, 1]), np.array([2, 2]),
+                                 np.array([1, 0]), {("2-5", "10-50M"): (0.9, 40.0, 50)}, 1.0, 1.0, False)
+        comm = 2 * 0.0065 / 3.0 + 0.0000278 + 0.000166 / 3.0
+        assert cost[0] == pytest.approx(0.0036 * 2.5 + comm + 100.0 / 100 / 360 * 2)  # fee max(2 x 40, 100)
+        assert cost[1] == pytest.approx(0.0036 * 2 + comm)  # a long pays no borrow
+        assert avail.tolist() == pytest.approx([0.72, 1.0])
+    finally:
+        v19.set_costs("r1", 0.0)

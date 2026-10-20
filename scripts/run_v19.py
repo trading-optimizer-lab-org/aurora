@@ -39,6 +39,8 @@ R16, R14 = R18.R16, R18.R14
 SHARDS = 300
 SEGMENT = R18.SEGMENT
 SCENARIOS = (("low", 0.5, 1.0), ("mid", 1.0, 1.0), ("high", 2.0, 3.0))  # (name, spread multiple, fee multiple)
+COST_MODELS = {"r1": ("r1", 0.0), "r3": ("r3", 0.25)}  # --costs -> (v19 cost model, stop-type slippage)
+_C = {"costs": "r1"}
 
 
 def registry() -> dict[str, tuple[str, list[dict]]]:
@@ -78,6 +80,7 @@ def _design(s: pd.Series) -> pd.Series:
 def real_returns(key: str, ci: int) -> tuple[dict, dict]:
     g = registry()[key][1][ci]
     dates = R14._G["D"]["dates"]
+    model, slip = COST_MODELS[_C["costs"]]
     trades, book = _books(key, g)
     real, stats = {}, {"signals": len(trades)}
     for sc, spread, fee in SCENARIOS:
@@ -85,6 +88,12 @@ def real_returns(key: str, ci: int) -> tuple[dict, dict]:
         real[sc] = s
         if sc == "mid":
             stats.update(v19.trade_stats(paths, taken, dates))
+    if slip:  # the gross record has no costs at all, slippage included
+        v19.set_costs(model, 0.0)
+        try:
+            book = _books(key, g)[1]
+        finally:
+            v19.set_costs(model, slip)
     real["gross"] = book(0.0, 1.0, True)[0]
     return {k: _design(v) for k, v in real.items()}, stats
 
@@ -128,6 +137,8 @@ def _run(units: list, args) -> int:
     if core.last_day() != core.SEALED_END:
         raise SystemExit("v19 runs on the whole sample: the unlock must be set")
     load(args.inputs)
+    _C["costs"] = args.costs
+    v19.set_costs(*COST_MODELS[args.costs])
     mine = units[args.shard::args.shards]
     print(f"shard {args.shard}: {len(mine)} units", flush=True)
     if args.workers > 1 and os.name != "nt":
@@ -249,8 +260,9 @@ def cmd_report(args) -> int:
     R14.units = lambda: [(k, i, 0) for k, i in configs()] + [(k, i, b) for k, i in _names(",".join(sel["names"]))
                                                             for b in range(R14.N_BLOCKS)]
     args.exclude = []
-    args.title = (f"v19: small caps, entry x exit grids ({len(configs())} configurations, walk-forward 2018-2026, "
-                  "pre-registered)")
+    costs = " with realistic costs (R3, amendment)" if args.costs == "r3" else ""
+    args.title = (f"v19{'r' if costs else ''}: small caps, entry x exit grids{costs} ({len(configs())} "
+                  "configurations, walk-forward 2018-2026, pre-registered)")
     rc = R14.cmd_report(args)
     summary = json.loads((args.out / "summary.json").read_text(encoding="utf-8"))
     streams = pd.read_parquet(args.out / "streams.parquet")
@@ -325,6 +337,7 @@ def main() -> int:
         s.add_argument("--workers", type=int, default=4)
         s.add_argument("--inputs", type=Path, default=Path("outputs/v18"))
         s.add_argument("--out", type=Path, required=True)
+        s.add_argument("--costs", choices=sorted(COST_MODELS), default="r1")
         if name == "placebo":
             s.add_argument("--selected", required=True, help="comma-separated key|ci names")
     s = sub.add_parser("select")
@@ -336,6 +349,7 @@ def main() -> int:
     r.add_argument("--parts", type=Path, required=True)
     r.add_argument("--selected", type=Path, required=True)
     r.add_argument("--out", type=Path, default=Path("outputs/v19/report"))
+    r.add_argument("--costs", choices=sorted(COST_MODELS), default="r1")
     args = ap.parse_args()
     return {"real": cmd_real, "placebo": cmd_placebo, "select": cmd_select, "report": cmd_report}[args.cmd](args)
 

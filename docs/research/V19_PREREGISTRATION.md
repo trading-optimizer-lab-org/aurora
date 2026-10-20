@@ -113,3 +113,29 @@ Total 5,542 configurations; every one counts as a trial for the deflated Sharpe.
 - Borrow availability and fees come from a 2026 IBKR snapshot by price and size cells, not from each stock on each day.
 - The minute store holds the regular session of event days only; overnight and multi-day intraday exits continue on
   the daily bars.
+
+## Amendment after the v19 run (2026-10-20): v19r, realistic costs
+
+At the owner's request ("pon los costes mas realistas posibles aunque no sean exactos 100%") the same 5,542
+configurations run again as **v19r** under a realistic cost model, R3, written here before any v19r result:
+
+- **Measured spreads, not a table.** The mean quoted half-spread (winsorised at the 99th percentile) of 20,820 trade
+  legs of small caps on their event days (Alpaca SIP quotes of the v17 quote study; `scripts/run_v19_costs.py`, run
+  39461295472): under $2 0.48%, $2-5 0.36%, $5-10 0.33%, $10-20 0.37%, paid on each leg. A leg at the open (an entry
+  at the first bar or at the daily open, a next-open exit) pays 1.5 times that: no quotes were measured in the first
+  five minutes, when spreads are widest.
+- **Slippage.** A stop-type fill (a breakout entry at a level, a stop, a trailing stop; intraday and on daily bars)
+  fills a quarter of the way from the level to the bar's extreme beyond it, or at the open if the bar opens beyond
+  it. Targets and the prior close are limit orders and fill at their level.
+- **Commissions and fees.** IBKR Pro tiered, all in (commission, exchange and clearing), $0.0065 a share on each leg,
+  at most 1% of its value, plus the SEC fee (0.00278% of a sale) and FINRA's trading activity fee ($0.000166 a share
+  sold).
+- **Borrow.** The IBKR snapshot was taken weeks after the events, when borrowing is easier and cheaper than on the
+  event day, so each cell's availability is multiplied by 0.8 and its fee doubled, with a floor of 100% a year,
+  charged per night held.
+- **Scenarios.** Low = half-spreads x0.5; middle = R3; high = half-spreads x2 and borrow fees x3 on top of R3; gross =
+  no costs and no slippage. The walk-forward, the selection, the placebos (at the middle costs) and the criterion are
+  unchanged. The v19 results under R1 stay as they are; both are reported.
+
+The quarter-of-the-bar slippage, the x0.8 availability and the doubled fee with its floor are judgement, not
+measurement; they are fixed here before the run.
