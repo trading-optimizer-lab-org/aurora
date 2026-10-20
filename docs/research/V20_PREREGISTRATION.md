@@ -73,8 +73,11 @@ Total 38,762 configurations; every one counts as a trial for the deflated Sharpe
 
 ## 5. Running
 
-300 shards x 4 processes (the configurations dealt round-robin), about 3-4 hours of computing; a shard starts no
-configuration after 320 minutes, and any configuration not computed is reported. One report job.
+A canary job first runs the first and the last configuration of every family on the real inputs (5 placebos);
+the shards start only if it has no error. Then 600 shards x 4 processes (the configurations dealt round-robin), with
+no time limit of our own, so that every configuration is computed (changed before any result at the owner's request:
+"quita este limite, prefiero que tarde mas para que termine todo al completo"); 600 shards keep each one far below
+GitHub's 6-hour limit per job, and the shards that do not fit at once wait in the queue. One report job.
 
 ## 6. Known limits
 

@@ -39,7 +39,7 @@ def _script(name: str):
 
 R19 = _script("run_v19")
 R16, R14 = R19.R16, R19.R14
-SHARDS, REPS, SLIP = 300, 200, 0.25
+SHARDS, REPS, SLIP = 600, 200, 0.25
 SEGMENT = ("2023-07-01", "2026-10-16")
 WINDOWS = ("all", *range(2018, 2027))  # placebo Sortino windows: the whole period, and the months before each year
 
@@ -139,7 +139,7 @@ def cmd_shard(args) -> int:
         raise SystemExit("v20 runs on the whole sample: the unlock must be set")
     t0 = time.time()
     R19.load(args.inputs)
-    deadline = t0 + args.minutes * 60
+    deadline = t0 + args.minutes * 60 if args.minutes else np.inf
     mine = [(k, i, deadline) for k, i in configs()[args.shard::args.shards]]
     if args.canary:  # the first and the last configuration of every family, with 5 placebos, on the real inputs
         global REPS
@@ -505,7 +505,7 @@ def main() -> int:
     s.add_argument("--shard", type=int, required=True)
     s.add_argument("--shards", type=int, default=SHARDS)
     s.add_argument("--workers", type=int, default=4)
-    s.add_argument("--minutes", type=float, default=320.0, help="start no configuration after this many minutes")
+    s.add_argument("--minutes", type=float, default=None, help="start no configuration after this many minutes")
     s.add_argument("--inputs", type=Path, default=Path("outputs/v18"))
     s.add_argument("--out", type=Path, required=True)
     s.add_argument("--canary", action="store_true")
