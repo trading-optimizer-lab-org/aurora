@@ -37,7 +37,7 @@ downloads): 300 shards x 4 processes, 4,576 of 4,576 units (v14-v17), no errors.
 | S1 | 6.55 | 6.48 | 18.8% | -6.4% |
 | B8R1 | 5.50 | 5.91 | 23.3% | -6.0% |
 
-Run 39419245445. The quoted half-spreads of these trades are at or below the price-tier table for stocks under $10 and about twice the table at $10-20; with each trade's own measured cost S1 makes 6.48 and B8R1 5.91 over the design period, so the spread table did not flatter them, and spreads are not why they failed the sealed test.
+Run 39419245445. The quoted half-spreads of these trades are below the price-tier table under $5, close to it at $5-10 (0.24% against 0.20%) and about twice it at $10-20; with each trade's own measured cost S1 makes 6.48 and B8R1 5.91 over the design period, so the spread table did not flatter them, and spreads are not why they failed the sealed test.
 
 ## Full report
 
