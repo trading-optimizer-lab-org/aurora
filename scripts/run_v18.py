@@ -67,6 +67,10 @@ def load(v14_inputs: Path, v15_inputs: Path, v16_inputs: Path, v17_inputs: Path,
     R16._W["E"].update(R14.PREP.load(v18_inputs / "extras.pkl"))
 
 
+def _fee3(table: dict) -> dict:
+    return {k: (v[0], v[1] * 3 if np.isfinite(v[1]) else v[1], v[2]) for k, v in table.items()}
+
+
 def real_and_placebo(key: str, ci: int, block: int) -> tuple[dict, dict, dict]:
     kind, cfgs = registry()[key]
     g = cfgs[ci]
@@ -93,8 +97,9 @@ def real_and_placebo(key: str, ci: int, block: int) -> tuple[dict, dict, dict]:
     elif kind == "daily":
         sp, weight, max_open = v18.daily_specs(D, E, key, g)
         if block == 0:
-            for sc, mult in (("low", 0.5), ("mid", 1.0), ("high", 2.0)):
+            for sc, mult in (("low", 0.5), ("mid", 1.0)):
                 real[sc] = v16.daily_book(D, sp, table, mult, weight, max_open)
+            real["high"] = v16.daily_book(D, sp, _fee3(table), 2.0, weight, max_open)  # v18b: fees x3 too
             keep = core.COMMISSION
             try:
                 core.COMMISSION = 0.0
@@ -108,8 +113,9 @@ def real_and_placebo(key: str, ci: int, block: int) -> tuple[dict, dict, dict]:
             plac[rep] = v16.daily_book(D, vs.placebo_specs(D, key, sp, rng), table, 1.0, weight, max_open)
     elif kind == "weekly":
         if block == 0:
-            for sc, mult in (("low", 0.5), ("mid", 1.0), ("high", 2.0)):
+            for sc, mult in (("low", 0.5), ("mid", 1.0)):
                 real[sc] = v18.weekly(D, E, key, g, table, mult)
+            real["high"] = v18.weekly(D, E, key, g, _fee3(table), 2.0)
             real["gross"] = v18.weekly(D, E, key, g, {k: (v[0], 0.0, v[2]) for k, v in table.items()}, 0.0)
         for rep in reps:
             rng = np.random.default_rng(R14._seed(key, ci, rep))

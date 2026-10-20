@@ -43,10 +43,31 @@ def load(path: Path):
 
 # ---------------------------------------------------------------- daily arrays
 
-def daily_arrays(alp: Path, end: pd.Timestamp) -> dict:
+def duplicates(df: pd.DataFrame, min_days: int = 20) -> set[str]:
+    """Symbols whose bars repeat another symbol's (same day, close and volume) on at least ``min_days`` days, e.g.
+    the old and new ticker of a renamed company; of each pair the one with fewer bars is dropped."""
+    from collections import Counter
+    from itertools import combinations
+    k = df.loc[df["v"] > 0, ["date", "c", "v", "symbol"]]
+    groups = k.groupby(["date", "c", "v"])["symbol"].agg(lambda x: tuple(sorted(set(x))))
+    groups = groups[groups.map(len) > 1]
+    pairs: Counter = Counter()
+    for syms in groups:
+        pairs.update(combinations(syms, 2))
+    n = df.groupby("symbol").size()
+    return {a if n[a] < n[b] else b for (a, b), c in pairs.items() if c >= min_days}
+
+
+def daily_arrays(alp: Path, end: pd.Timestamp, clean: bool = False) -> dict:
     df = pd.read_parquet(alp / "daily.parquet", columns=["symbol", "date", "o", "h", "l", "c", "v", "c_split"])
     df["symbol"] = df["symbol"].astype(str)
     df = df[(df["date"] >= FIRST) & (df["date"] <= end)].drop_duplicates(["symbol", "date"])
+    if clean:  # v18b: no warrants, rights or units (Nasdaq fifth letter W, R, U) and no duplicated series
+        wru = df["symbol"].str.len().eq(5) & df["symbol"].str[-1].isin(["W", "R", "U"])
+        dup = duplicates(df[~wru])
+        print(json.dumps({"dropped_warrants_rights_units": int(df.loc[wru, "symbol"].nunique()),
+                          "dropped_duplicates": len(dup)}), flush=True)
+        df = df[~wru & ~df["symbol"].isin(dup)]
     cal = pd.DatetimeIndex(sorted(df.loc[df["symbol"] == "SPY", "date"].unique()))
     liquid = df[(df["c"] >= 1) & (df["c"] * df["v"] >= 1e6)].groupby("symbol").size()
     df = df[df["symbol"].isin(liquid.index[liquid >= 5])]
@@ -371,9 +392,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", type=Path, default=Path("outputs/v14"))
     ap.add_argument("--out", type=Path, default=Path("outputs/v14/inputs"))
+    ap.add_argument("--clean", action="store_true", help="v18b: drop warrants, rights, units and duplicated series")
     args = ap.parse_args()
     end = core.last_day()
-    D = daily_arrays(args.data / "alpaca", end)
+    D = daily_arrays(args.data / "alpaca", end, clean=args.clean)
     print(json.dumps({"dates": len(D["dates"]), "symbols": len(D["cols"]), "end": str(end.date())}), flush=True)
     D["events"] = stock_events(args.data / "sec", D)
     cands, idx_bars = minute_store(args.data / "alpaca", D, args.out)

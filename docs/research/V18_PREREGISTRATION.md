@@ -105,3 +105,12 @@ while its stock fell (and a long trimmed while it rose). A real position is open
 on the price at the rebalance. Intraday and one-night trades were not affected. The rules and grids are unchanged;
 v18 is rerun in full, and the multi-day results of v14-v17 (B10-B14, C18-C22, S7-S11, L6-L8, N11) carry the same
 error and are flagged in their results.
+
+## Amendment after the diagnostic (v18b, 2026-10-20, run 3)
+
+The trade-level diagnostic of the second run (39431219007) found warrants, rights and units among the traded
+symbols (2-6% of the multi-day trades) and renamed companies counted twice (the old and the new ticker carry the
+same bars; 1.5-2.4% of the trades). v18b drops every symbol with a Nasdaq fifth letter W, R or U and, of each pair of
+symbols whose bars repeat each other (same day, close and volume on 20 or more days), the one with fewer bars. The
+high-cost scenario of the daily and weekly families now also triples the calibrated borrow fees (spreads x2 as
+before), because the stocks these shorts take are among the most expensive to borrow. Rules and grids are unchanged.
