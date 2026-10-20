@@ -43,7 +43,7 @@ so that segment is out of sample for the selection rule but not for the research
 
   The first diagnostic flagged a split-factor change inside 26-35% of the W1/W2 trades; measured in log terms
   almost all of it is rounding noise (median change 0.01-0.02%). Real splits (a change above 1%) are 0.2-1.4% of the
-  trades; they earn more (+56% to +64% a trade) but are too few to move the results. At 5% a position the worst W2
+  trades; in W1 and W2 they earn more (+61% and +64% a trade) but are too few to move the results. At 5% a position the worst W2
   trade (-609%) costs about 30% of the account.
 - **The small-cap longs, again, lost** after costs (G1-G9: walk-forward Sortino from -2.18 to 0.16 at middle
   costs). Before costs only G1 (0.86) and G5 (0.66) were clearly positive, and the inverted losers (G6) made 0.86
