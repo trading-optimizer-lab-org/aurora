@@ -58,7 +58,7 @@ DAILY_DIMS = {
     "ON2_NIGHTLONG": {"setup": ("strong20", "strong30", "strong50", "crash20", "crash40"),
                       "exit": ("next_open", "next_close", "close3"), "band": BANDS},
 }
-CARRY = {"next_open": 1, "d3": 2, "d5": 4}  # sessions held after the entry day
+CARRY = {"next_open": 1, "d2": 1, "d3": 2, "d4": 3, "d5": 4, "d7": 6}  # sessions held after the entry day
 
 # Cost model: "r1" (v15-v18: price-tier half-spreads, $0.005 a share, the IBKR cells as they are) or "r3" (the
 # realistic model of the v19 amendment: measured half-spreads, 1.5x at the open, IBKR tiered commissions and the
@@ -552,9 +552,9 @@ def _recent(mask: np.ndarray, val: np.ndarray, k: int = K_AFTER) -> tuple[np.nda
 def _exit_terms(g: dict) -> tuple[float, float, float, str]:
     stop = np.nan if g.get("stop", "none") == "none" else float(g["stop"])
     ex = g.get("exit", "time")
-    target = {"target50": 0.5, "target30": 0.3}.get(ex, np.nan)
-    trail = 0.2 if ex == "trail20" else np.nan
-    rule = ex if ex in ("strength", "weak", "ma10") else "time"
+    target = int(ex[6:]) / 100 if ex.startswith("target") else np.nan
+    trail = int(ex[5:]) / 100 if ex.startswith("trail") else np.nan
+    rule = ex if ex in ("strength", "weak", "ma10", "open1") else "time"
     return stop, target, trail, rule
 
 
@@ -565,6 +565,8 @@ def _setup_trigger(D: dict, S: np.ndarray, val: np.ndarray, trig: str) -> list[t
     with np.errstate(invalid="ignore"):
         if trig == "open":
             return [(t + 1, j, "open", float(val[t, j])) for t, j in zip(*np.nonzero(S)) if t + 1 < T]
+        if trig == "close_c":  # at the setup day's own close
+            return [(t, j, "close", float(val[t, j])) for t, j in zip(*np.nonzero(S)) if t + 1 < T]
         R, rv = _recent(S, val)
         cond = {"lowclose": C < vs._shift(L, 1), "redclose": C < O, "redclose_c": C < O,
                 "greenclose": C > O, "highclose": C > vs._shift(H, 1),
