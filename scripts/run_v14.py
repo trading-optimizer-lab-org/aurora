@@ -326,7 +326,9 @@ def cmd_report(args) -> int:
     fams: dict[str, list[str]] = {}
     for key, (_, cfgs) in reg.items():
         fams.setdefault(family_of(key), []).extend([key + "|" + str(i) for i in range(len(cfgs))])
-    lines = ["# v14: many independent ideas on survivorship-free data (pre-registered)", "",
+    exclude = set(getattr(args, "exclude", None) or [])
+    title = getattr(args, "title", None) or "v14: many independent ideas on survivorship-free data (pre-registered)"
+    lines = [f"# {title}", "",
              f"Units {len(meta)} of {expected}; errors {len(errors)}. Design 2016-01-04 to {end.date()} (crypto from "
              f"2018); walk-forward from 2018. Middle costs unless stated. Target: COMBO monthly Sortino 4.", ""]
     head = ("| family | WF Sortino 2018+ | 2018-20 | 2021+ | CAGR | max DD | total | low cost | high cost | "
@@ -391,6 +393,8 @@ def cmd_report(args) -> int:
     for y in range(core.WF_YEARS[0], end.year + 1):
         chosen = {}
         for fam, (picks, pv, R) in fam_picks.items():
+            if fam in exclude:
+                continue
             if y in picks and picks[y][1] >= 1.0 and np.isfinite(pv.get(y, np.nan)) and pv[y] <= 0.05:
                 chosen[fam] = R[picks[y][0]]
         members[y] = sorted(chosen)
@@ -416,7 +420,7 @@ def cmd_report(args) -> int:
     sr0 = pool.std() / np.sqrt(252) * e_max
     den = 1 - x.skew() * sr + (x.kurt() + 2) / 4 * sr ** 2
     dsr = float(norm.cdf((sr - sr0) * np.sqrt(len(x) - 1) / np.sqrt(den))) if den > 0 else np.nan
-    cpbo = combo_pbo(fam_nb, cash, end)
+    cpbo = combo_pbo({f: v for f, v in fam_nb.items() if f not in exclude}, cash, end)
     ok = bool(cs and c1 and c2 and cs["sortino"] >= 4 and c1["sortino"] >= 3 and c2["sortino"] >= 3
               and np.isfinite(cpbo["pbo"]) and cpbo["pbo"] < 0.2)
     lines += ["", "## 2. Combination (families chosen each year on earlier data only)", "",

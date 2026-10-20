@@ -61,3 +61,14 @@ intraday sizing. All 104 count as trials for the deflated Sharpe.
   the v15 families.
 - Success: as v14 for `COMBO15`. The specific question of v15: does `B8R1` keep a walk-forward Sortino of at least 4
   and pass the gate (placebo p <= 0.05 in at least two thirds of its years)?
+
+## Amendment before any result (2026-10-20): the borrow source
+
+iBorrowDesk refused every request from GitHub's servers after the first one (HTTP 444), and getting around that
+block from another machine is not done. The calibration therefore uses IBKR's own public short-stock file
+(`ftp2.interactivebrokers.com`, `usa.txt`: shares available and fee for every US symbol IBKR can lend), downloaded
+by the prepare job at run time. It is a single snapshot, not a history, so the calibration events are the v14
+small-cap event days (as in section 2) of the 60 sessions before 2026-10-16, judged with the snapshot's
+availability and fee; a symbol absent from the file counts as not borrowable; ">N" counts as N. Everything else in
+sections 2-5 is unchanged. Being a snapshot of survivors a few weeks after the events, it is probably still too
+generous for the design period.
