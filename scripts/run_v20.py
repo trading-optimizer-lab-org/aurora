@@ -141,6 +141,10 @@ def cmd_shard(args) -> int:
     R19.load(args.inputs)
     deadline = t0 + args.minutes * 60
     mine = [(k, i, deadline) for k, i in configs()[args.shard::args.shards]]
+    if args.canary:  # the first and the last configuration of every family, with 5 placebos, on the real inputs
+        global REPS
+        REPS = 5
+        mine = [(k, i, deadline) for k, (_, cfgs) in registry().items() for i in sorted({0, len(cfgs) - 1})]
     print(f"shard {args.shard}: {len(mine)} configurations", flush=True)
     if args.workers > 1 and os.name != "nt":
         with mp.get_context("fork").Pool(args.workers) as pool:
@@ -171,6 +175,10 @@ def cmd_shard(args) -> int:
     print(f"shard done in {time.time() - t0:.0f}s: {len(res)} configurations, {len(errs)} errors or skipped", flush=True)
     for e in errs[:5]:
         print("error:", e, flush=True)
+    if args.canary:
+        for m in meta:
+            print(f"canary {m['key']}|{m['ci']}: {m['sec']}s, {m.get('signals')} signals, error {m['error']}", flush=True)
+        return 1 if errs else 0
     return 0
 
 
@@ -500,6 +508,7 @@ def main() -> int:
     s.add_argument("--minutes", type=float, default=320.0, help="start no configuration after this many minutes")
     s.add_argument("--inputs", type=Path, default=Path("outputs/v18"))
     s.add_argument("--out", type=Path, required=True)
+    s.add_argument("--canary", action="store_true")
     r = sub.add_parser("report")
     r.add_argument("--inputs", type=Path, default=Path("outputs/v18/v14"))
     r.add_argument("--parts", type=Path, required=True)
