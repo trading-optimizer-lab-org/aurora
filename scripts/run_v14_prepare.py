@@ -86,8 +86,8 @@ def map_symbols(events: pd.DataFrame, hist: pd.DataFrame) -> pd.Series:
     """The ticker of each (cik, date): the latest one filed on or before the date, else the first one known."""
     ev = events[["cik", "date"]].copy()
     ev["k"] = np.arange(len(ev))
-    ev = ev.dropna().astype({"cik": np.int64}).sort_values("date")
-    h = hist.rename(columns={"filed": "date"}).sort_values("date")
+    ev = ev.dropna().astype({"cik": np.int64, "date": "datetime64[ns]"}).sort_values("date")
+    h = hist.rename(columns={"filed": "date"}).astype({"date": "datetime64[ns]"}).sort_values("date")
     back = pd.merge_asof(ev, h, on="date", by="cik", direction="backward")
     fwd = pd.merge_asof(ev, h, on="date", by="cik", direction="forward")
     sym = back.set_index("k")["symbol"].combine_first(fwd.set_index("k")["symbol"])
