@@ -60,3 +60,40 @@ CPCV over 252 splits: PBO 53%; test Sortino of the chosen configuration: median 
 Yearly choices (WF_ONE): 2018: V13_MIX1_XQ3_20_M1_R0.5_C35_M8 (5.44); 2019: V13_MIX3_XQ3_20_M1_R0.5_C35_M8 (3.07); 2020: V13_MIX3_XQ5_20_M1_N50_R1_C35_M8 (1.37); 2021: V13_MIX3_XQ3_20_M1_N50_R1_C35_M0 (3.89); 2022: V13_MIX3_XQ3_20_M1_N50_R0.5_C35_M8 (3.93); 2023: V13_MIX3_XQ3_20_M1_R0.5_C35_M0 (3.21); 2024: V13_MIX3_XQ3_20_M1_R0.5_C35_M0 (2.65); 2025: V13_MIX3_XQ3_20_M1_N50_R1_C20_M0 (3.22); 2026: V13_MIX3_XQ3_20_M1_N50_R1_C35_M8 (4.44)
 
 Diversifiers chosen each year (score, kept if >= 1.5): crypto 2018: donchian_20_10 (6.79); 2019: btc_buy_hold (1.43); 2020: ma_ensemble_alts (1.42); 2021: ma_ensemble (4.45); 2022: ma_ensemble (3.31); 2023: tsmom_28 (2.20); 2024: ma_ensemble_alts (3.16); 2025: ma_ensemble_alts (3.11); 2026: tsmom_28 (2.67); index trend 2018: LT_SPY_L1_SMA200_W_V0_IEF (4.42); 2019: LT_QQQ_L1_SMA150_W_V20_IEF (1.33); 2020: LT_QQQ_L1_SMA50_W_V0_IEF (1.57); 2021: LT_QQQ_L1_SMA150_W_V30_IEF (1.91); 2022: LT_QQQ_L1_SMA150_W_V20_IEF (1.59); 2023: LT_QQQ_L3_SMA150_W_V20_CASH (1.18); 2024: LT_QQQ_L1_SMA150_W_V20_CASH (1.37); 2025: LT_QQQ_L3_NONE_W_V20_CASH (1.41); 2026: LT_QQQ_L1_SMA200_W_V20_CASH (1.46).
+
+## Diagnostic after the run (not pre-registered; the verdict above stands)
+
+GitHub runs 39374599437 and 39376623416, `scripts/run_v13_diag.py`: the same 144 configurations and walk-forward on
+subsets of the full panel (the model's top-N re-ranked inside each subset), the trades of one fixed configuration
+(`V13_MIX3_XQ3_20_M1_R1_C35_M8`, the v11 pick's settings) by ticker group, and a price comparison.
+
+| subset of the full panel | tickers | WF_ENS5 2018-26 | 2018-21 | 2022-26 | CAGR | max DD | median of the 144 |
+|---|---|---|---|---|---|---|---|
+| all (reproduces the run) | 7,052 | 0.61 | 0.54 | 0.65 | 7.2% | -68.7% | 0.71 |
+| earlier list only | 3,910 | 5.08 | 5.12 | 5.11 | 40.9% | -31.2% | 3.49 |
+| earlier list + inactive | 4,856 | 3.51 | 2.86 | 4.86 | 33.5% | -45.1% | 2.74 |
+| active only | 6,106 | 1.23 | 0.91 | 1.47 | 15.5% | -49.8% | 0.84 |
+| no warrants, units, rights or funds | 5,799 | 0.32 | 0.59 | 0.16 | 2.4% | -71.3% | 0.63 |
+| operating companies only | 5,706 | 0.36 | 0.59 | 0.23 | 2.9% | -71.3% | 0.63 |
+
+Trades of the fixed configuration on the full panel (return per piece, weighted by the fraction sold):
+
+| group | pieces | tickers | mean return | profit factor | share below -20% |
+|---|---|---|---|---|---|
+| earlier list, operating | 1,325 | 663 | +4.2% | 2.07 | 0.8% |
+| not in the list, still active, operating | 576 | 293 | -2.2% | 0.74 | 5.9% |
+| inactive (delisted), operating | 140 | 85 | -2.4% | 0.43 | 1.4% |
+| funds (all groups) | 51 | 34 | +7.4% | 3.83 | 0.0% |
+| warrants, rights, units (all groups) | 9 | 7 | -3.0% | 0.48 | 11.1% |
+
+- **Not a data artefact.** The full subset reproduces the run exactly; the earlier list's daily returns match between
+  the two panels (median share of days differing by more than 2%: 0.0; 25 of 1,736 tickers above 1%).
+- **Not the instrument type.** Warrants and funds are a handful of trades; removing them makes it worse (funds were
+  winners).
+- **The earlier list itself is the edge.** The same rules on operating companies that are not in the list lose
+  money in every listing cohort (listed by 2016: PF 1.08 against 1.76 for the list; 2016-2020: 0.51 against 3.30;
+  2021 on: 0.87 against 1.18). The list was compiled after the fact from stocks that still had data at its creation,
+  so membership carries information about the future; delisted stocks add a further loss (5.08 -> 3.51 when added).
+- **Consequence:** the stock results of phases 1-7 and v10-v12, and the v11 pick's 3.59, were measured on this
+  list and are inflated. The honest estimate of the Qullamaggie-style book is a Sortino of about 0.6-1.2, at or below
+  SPY's 1.17 over the same years.
