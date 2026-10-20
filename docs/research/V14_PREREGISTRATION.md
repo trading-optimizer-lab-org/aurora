@@ -170,3 +170,25 @@ sessions. The placebo p-value is the share of runs whose design Sortino is at le
   Sortino >= 4 = success, 3-4 = promising, below 3 = failure.
 - Reported for everything: Sortino, CAGR, maximum drawdown, total, profit factor where trades exist, every year, the
   three cost scenarios, placebo p-values, PBO, deflated Sharpe.
+
+## Amendments while writing the code (2026-10-20, before any v14 result was computed)
+
+1. **Daily-bar shorts and the short-sale restriction:** a short opened at a daily open 10% or more below the prior
+   close pays 0.5% more (the minute rule applies only to the intraday families).
+2. **C16 noise area:** at each check, long when the price is above the upper band and above VWAP, short below the
+   lower band and below VWAP, otherwise flat. Its placebo flips the sign of each day at random (its position is
+   decided within the day, so it cannot be shifted).
+3. **D25:** the two variants are {short the leader and long the laggard, 50% each; long the laggard only}.
+4. **D24 turn of the month:** held over the last {1, 4} sessions of each month and the first 3 of the next.
+5. **E30 funding:** the short leg is a short perpetual: minus the spot return plus three times the day's mean
+   funding rate.
+6. **Combination, year Y:** a family enters if the configuration its walk-forward picks for Y has a plateau score
+   of at least 1.0 and a placebo p-value of at most 0.05, both on months before Y. (This replaces "passed the gate
+   on data before that year and trailing Sortino >= 1.0", which needs a stream history before 2018.)
+7. **PBO of the combination:** in each of the 252 CPCV splits, every family's best plateau configuration on the
+   training blocks enters if its training score is at least 1.0, with inverse-volatility weights (cap 35%) from the
+   training months; the combination's test Sortino is ranked among the test Sortinos of all configurations; PBO =
+   share of splits where it ranks below the median.
+8. Crypto families start their walk-forward in 2019 (a year of training is needed from 2018). The intraday and swing
+   stock families use the symbols that had a price of $1 or more and a dollar volume of $1M or more on at least 5
+   days; B10 and the small-cap part of C18 use the day's own close and dollar volume (known at the close they trade).
