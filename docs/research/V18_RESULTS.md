@@ -32,6 +32,19 @@ so that segment is out of sample for the selection rule but not for the research
   configurations wins is unstable); (3) no stop was better than a 50% stop for W1, and W2 had none: squeezes and
   gaps make single losses of -200% to -330% on a position; (4) the deflated Sharpe is 0.00 over all trials of the
   search; (5) the 2023-07+ segment is not clean for the researcher.
+- **Trade level** (diagnostic run 39439614671 on the clean universe; trades of the configuration chosen for each
+  year, middle costs with borrow, return on the position before weighting):
+
+| family | trades a month | mean | median | win rate | worst trade | real split inside |
+|---|---|---|---|---|---|---|
+| H2 | 6.5 | +4.5% | +5.2% | 71% | -133% | 0.6% of trades |
+| W1 | 9.0 | +9.3% | +15.1% | 69% | -249% | 0.2% |
+| W2 | 9.0 | +19.3% | +29.4% | 76% | -609% | 1.4% |
+
+  The first diagnostic flagged a split-factor change inside 26-35% of the W1/W2 trades; measured in log terms
+  almost all of it is rounding noise (median change 0.01-0.02%). Real splits (a change above 1%) are 0.2-1.4% of the
+  trades; they earn more (+56% to +64% a trade) but are too few to move the results. At 5% a position the worst W2
+  trade (-609%) costs about 30% of the account.
 - **The small-cap longs, again, lost** after costs (G1-G9: walk-forward Sortino from -2.18 to 0.16 at middle
   costs). Before costs only G1 (0.86) and G5 (0.66) were clearly positive, and the inverted losers (G6) made 0.86
   gross but 0.14 after costs: a small edge in the short direction that the spreads of these stocks eat.
