@@ -4,7 +4,7 @@ name: v18 small caps wide (pre-registered)
 # shards x 4 processes (302 configurations, 200 placebos each) -> report. The window after 2023-06 was opened at
 # the owner's request (sealed test, 2026-10-20); v18 uses the whole sample. Market data stays in the Actions cache;
 # the shards upload strategy returns only. Started by a change to this file.
-# run: 1
+# run: 2 (multi-day bookkeeping fixed)
 on:
   push:
     branches: [research/stock-catalog]

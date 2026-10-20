@@ -105,7 +105,7 @@ def test_fade_short_finds_spike_and_stops() -> None:
     assert len(sp) == 1 and sp[0].t == 11 and sp[0].side == -1
     first, r, _, w = vs.path(D, sp[0], "low")
     assert first == 11 and len(r) == 2
-    assert r[1] == pytest.approx(-(30.0 / 18.0 - 1))  # stopped at the open above the 28.5 stop
+    assert r[1] == pytest.approx(-(30.0 - 18.0) / 19.0)  # stopped at the open above the 28.5 stop, on the entry
 
 
 def test_overnight_short_holds_one_night() -> None:
@@ -141,3 +141,18 @@ def test_walk_forward_uses_only_earlier_years() -> None:
     cash = pd.Series(0.0, index=ix)
     wf, picks = core.walk_forward(R, cash, [[0], [1]], end=pd.Timestamp("2019-12-31"))
     assert picks[2018][0] == "a"
+
+
+def test_short_gain_is_capped_by_the_entry_price() -> None:
+    D = _daily(40)
+    D["C"][10, 2] = D["H"][10, 2] = 20.0
+    for k, px in enumerate(np.linspace(19.0, 1.0, 20)):
+        D["O"][11 + k, 2] = D["C"][11 + k, 2] = px
+        D["H"][11 + k, 2], D["L"][11 + k, 2] = px * 1.01, px * 0.99
+    D["P"] = D["C"].copy()
+    D["P1"] = np.vstack([np.full((1, 3), np.nan), D["P"][:-1]])
+    sp = [s for s in vs.specs(D, "B12_FADE", {"up": 0.5, "hold": 20, "stop": 1.0}) if s.j == 2]
+    first, r, _, _ = vs.path(D, sp[0], "low")
+    gain = r.sum() + core.stock_cost(np.array([19.0]), "low")[0] + core.short_cost(
+        np.array([19.0]), np.array([len(r) - 1]), "low")[0]
+    assert gain == pytest.approx((19.0 - 1.0) / 19.0) and gain < 1.0

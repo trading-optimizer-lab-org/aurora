@@ -212,7 +212,8 @@ def week_rev(D: dict, E: dict, g: dict, table: dict, spread: float, rng: np.rand
                 pav, fee = v15.lookup(table, px, D["SO"][a, names])
                 w = w * pav
                 cost = cost + fee / 100 / 360 * 7
-            rr = np.nan_to_num(r1[a + 1:b + 1][:, names], nan=0.0)
+            # P&L on the price at the rebalance: positions are not resized within the holding period
+            rr = np.nan_to_num((C[a + 1:b + 1][:, names] - C[a:b][:, names]) / C[a, names], nan=0.0)
             out[a + 1:b + 1] += side * (rr * w).sum(axis=1)
             out[a + 1] -= float((w * cost).sum())
     return pd.Series(out, index=dates)

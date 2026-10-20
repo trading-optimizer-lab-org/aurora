@@ -95,3 +95,13 @@ the yearly inclusion rule. `COMBO18` = the v18 families. Success: COMBO18 walk-f
 2018-01-01 to 2026-10-16, >= 3 in both 2018-2020 and 2021-2026, PBO < 20%, and >= 3 over 2023-07-01 to 2026-10-16
 (reported with the caveat of section 1). Reported for every family: walk-forward, halves, the 2023-07+ segment, the
 gross record, the three spread levels, placebo years, PBO.
+
+## Amendment after the first run (2026-10-20): a bookkeeping error, fixed before the rerun
+
+The first run (39423482318) showed W2 `SUPERNOVA` at +70,553% over 2018-2026. The cause was in the multi-day
+books shared with v14-v17: each day's return was taken on a constant weight, as if a short were topped up every day
+while its stock fell (and a long trimmed while it rose). A real position is opened once, so a short can make at most
+100%. From now on each day's P&L is measured on the entry price (`research/v14_swing.py`) and, in the weekly books,
+on the price at the rebalance. Intraday and one-night trades were not affected. The rules and grids are unchanged;
+v18 is rerun in full, and the multi-day results of v14-v17 (B10-B14, C18-C22, S7-S11, L6-L8, N11) carry the same
+error and are flagged in their results.

@@ -182,6 +182,8 @@ def path(D: dict, s: Spec, scenario: str, w_max: float = 0.05,
         stop = entry * (1 + s.stop) if side < 0 else entry * (1 - s.stop)
     else:
         stop = np.nan
+    # each day's P&L is measured on the entry price: the position is opened once and not resized, so a short can
+    # make at most 100% and a long's weight grows with its price (no daily rebalancing to a constant weight)
     rets, prev = [], entry
     last = min(T - 1, t + s.hold - 1) if s.kind != "close" else min(T - 1, t + 1)
     for u in range(first, last + 1):
@@ -191,15 +193,15 @@ def path(D: dict, s: Spec, scenario: str, w_max: float = 0.05,
         if not np.isfinite(c):
             break
         if s.kind == "close" and u == first:  # held overnight only, out at the next open
-            rets.append(side * (o / prev - 1) if np.isfinite(o) else 0.0)
+            rets.append(side * (o - prev) / entry if np.isfinite(o) else 0.0)
             break
         if np.isfinite(stop):
             hit = (h >= stop) if side < 0 else (lo <= stop)
             if hit:
                 px = stop if (u == first and s.kind != "close") else (max(o, stop) if side < 0 else min(o, stop))
-                rets.append(side * (px / prev - 1))
+                rets.append(side * (px - prev) / entry)
                 break
-        rets.append(side * (c / prev - 1))
+        rets.append(side * (c - prev) / entry)
         prev = c
     if not rets:
         return None
