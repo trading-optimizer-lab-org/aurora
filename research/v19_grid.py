@@ -582,7 +582,7 @@ def _exit_terms(g: dict) -> tuple[float, float, float, str]:
     ex = g.get("exit", "time")
     target = int(ex[6:]) / 100 if ex.startswith("target") else np.nan
     trail = int(ex[5:]) / 100 if ex.startswith("trail") else np.nan
-    rule = ex if ex in ("strength", "weak", "ma10", "open1") else "time"
+    rule = ex if ex in ("strength", "weak", "ma10", "open1", "green") else "time"
     return stop, target, trail, rule
 
 
