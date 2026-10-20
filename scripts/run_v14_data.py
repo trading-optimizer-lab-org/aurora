@@ -317,7 +317,8 @@ def cmd_coverage(args) -> int:
     daily = pd.read_parquet(args.cache / "daily.parquet", columns=["symbol", "date", "c", "v"])
     daily["symbol"] = daily["symbol"].astype(str)
     assets = pd.read_parquet(args.cache / "assets.parquet")
-    status = assets.set_index("symbol")["status"]
+    status = (assets.assign(a=assets["status"] == "active").sort_values("a", ascending=False)
+              .drop_duplicates("symbol").set_index("symbol")["status"])  # a symbol can be listed twice
     m = finra.merge(daily[["symbol", "date", "c"]], on=["symbol", "date"], how="left")
     m["has_bar"] = m["c"].notna()
     m["status"] = m["symbol"].map(status).fillna("unknown")
@@ -539,9 +540,10 @@ def _kline_zip(key: str) -> pd.DataFrame:
 
 
 def _kline_frame(frames: list[pd.DataFrame], symbol: str) -> pd.DataFrame:
+    frames = [f for f in frames if len(f)]
+    if not frames:
+        return pd.DataFrame(columns=["symbol", "time", "o", "h", "l", "c", "v", "qv"])
     df = pd.concat(frames, ignore_index=True)
-    if df.empty:
-        return df
     t = df["open_time"].to_numpy()
     t = np.where(t > 10 ** 14, t // 1000, t)  # microseconds from 2025 on
     out = pd.DataFrame({"symbol": symbol, "time": pd.to_datetime(t, unit="ms")})
