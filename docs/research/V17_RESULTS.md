@@ -21,6 +21,24 @@ downloads): 300 shards x 4 processes, 4,576 of 4,576 units (v14-v17), no errors.
   built mostly on the same small-cap gap fades whose frozen versions failed the sealed test (COMBO16 0.46 over
   2023-07 to 2026-10), so this design number should not be taken as an estimate of the future.
 
+## Cost study: quoted spreads of the gap-fade trades (design period)
+
+10417 trades; entry quotes found for 10415, exit quotes for 10405.
+
+| raw price | trades | table half-spread | measured at entry (median) | measured at exit (median) |
+|---|---|---|---|---|
+| 10-20 | 1629 | 0.10% | 0.27% | 0.21% |
+| 2-5 | 4320 | 0.40% | 0.24% | 0.26% |
+| 5-10 | 2471 | 0.20% | 0.24% | 0.24% |
+| <2 | 1997 | 0.75% | 0.39% | 0.40% |
+
+| stream | walk-forward Sortino, table costs | measured costs | CAGR measured | max DD measured |
+|---|---|---|---|---|
+| S1 | 6.55 | 6.48 | 18.8% | -6.4% |
+| B8R1 | 5.50 | 5.91 | 23.3% | -6.0% |
+
+Run 39419245445. The quoted half-spreads of these trades are at or below the price-tier table for stocks under $10 and about twice the table at $10-20; with each trade's own measured cost S1 makes 6.48 and B8R1 5.91 over the design period, so the spread table did not flatter them, and spreads are not why they failed the sealed test.
+
 ## Full report
 
 Units 4576 of 4576; errors 0. Design 2016-01-04 to 2023-06-30 (crypto from 2018); walk-forward from 2018. Middle costs unless stated. Target: COMBO monthly Sortino 4.
