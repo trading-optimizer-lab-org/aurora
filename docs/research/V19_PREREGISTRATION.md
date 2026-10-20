@@ -139,3 +139,20 @@ configurations run again as **v19r** under a realistic cost model, R3, written h
 
 The quarter-of-the-bar slippage, the x0.8 availability and the doubled fee with its floor are judgement, not
 measurement; they are fixed here before the run.
+
+## Amendment after v19r (2026-10-20): v19q, each trade's own quoted spreads
+
+At the owner's request (the next step after v19r), every trade of the v19r walk-forward picks of the COMBO19 member
+families is costed with its own quoted spreads, written here before any v19q result (`scripts/run_v19_quotes.py`):
+
+- The trades are the ones the v19r middle-cost book took, kept when their holding overlaps a year their
+  configuration was picked. Each has an entry and an exit leg: the entry minute (0 for an open entry, 389 for a close
+  entry); the exit minute of a same-day exit, 0 for a next-open exit, and the last minute (389) of the exit day for
+  every exit on a later day (a stop or target inside a daily bar has no known minute).
+- Alpaca SIP quotes of that minute give the leg's half-spread (half the median ask-bid spread over the mid, as the
+  v17 study). A leg without quotes keeps the R3 tier value (1.5x at the open).
+- Everything else is R3: slippage on stop-type fills, IBKR commissions and the SEC and FINRA fees, borrow
+  availability x0.8 and fees doubled with a 100% floor. Members and weights of COMBO19 by year are v19r's.
+- Reported: the measured half-spreads against the R3 tiers by family and leg, each family's walk-forward stream and
+  COMBO19 with the tier costs (which must reproduce v19r) and with the measured costs, and the criterion of section 4
+  on the measured COMBO19.

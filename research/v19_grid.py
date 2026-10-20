@@ -229,7 +229,13 @@ def stop_of(rule: str, side: int, b: tuple, j: int, e: float, cd: pd.Series) -> 
 
 def session_exit(side: int, j: int, e: float, stop: float, rule: str, b: tuple, line: np.ndarray,
                  pc: float) -> tuple[float, bool]:
-    """(exit price, still open at the close). A stop is always live; when a stop and a target or a trailing level
+    px, held, _ = exit_bar(side, j, e, stop, rule, b, line, pc)
+    return px, held
+
+
+def exit_bar(side: int, j: int, e: float, stop: float, rule: str, b: tuple, line: np.ndarray,
+             pc: float) -> tuple[float, bool, int]:
+    """(exit price, still open at the close, exit bar). A stop is always live; when a stop and a target or a trailing level
     are reached in the same bar, the stop is taken."""
     m, o, h, lo, c = b[0], b[1], b[2], b[3], b[4]
     hit = vi.first_true((h >= stop) if side < 0 else (lo <= stop), j)
@@ -242,31 +248,31 @@ def session_exit(side: int, j: int, e: float, stop: float, rule: str, b: tuple, 
 
     if rule in ("close",) + tuple(CARRY):
         if hit >= 0:
-            return stop_px(hit, stop), False
-        return float(c[-1]), rule != "close"
+            return stop_px(hit, stop), False, hit
+        return float(c[-1]), rule != "close", len(c) - 1
     if rule in ("vwap", "fill"):
         if rule == "vwap":  # the first close beyond VWAP five or more minutes after the entry
             other = vi.first_true((m >= m[j] + 5) & ((c > line) if side < 0 else (c < line)), j + 1)
         else:  # the prior close is reached
             other = vi.first_true((lo <= pc) if side < 0 else (h >= pc), j + 1)
         if hit >= 0 and (other < 0 or hit <= other):
-            return stop_px(hit, stop), False
+            return stop_px(hit, stop), False, hit
         if other >= 0:
-            return (float(c[other]) if rule == "vwap" else float(pc)), False
-        return float(c[-1]), False
+            return (float(c[other]) if rule == "vwap" else float(pc)), False, other
+        return float(c[-1]), False, len(c) - 1
     if rule[0] == "t" and rule[1:].isdigit():
         k = vi.first_true(m >= m[j] + int(rule[1:]), j)
         if hit >= 0 and (k < 0 or hit <= k):
-            return stop_px(hit, stop), False
-        return (float(c[k]) if k >= 0 else float(c[-1])), False
+            return stop_px(hit, stop), False, hit
+        return (float(c[k]), False, k) if k >= 0 else (float(c[-1]), False, len(c) - 1)
     if rule[0] == "r" and rule[1:].isdigit():
         tgt = e + side * int(rule[1:]) * abs(e - stop)
         th = vi.first_true((lo <= tgt) if side < 0 else (h >= tgt), j)
         if hit >= 0 and (th < 0 or hit <= th):
-            return stop_px(hit, stop), False
+            return stop_px(hit, stop), False, hit
         if th >= 0:
-            return (min(float(o[th]), tgt) if side < 0 else max(float(o[th]), tgt)), False
-        return float(c[-1]), False
+            return (min(float(o[th]), tgt) if side < 0 else max(float(o[th]), tgt)), False, th
+        return float(c[-1]), False, len(c) - 1
     if rule.startswith("trail"):
         x = int(rule[5:]) / 100
         if side < 0:
@@ -278,8 +284,8 @@ def session_exit(side: int, j: int, e: float, stop: float, rule: str, b: tuple, 
             eff = np.maximum(stop, np.r_[-np.inf, ext[:-1] * (1 - x)])
             k = vi.first_true(lo[j:] <= eff, 0)
         if k < 0:
-            return float(c[-1]), False
-        return stop_px(j + k, float(eff[k])), False
+            return float(c[-1]), False, len(c) - 1
+        return stop_px(j + k, float(eff[k])), False, j + k
     raise KeyError(rule)
 
 
@@ -308,7 +314,7 @@ def carry(D: dict, t: int, col: int, side: int, e: float, px: float, stop: float
 
 def trade_row(D: dict, cd: pd.Series, b: tuple, line: np.ndarray, side: int, j: int, e: float, stop: float,
               rule: str, prio: float) -> dict:
-    px, held = session_exit(side, j, e, stop, rule, b, line, float(cd["pc"]))
+    px, held, k = exit_bar(side, j, e, stop, rule, b, line, float(cd["pc"]))
     rets = [side * (px - e) / e]
     if held:
         rets += carry(D, int(cd["t"]), int(cd["j"]), side, e, px, stop, rule)
@@ -318,11 +324,12 @@ def trade_row(D: dict, cd: pd.Series, b: tuple, line: np.ndarray, side: int, j: 
             "entry": e, "stop": stop, "price": float(cd["open"]),
             "liq": float(cd["pmv"]) + float(np.sum(pv[:j] * v[:j])), "prio": prio, "so": float(cd.get("so", np.nan)),
             "rets": np.array(rets), "nights": len(rets) - 1, "rule": rule,
-            "opens": int(j == 0 and e == float(b[1][0])) + int(rule == "next_open" and len(rets) == 2)}
+            "opens": int(j == 0 and e == float(b[1][0])) + int(rule == "next_open" and len(rets) == 2),
+            "xmin": -1 if held else int(m[k])}
 
 
 COLS = ["date", "t", "symbol", "minute", "side", "entry", "stop", "price", "liq", "prio", "so", "rets", "nights",
-        "rule", "opens"]
+        "rule", "opens", "xmin"]
 
 
 def intraday_trades(store: vi.Store, D: dict, family: str, g: dict) -> pd.DataFrame:
