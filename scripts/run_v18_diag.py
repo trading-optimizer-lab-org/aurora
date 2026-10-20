@@ -62,13 +62,14 @@ def main() -> int:
                 t, j = s.t, s.j
                 last = min(first + len(r) - 1, len(D["dates"]) - 1)
                 raw_entry = float(D["P"][t - 1, j]) if s.kind != "close" else float(D["P"][t, j])
-                f_change = bool(np.nanmax(np.abs(np.diff(D["F"][max(t - 1, 0):last + 1, j]))) > 1e-6) \
-                    if last > t else False
+                # largest day-to-day change of the split factor, in log terms (rounding noise is far below 1%)
+                f_change = float(np.nanmax(np.abs(np.diff(np.log(D["F"][max(t - 1, 0):last + 1, j]))))) \
+                    if last > t else 0.0
                 pav, fee = v15.lookup(table, np.array([raw_entry]), np.array([D["SO"][t, j]]))
                 rows.append({"config": name, "symbol": D["cols"][j], "entry_date": str(D["dates"][t].date()),
                              "exit_date": str(D["dates"][last].date()), "side": s.side, "raw_price": raw_entry,
                              "trigger": prio, "return": float(r.sum()), "weight": float(w), "p_avail": float(pav[0]),
-                             "fee": float(fee[0]), "days": len(r), "split_inside": f_change,
+                             "fee": float(fee[0]), "days": len(r), "f_change": f_change, "split_inside": f_change > 0.01,
                              "gap_inside": bool(D["new"][t:last + 1, j].any())})
         t = pd.DataFrame(rows)
         if t.empty:
