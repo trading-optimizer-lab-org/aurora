@@ -18,7 +18,7 @@ and committed before the window was opened ([data/sealed_frozen.json](data/seale
 - S1 stayed positive every year (+8.3% in 2023H2, +16.9% in 2024, +6.0% in 2025, +5.9% in 2026 to October), but
   with a Sortino of 1.27 it is about what an index fund gives, and with spreads x2 it is flat.
 - The effect behind v16 (shorting small-cap gap-ups that break the 5-minute low) has been much weaker since mid-2023
-  than in 2018-2023 (S1 made +12% to +26% a year then). Why is not known from this test: more traders fading
+  than in 2018-2023 (S1 made between +3% in 2022 and +26% in 2021 a year then). Why is not known from this test: more traders fading
   these gaps, different market conditions, or a design period that flattered it.
 - The window is now spent for these families: nothing will be re-selected on it.
 
