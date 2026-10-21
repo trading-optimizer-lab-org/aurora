@@ -97,15 +97,19 @@ def _dn(a, b) -> np.ndarray:
     return (a < b) & np.r_[False, (a >= b)[:-1]] if isinstance(b, np.ndarray) else (a < b) & np.r_[False, a[:-1] >= b]
 
 
-def entry(family: str, g: dict, side: int, b: tuple, line: np.ndarray, L: dict) -> tuple[int, float, float]:
-    """(entry bar, entry price, flag extreme or nan)."""
+def entry(family: str, g: dict, side: int, b: tuple, line: np.ndarray, L: dict,
+          pc: float = np.nan) -> tuple[int, float, float]:
+    """(entry bar, entry price, flag extreme or nan). A runner (a day that rises 40% above the prior close) is only
+    traded once it has risen 40% (v22b: the scope is defined by the day's high, so earlier entries would know it)."""
     m, o, h, lo, c = b[0], b[1], b[2], b[3], b[4]
     n = len(c)
     live = (m >= g.get("after", 5)) & (m <= vi.LAST_ENTRY)
+    if g.get("scope") == "runner":
+        live &= np.maximum.accumulate(h) >= 1.4 * pc
 
-    def at_close(mask):
+    def at_close(mask):  # a signal known at a bar's close is filled at the next bar's open (v22b)
         j = vi.first_true(mask & live, 0)
-        return (j + 1, float(c[j]), np.nan) if 0 <= j < n - 1 else (-1, np.nan, np.nan)
+        return (j + 1, float(o[j + 1]), np.nan) if 0 <= j < n - 1 else (-1, np.nan, np.nan)
 
     if family == "IE_EMA":
         return at_close(_up(L["fast"], L["slow"]) if side > 0 else _dn(L["fast"], L["slow"]))
@@ -172,15 +176,22 @@ def mask_row(D: dict, cd: pd.Series, b: tuple, line: np.ndarray, side: int, j: i
     """A same-day trade left at the first bar after the entry where ``xm`` holds (at VWAP for tovwap, else at that
     bar's close), unless the stop comes first; at the session's close otherwise."""
     m, o, h, lo, c = b[0], b[1], b[2], b[3], b[4]
+    n = len(c)
     hit = vi.first_true((h >= stop) if side < 0 else (lo <= stop), j)
+    if rule == "tovwap":  # a resting limit at the VWAP of the bar before (v22b)
+        prev = np.r_[np.nan, line[:-1]]
+        xm = (h >= prev) if side > 0 else (lo <= prev)
     k = vi.first_true(xm, j + 1)
     if hit >= 0 and (k < 0 or hit <= k):
         ext = float(h[hit]) if side < 0 else float(lo[hit])
         px, kk = (v19._slip(stop, ext) if hit == j else v19._past(-side, float(o[hit]), stop, ext)), hit
-    elif k >= 0:
-        px, kk = (float(line[k]) if rule == "tovwap" else float(c[k])), k
+    elif k >= 0 and rule == "tovwap":
+        lvl = float(line[k - 1])
+        px, kk = (max(float(o[k]), lvl) if side > 0 else min(float(o[k]), lvl)), k
+    elif k >= 0:  # an exit signal at a bar's close is filled at the next bar's open (v22b)
+        px, kk = (float(o[k + 1]), k + 1) if k + 1 < n else (float(c[k]), k)
     else:
-        px, kk = float(c[-1]), len(c) - 1
+        px, kk = float(c[-1]), n - 1
     v, vw = b[5], b[6]
     pv = np.where(np.isfinite(vw) & (vw > 0), vw, c)
     return {"date": cd["date"], "t": int(cd["t"]), "symbol": cd["symbol"], "minute": int(m[j]), "side": side,
@@ -221,7 +232,7 @@ def intraday_trades(store: vi.Store, D: dict, family: str, g: dict) -> pd.DataFr
             continue
         line = vi.vwap(b[4], b[5], b[6])
         L = _lines(family, g, b, line)
-        j, e, ext = entry(family, g, side, b, line, L)
+        j, e, ext = entry(family, g, side, b, line, L, float(cd["pc"]))
         if j < 0 or not np.isfinite(e) or e <= 0:
             continue
         if side < 0:

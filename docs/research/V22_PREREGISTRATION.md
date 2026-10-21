@@ -86,3 +86,17 @@ Total 88,254 configurations; every one counts as a trial for the deflated Sharpe
 A canary (the first and last configuration of every family on the real inputs), then 300 shards x 4 processes of
 real returns (contiguous blocks, so neighbouring configurations share their indicators), the selection, 300 shards x 4
 processes of placebos, and the report.
+
+## Amendment after the first run (2026-10-21): v22b, a look-ahead in the intraday runner scope
+
+The first run (39556504856, report rebuilt in 39562299158) gave the five intraday families walk-forward Sortinos at
+the cap of 20 and 89-500% a year at every cost level, while the median configuration of each of them lost (Sortino
+-1.4 to -2.8). Every pick was a long in the **runner** scope, and that scope is defined by the day's high (a rise of
+40% above the prior close at some point of the session): a long entered before the rise knew that it was coming. v14
+to v21 used runners only with entries after the rise (the run-up condition was part of the entry). The daily families
+do not use the scope and are not affected.
+
+v22b fixes it and reruns the whole of v22, rules and grids otherwise unchanged: (1) a runner is traded only once its
+high so far is 40% above the prior close; (2) a signal known at a one-minute bar's close is filled at the next bar's
+open (not at that close, a single print in a small cap), an indicator exit likewise, and the VWAP-touch exit is a
+resting limit at the VWAP of the bar before. The first run's intraday results and its COMBO22 are void.
