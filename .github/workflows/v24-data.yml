@@ -1,0 +1,45 @@
+name: v24 data (one-minute bars of the 100 small caps with the largest gaps of 4% or more each day)
+
+# scripts/run_v24_data.py: Alpaca SIP minute bars (04:00-15:59 ET) of the 100 small caps of each session with
+# the largest absolute gap of at least 4% outside the v23 liquid set, 2016-2026, in a minute store kept only in
+# the Actions cache (no market data is published).
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v24-data.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v24-data
+  cancel-in-progress: true
+
+jobs:
+  data:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_v24_data.py minutes --budget-min 300
+      - run: python scripts/run_v24_data.py store
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-${{ github.run_id }}-${{ github.run_attempt }}
