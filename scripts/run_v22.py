@@ -41,6 +41,7 @@ R20 = _script("run_v20")
 R19, R16, R14 = R20.R19, R20.R16, R20.R14
 SHARDS, REPS, BLOCK, SLIP = 300, 500, 25, 0.25
 MIN_TRADES, MIN_ACTIVE = 50, 0.40
+TITLE, COMBO = "v22: technical analysis on small caps", "COMBO22"  # v23 reuses this runner with its own names
 SEGMENT = R20.SEGMENT
 WINDOWS = R20.WINDOWS
 # R4 (v21's calibration on 27,782 measured quote legs): rows <$2, $2-5, $5-10, $10-20; columns open, session, close
@@ -344,12 +345,11 @@ def cmd_report(args) -> int:
     cal = D["dates"][(D["dates"] >= core.DESIGN_START) & (D["dates"] <= end)]
     wf_index = cal[cal >= pd.Timestamp("2018-01-01")]
     fmt = R20._fmt
-    lines = [f"# v22: technical analysis on small caps ({len(configs())} configurations, walk-forward 2018-2026, "
-             "pre-registered)", "",
+    lines = [f"# {TITLE} ({len(configs())} configurations, walk-forward 2018-2026, pre-registered)", "",
              f"Configurations evaluated {len(meta) - len(errors)} of {len(configs())}; errors {len(errors)}. R4 costs "
              f"(middle) unless stated; {REPS} placebos for each selected configuration; a configuration can be picked "
              f"only with at least {MIN_TRADES} trades and a trade in {MIN_ACTIVE:.0%} of the months before. Target: "
-             "COMBO22 monthly Sortino 4.", "", "## 1. Families", "",
+             f"{COMBO} monthly Sortino 4.", "", "## 1. Families", "",
              "| family | WF Sortino 2018+ | 2018-20 | 2021+ | CAGR | max DD | low | high | auction | gross | "
              "years placebo-ok | gate | PBO | SPA p (best t) |", "|" + "---|" * 14]
     summary, streams, fam_info, mats = {}, {}, {}, {}
@@ -427,15 +427,15 @@ def cmd_report(args) -> int:
     ok = bool(cs and c1 and c2 and cs["sortino"] >= 4 and c1["sortino"] >= 3 and c2["sortino"] >= 3
               and np.isfinite(cpbo["pbo"]) and cpbo["pbo"] < 0.2 and seg.get("sortino", 0) >= 3)
     yearly = {int(y): float(v) for y, v in ((1 + combo).groupby(combo.index.year).prod() - 1).items()}
-    lines += ["", "## 2. COMBO22 (families chosen each year on earlier data only)", "",
+    lines += ["", f"## 2. {COMBO} (families chosen each year on earlier data only)", "",
               "| stream | Sortino 2018+ | 2018-20 | 2021+ | CAGR | max DD | total | 2023-07+ | DSR | PBO | criterion |",
               "|---|---|---|---|---|---|---|---|---|---|---|",
-              f"| COMBO22 | {fmt(cs, 'sortino', '{:.2f}')} | {fmt(c1, 'sortino', '{:.2f}')} | "
+              f"| {COMBO} | {fmt(cs, 'sortino', '{:.2f}')} | {fmt(c1, 'sortino', '{:.2f}')} | "
               f"{fmt(c2, 'sortino', '{:.2f}')} | {fmt(cs, 'cagr', '{:.1%}')} | {fmt(cs, 'dd', '{:.1%}')} | "
               f"{fmt(cs, 'total', '{:+.0%}')} | {fmt(seg, 'sortino', '{:.2f}')} | {dsr:.2f} | "
               f"{fmt(cpbo, 'pbo', '{:.0%}')} | {'met' if ok else 'not met'} |", "",
               "Members by year: " + "; ".join(f"{y}: {', '.join(m) or 'none'}" for y, m in members.items()), "",
-              "COMBO22 by year: " + ", ".join(f"{y} {v:+.1%}" for y, v in yearly.items())]
+              f"{COMBO} by year: " + ", ".join(f"{y} {v:+.1%}" for y, v in yearly.items())]
     lines += ["", "## 3. The 2023-07+ segment", "", "| family | Sortino | CAGR | max DD |", "|---|---|---|---|"]
     for fam, s in streams.items():
         st = R14._stats(s, cash, *SEGMENT)
