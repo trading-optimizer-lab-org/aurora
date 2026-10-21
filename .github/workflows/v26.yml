@@ -5,7 +5,7 @@ name: v26 squeeze shield for the small-cap shorts (pre-registered)
 # summary) -> 300 shards x 4 processes of real returns -> failed shards rerun once -> selection (all 300 shards) ->
 # 300 shards of placebos -> failed shards rerun once -> report -> 23 robustness jobs and 18 one-account jobs -> final.
 # Market data stays in the Actions cache; the jobs upload reports and strategy returns.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]

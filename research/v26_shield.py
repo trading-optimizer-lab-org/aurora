@@ -26,6 +26,7 @@ LEG_AH, LEG_PM = 3, 4  # cost legs after v19's open (0), session (1) and close (
 OFFER_ROWS, SQUEEZE_ROWS, SQUEEZE = 63, 60, 1.0
 
 PARAMS: dict | None = None  # the shield of the configuration being evaluated (None: the families' own exits)
+EXIT: dict = {}  # where the last trade walked left: session row, kind (session/open/stop/close/ah/pm), minute
 NIGHTS: "Nights | None" = None
 FACTS: dict = {}
 
@@ -109,8 +110,8 @@ def fractions(rule: str, closes: int) -> list[float]:
     return f
 
 
-def _night(u: int, j: int, stop: float, prev: float, F: np.ndarray, P: dict) -> tuple[float, int] | None:
-    """(fill, leg) of an exit in the after-hours of session u or the premarket of u + 1, else None."""
+def _night(u: int, j: int, stop: float, prev: float, F: np.ndarray, P: dict) -> tuple[float, int, int] | None:
+    """(fill, leg, night minute) of an exit in the after-hours of session u or the premarket of u + 1, else None."""
     if NIGHTS is None or (P["ext"] == "none" and P["rally"] == "none"):
         return None
     b = NIGHTS.bars(u, j)
@@ -126,9 +127,9 @@ def _night(u: int, j: int, stop: float, prev: float, F: np.ndarray, P: dict) -> 
         ok, hh, cc = float(o[k]) * f, float(h[k]) * f, float(c[k]) * f
         live = P["ext"] == "both" or P["ext"] == ("pm" if pm else "ah")
         if live and hh >= stop:
-            return (ok if ok >= stop else v19._slip(stop, hh)), (LEG_PM if pm else LEG_AH)
+            return (ok if ok >= stop else v19._slip(stop, hh)), (LEG_PM if pm else LEG_AH), int(m[k])
         if P["rally"] != "none" and cc >= prev * (1 + int(P["rally"][1:]) / 100):
-            return cc, (LEG_PM if pm else LEG_AH)
+            return cc, (LEG_PM if pm else LEG_AH), int(m[k])
     return None
 
 
@@ -146,13 +147,15 @@ def walk(D: dict, u0: int, j: int, e: float, stop: float, prev: float, w: float,
             break
         hit = _night(u - 1, j, stop, prev, F, P)
         if hit is not None:
-            px, leg = hit
+            px, leg, mm = hit
             nights += w if leg == LEG_PM else 0.0
             rets.append(w * (prev - px) / e)
+            EXIT.update(row=u - 1 if leg == LEG_AH else u, kind="ah" if leg == LEG_AH else "pm", minute=mm)
             return rets, nights, leg
         c = float(C[u, j])
         if new[u, j] or not np.isfinite(c):
             leg = 2
+            EXIT.update(row=u - 1, kind="close", minute=-1)
             break
         o, h = float(O[u, j]), float(H[u, j])
         o = o if np.isfinite(o) else c
@@ -160,9 +163,11 @@ def walk(D: dict, u0: int, j: int, e: float, stop: float, prev: float, w: float,
         if h >= stop:  # charged the close leg, as v19 charges a carried trade's exit
             px = o if o >= stop else v19._slip(stop, h)
             rets.append(w * (prev - px) / e)
+            EXIT.update(row=u, kind="open" if o >= stop else "stop", minute=-1)
             return rets, nights, 2
         rets.append(w * (prev - c) / e)
         prev = c
+        EXIT.update(row=u, kind="close", minute=-1)
         if k == len(fracs) - 1:
             return rets, nights, 2
         w -= fr
@@ -181,6 +186,8 @@ def intra_row(D: dict, cd, b: tuple, line: np.ndarray, j: int, e: float, own: fl
     px, held, k = v19.exit_bar(-1, j, e, stop, "d3", b, line, float(cd["pc"]))
     rets, nights = [(e - px) / e], 0.0
     leg = 2 if held or k == len(b[4]) - 1 else 1
+    EXIT.clear()
+    EXIT.update(row=t, kind="close" if leg == 2 else "session", minute=int(b[0][k]))
     closes = HOLD[P["hold"]]
     if held and closes > 0 and np.isfinite(f) and f > 0:
         fr = fractions(P["scale"], closes + 1)
@@ -194,7 +201,8 @@ def intra_row(D: dict, cd, b: tuple, line: np.ndarray, j: int, e: float, own: fl
             "stop": stop, "price": float(cd["open"]), "liq": float(cd["pmv"]) + float(np.sum(pv[:j] * v[:j])),
             "prio": prio, "so": float(cd.get("so", np.nan)), "rets": np.array(rets), "nights": nights, "rule": "d3",
             "opens": int(leg_in == 0) + int(leg == 0), "xmin": -1 if held else int(m[k]), "leg_in": leg_in,
-            "leg_out": leg}
+            "leg_out": leg, "x_row": EXIT.get("row", t), "x_kind": EXIT.get("kind", "close"),
+            "x_min": EXIT.get("minute", -1)}
 
 
 def daily_path(D: dict, s: v19.Spec, table: dict, spread: float, fee_mult: float, gross: bool,
@@ -218,6 +226,7 @@ def daily_path(D: dict, s: v19.Spec, table: dict, spread: float, fee_mult: float
     stop = stop_level(P["stop"], e, own_lvl, t, j, 1.0)
     if not np.isfinite(stop) or stop <= e:
         stop = np.inf if P["stop"] == "own" else e * 1.20
+    EXIT.clear()
     if s.kind == "close":
         rets, nights, leg = walk(D, t, j, e, stop, e, 1.0, fractions(P["scale"], closes + 1), P)
         leg_in = 2
@@ -228,8 +237,10 @@ def daily_path(D: dict, s: v19.Spec, table: dict, spread: float, fee_mult: float
         leg_in = 0
         if h >= stop:
             rets, nights, leg = [(e - v19._slip(stop, h)) / e], 0.0, 2
+            EXIT.update(row=t, kind="stop", minute=-1)
         else:
             rets, nights, leg = [(e - c) / e], 0.0, 2
+            EXIT.update(row=t, kind="close", minute=-1)
             if closes > 0:
                 fr = fractions(P["scale"], closes + 1)
                 more, nights, leg = walk(D, t, j, e, stop, c, 1.0 - fr[0], fr[1:], P)
