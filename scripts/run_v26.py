@@ -142,7 +142,8 @@ def load(base: Path) -> None:
     v25.prepare(st25, D)
     R14._G["v25"] = st25
     sh.prepare(D)
-    sh.NIGHTS = sh.Nights(pd.read_parquet(NIGHT / "nights.parquet"), dict(np.load(NIGHT / "nights.npz")))
+    if not os.environ.get("V26_NO_NIGHTS"):  # the early canary runs before the night store exists
+        sh.NIGHTS = sh.Nights(pd.read_parquet(NIGHT / "nights.parquet"), dict(np.load(NIGHT / "nights.npz")))
     sp = pd.read_parquet(NIGHT / "spreads.parquet") if (NIGHT / "spreads.parquet").exists() else None
     r4x = ext_halves(sp, R22.R4)
     auction = r4x.copy()
