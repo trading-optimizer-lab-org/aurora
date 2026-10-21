@@ -1,0 +1,61 @@
+name: v22 report (rebuilt from the shards of run 39556504856)
+
+# The report job of run 39556504856 failed reading its merged frame (a parquet footer over the thrift size limit);
+# this rebuilds only the report from that run's selection and placebo artifacts with the fixed reader.
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v22-report.yml
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v22-selection
+          path: outputs/v22/sel
+          run-id: 39556504856
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v22-plac-*
+          path: outputs/v22/parts
+          run-id: 39556504856
+          github-token: ${{ github.token }}
+      - run: |
+          mv outputs/v22/sel/real outputs/v22/parts/real
+          python scripts/run_v22.py report --inputs outputs/v18/v14 --parts outputs/v22/parts --selected outputs/v22/sel/selected.json --out outputs/v22/report
+      - if: always()
+        run: if [ -f outputs/v22/report/REPORT.md ]; then cat outputs/v22/report/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v22-report
+          path: |
+            outputs/v22/report/REPORT.md
+            outputs/v22/report/summary.json
+            outputs/v22/report/streams.parquet
+          retention-days: 90
