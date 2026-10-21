@@ -1,10 +1,10 @@
 name: v23 small caps one-minute technical analysis (pre-registered)
 
-# docs/research/V23_PREREGISTRATION.md. Waits for the v23 data run (39561011760) and the v22b run; then the v18b
+# docs/research/V23_PREREGISTRATION.md. Waits for the v23 data run (39561011760) and the latest v22 run (v22c); then the v18b
 # inputs plus the v23 minute store (the 100 most liquid small caps of each session) -> canary -> 300 shards x 4
 # processes of real returns (105,336 configurations under R4 costs) -> selection with the activity rule -> 300 shards
 # x 4 processes of placebos -> report. Market data stays in the Actions cache; the shards upload strategy returns.
-# run: 1
+# run: 2 (v23b: runners risen by the bars before, flags on live bars, causal double tops)
 on:
   push:
     branches: [research/stock-catalog]
