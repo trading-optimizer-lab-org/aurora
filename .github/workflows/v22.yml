@@ -4,7 +4,7 @@ name: v22 small caps technical analysis (pre-registered)
 # processes of real returns (88,254 configurations under R4 costs) -> selection with the activity rule -> 300 shards x 4
 # processes of placebos (500 for each selected configuration) -> report (gate, COMBO22, PBO, SPA, DSR). The window after
 # 2023-06 was opened at the owner's request. Market data stays in the Actions cache; the shards upload strategy returns.
-# run: 1
+# run: 2 (v22b: the runner look-ahead fixed, close signals filled at the next open)
 on:
   push:
     branches: [research/stock-catalog]
