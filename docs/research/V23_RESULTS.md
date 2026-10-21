@@ -6,7 +6,7 @@ Pre-registered in [V23_PREREGISTRATION.md](V23_PREREGISTRATION.md) (with its v23
 |---|---|---|
 | v23 | 39563557605 | cancelled before any result (superseded by v23b) |
 | v23b | 39570591050 | the canary failed: the worker pool could not pickle the patched runner |
-| **v23b** | **39577478170** (2026-10-21 09:25-12:51 UTC) | **this report** |
+| **v23b** | **39577478170** (2026-10-21 09:30-12:51 UTC) | **this report** |
 
 105,336 of 105,336 configurations, no errors, 500 placebos for each selected configuration, R4 costs.
 
