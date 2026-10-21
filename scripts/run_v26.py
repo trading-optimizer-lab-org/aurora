@@ -780,11 +780,12 @@ def cmd_final(args) -> int:
               "CAGR high | p75 high |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         hi = books[books["costs"] == "high"].set_index(["book", "account", "risk", "cap", "gross"])
         for _, r in books[books["costs"] == "mid"].sort_values(["book", "account", "risk", "cap", "gross"]).iterrows():
-            h = hi.loc[(r["book"], r["account"], r["risk"], r["cap"], r["gross"])]
+            k = (r["book"], r["account"], r["risk"], r["cap"], r["gross"])
+            h = hi.loc[k] if k in hi.index else None
+            h_cagr, h_p75 = (_pc(h["cagr"]), f"{h['p_dd75']:.1%}") if h is not None else ("-", "-")
             L.append(f"| {r['book']} | {r['account']:,.0f} | {r['risk']:.2%} | {r['cap']:.0%} | {r['gross']:g} | "
                      f"{_f2(r['sortino'])} | {_pc(r['cagr'])}{' (ruined)' if r['ruined'] else ''} | {_pc(r['dd'])} | "
-                     f"{_pc(r['worst_day'])} | {r['p_dd75']:.1%} | {_pc(r['cagr_med'])} | {_pc(h['cagr'])} | "
-                     f"{h['p_dd75']:.1%} |")
+                     f"{_pc(r['worst_day'])} | {r['p_dd75']:.1%} | {_pc(r['cagr_med'])} | {h_cagr} | {h_p75} |")
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "FINAL.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     choice = {f"{bk}{int(a)}": (None if (p := book_choice(books, a, bk)) is None else p["name"])

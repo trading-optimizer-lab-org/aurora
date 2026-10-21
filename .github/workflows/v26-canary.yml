@@ -1,5 +1,6 @@
 name: v26 early canary (without the night store)
 
+# run: 2
 # The v26 canary run while the night store is still downloading: two configurations of every family and the
 # after-report stages on a test summary, with no extended-session bars (V26_NO_NIGHTS). Checks only that the code
 # runs on the real inputs; no result of it is used. No market data is published.
