@@ -132,7 +132,8 @@ def cmd_nights(args) -> int:
 
 def build_store(D: dict, sets: dict, folder: Path) -> tuple[pd.DataFrame, dict]:
     pos = {str(c): i for i, c in enumerate(D["cols"])}
-    rows, arrays, off = [], {k: [] for k in ("m", "o", "h", "l", "c", "v")}, 0
+    arrays: dict[str, list] = {k: [] for k in ("m", "o", "h", "l", "c", "v")}
+    rows, off = [], 0
     for u, cols in sets.items():
         path = folder / f"{D['dates'][u].date()}.parquet"
         if not path.exists():
@@ -191,9 +192,9 @@ def cmd_quotes(args) -> int:
     tier = _tier(c)
     rng = np.random.default_rng(26)
     picks = []
-    for s in (0, 1):
+    for ses in (0, 1):
         for k in range(len(TIERS) + 1):
-            cand = np.flatnonzero(traded & (session == s) & (tier == k))
+            cand = np.flatnonzero(traded & (session == ses) & (tier == k))
             if len(cand):
                 picks += rng.choice(cand, min(PER_CELL, len(cand)), replace=False).tolist()
     headers = D14._alpaca_headers()
@@ -217,10 +218,12 @@ def cmd_quotes(args) -> int:
                 print(f"quotes: {n}/{len(jobs)}, {time.time() - t0:.0f}s", flush=True)
     q = pd.DataFrame(out)
     q.to_parquet(store / "spreads.parquet", index=False)
-    med = q.dropna(subset=["spread"]).groupby(["session", "tier"])["spread"].agg(["median", "size"])
-    print(json.dumps({"minutes": len(q), "with_quotes": int(q["spread"].notna().sum()),
-                      "median_spread": {f"{'ah' if a == 0 else 'pm'}{b}": [round(float(x), 4), int(n)]
-                                        for (a, b), (x, n) in med.iterrows()}}), flush=True)
+    med = q.dropna(subset=["spread"]).groupby(["session", "tier"])["spread"].agg(["median", "count"]).reset_index()
+    cells = {("ah" if int(r["session"]) == 0 else "pm") + str(int(r["tier"])): [round(float(r["median"]), 4),
+                                                                                 int(r["count"])]
+             for _, r in med.iterrows()}
+    print(json.dumps({"minutes": len(q), "with_quotes": int(q["spread"].notna().sum()), "median_spread": cells}),
+          flush=True)
     return 0
 
 
