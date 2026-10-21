@@ -279,14 +279,16 @@ def _upper(b: tuple, cd: dict, g: dict) -> tuple[np.ndarray, np.ndarray]:
     return up, chk
 
 
-def signal(family: str, g: dict, b: tuple, line: np.ndarray, cd: dict, lv: dict) -> tuple:
-    """(entry bar, entry price, stop reference, target height)."""
+def signal(family: str, g: dict, b: tuple, line: np.ndarray, cd: dict, lv: dict,
+           live: np.ndarray | None = None) -> tuple:
+    """(entry bar, entry price, stop reference, target height). ``live``: the bars an entry may be taken on, when the
+    caller sets them (v25 runs these rules on mirrored prices with the live bars of the real ones)."""
     if family in ("SR_LONG", "DL_DAILY") or family in V23L:
         return v23.signal(base_family(family), g, 1, b, line, cd, lv)
     m, o, h, lo, c, v = b[:6]
     n = len(c)
     idx = np.arange(n)
-    live = live_mask(family, g, b, cd)
+    live = live_mask(family, g, b, cd) if live is None else live
     pc, op = float(cd["pc"]), float(cd["open"])
     with np.errstate(invalid="ignore", divide="ignore"):
         if family == "SP_INPLAY":
@@ -440,53 +442,58 @@ def exit_mask(family: str, g: dict, b: tuple, line: np.ndarray, cd: dict) -> np.
     return xm
 
 
-def _row(cd: dict, b: tuple, j: int, e: float, stop: float, px: float, kk: int, rule: str, prio: float) -> dict:
+def _row(cd: dict, b: tuple, j: int, e: float, stop: float, px: float, kk: int, rule: str, prio: float,
+         side: int = 1) -> dict:
     m, c, v, vw = b[0], b[4], b[5], b[6]
     pv = np.where(np.isfinite(vw) & (vw > 0), vw, c)
-    return {"date": cd["date"], "t": int(cd["t"]), "symbol": cd["symbol"], "minute": int(m[j]), "side": 1, "entry": e,
-            "stop": stop, "price": float(cd["open"]), "liq": float(cd["pmv"]) + float(np.sum(pv[:j] * v[:j])),
-            "prio": prio, "so": float(cd.get("so", np.nan)), "rets": np.array([(px - e) / e]), "nights": 0,
+    return {"date": cd["date"], "t": int(cd["t"]), "symbol": cd["symbol"], "minute": int(m[j]), "side": side,
+            "entry": e, "stop": stop, "price": float(cd["open"]), "liq": float(cd["pmv"]) + float(np.sum(pv[:j] * v[:j])),
+            "prio": prio, "so": float(cd.get("so", np.nan)), "rets": np.array([side * (px - e) / e]), "nights": 0,
             "rule": rule, "opens": int(j == 0 and e == float(b[1][0])), "xmin": int(m[kk]),
             "leg_in": 0 if (j == 0 and e == float(b[1][0])) else 1, "leg_out": 2 if kk == len(c) - 1 else 1}
 
 
-def _stop_fill(b: tuple, j: int, k: int, stop: float) -> float:
-    return v19._slip(stop, float(b[3][k])) if k == j else v19._past(-1, float(b[1][k]), stop, float(b[3][k]))
+def _stop_fill(b: tuple, j: int, k: int, stop: float, side: int = 1) -> float:
+    ext = float(b[3][k]) if side > 0 else float(b[2][k])  # a long's stop is hit by a fall, a short's by a rise
+    return v19._slip(stop, ext) if k == j else v19._past(-side, float(b[1][k]), stop, ext)
 
 
 def special(D: dict, cd: dict, b: tuple, line: np.ndarray, j: int, e: float, stop: float, rule: str,
-            prio: float) -> dict:
+            prio: float, side: int = 1) -> dict:
     """be1r: the stop moves to the entry once 1R is reached, out at the close otherwise; scale: half at 2R, half at
-    the close (one stop for both); tstop15: out after 15 minutes unless above the entry, then at the close."""
+    the close (one stop for both); tstop15: out after 15 minutes unless in profit, then at the close. ``side`` -1:
+    the same for a short (v25)."""
     m, o, h, lo, c = b[:5]
     n = len(c)
     if rule == "scale":
-        a = v19.trade_row(D, cd, b, line, 1, j, e, stop, "r2", prio)
-        z = v19.trade_row(D, cd, b, line, 1, j, e, stop, "close", prio)
+        a = v19.trade_row(D, cd, b, line, side, j, e, stop, "r2", prio)
+        z = v19.trade_row(D, cd, b, line, side, j, e, stop, "close", prio)
         z["rets"] = np.array([0.5 * (a["rets"][0] + z["rets"][0])])
         z["rule"] = "scale"
         return z
-    hit = vi.first_true(lo <= stop, j)
+    against = lo if side > 0 else h
+    hit = vi.first_true((lo <= stop) if side > 0 else (h >= stop), j)
     if rule == "be1r":
-        k1 = vi.first_true(h >= 2 * e - stop, j)
+        one_r = 2 * e - stop
+        k1 = vi.first_true((h >= one_r) if side > 0 else (lo <= one_r), j)
         if hit >= 0 and (k1 < 0 or hit <= k1):
-            px, kk = _stop_fill(b, j, hit, stop), hit
+            px, kk = _stop_fill(b, j, hit, stop, side), hit
         elif k1 >= 0:
-            k2 = vi.first_true(lo <= e, k1 + 1)
-            px, kk = (v19._past(-1, float(o[k2]), e, float(lo[k2])), k2) if k2 >= 0 else (float(c[-1]), n - 1)
+            k2 = vi.first_true((lo <= e) if side > 0 else (h >= e), k1 + 1)
+            px, kk = (v19._past(-side, float(o[k2]), e, float(against[k2])), k2) if k2 >= 0 else                 (float(c[-1]), n - 1)
         else:
             px, kk = float(c[-1]), n - 1
     else:
         k = vi.first_true(m >= m[j] + 15, j)
         if hit >= 0 and (k < 0 or hit <= k):
-            px, kk = _stop_fill(b, j, hit, stop), hit
-        elif k >= 0 and c[k] <= e:
+            px, kk = _stop_fill(b, j, hit, stop, side), hit
+        elif k >= 0 and side * (c[k] - e) <= 0:
             px, kk = float(c[k]), k
         elif hit >= 0:
-            px, kk = _stop_fill(b, j, hit, stop), hit
+            px, kk = _stop_fill(b, j, hit, stop, side), hit
         else:
             px, kk = float(c[-1]), n - 1
-    return _row(cd, b, j, e, stop, px, kk, rule, prio)
+    return _row(cd, b, j, e, stop, px, kk, rule, prio, side)
 
 
 def make_trade(D: dict, family: str, g: dict, cd: dict, b: tuple, line: np.ndarray, lv: dict, j: int, e: float,
