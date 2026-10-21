@@ -100,3 +100,12 @@ v22b fixes it and reruns the whole of v22, rules and grids otherwise unchanged: 
 high so far is 40% above the prior close; (2) a signal known at a one-minute bar's close is filled at the next bar's
 open (not at that close, a single print in a small cap), an indicator exit likewise, and the VWAP-touch exit is a
 resting limit at the VWAP of the bar before. The first run's intraday results and its COMBO22 are void.
+
+## Amendment after v22b (2026-10-21): v22c, the same look-ahead in flags
+
+v22b (run 39563542063) left IF_FLAG at the Sortino cap of 20 (88.9% a year, 12.61 at the high costs), unchanged from
+the first run: the flag search did not apply the entry-time conditions, so a runner's flag could be bought before the
+40% rise that defines the scope. v22c (1) trades a flag only at a break on a live bar (after the start time, and for a
+runner once risen) and (2) counts a runner as risen only by the bars before the entry bar, since a break inside the bar
+that made the rise would also know it. It reruns the whole of v22, nothing else changed; v22b's IF_FLAG and COMBO22
+are void (the daily families and IE, IV, IR, IM differ at most by the second change).

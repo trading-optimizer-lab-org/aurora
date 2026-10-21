@@ -97,15 +97,22 @@ def _dn(a, b) -> np.ndarray:
     return (a < b) & np.r_[False, (a >= b)[:-1]] if isinstance(b, np.ndarray) else (a < b) & np.r_[False, a[:-1] >= b]
 
 
+def risen(h: np.ndarray, pc: float) -> np.ndarray:
+    """Whether the bars before each one have already risen 40% above the prior close."""
+    return np.r_[-np.inf, np.maximum.accumulate(h)[:-1]] >= 1.4 * pc
+
+
 def entry(family: str, g: dict, side: int, b: tuple, line: np.ndarray, L: dict,
-          pc: float = np.nan) -> tuple[int, float, float]:
+          pc: float = np.nan, live: np.ndarray | None = None) -> tuple[int, float, float]:
     """(entry bar, entry price, flag extreme or nan). A runner (a day that rises 40% above the prior close) is only
-    traded once it has risen 40% (v22b: the scope is defined by the day's high, so earlier entries would know it)."""
+    traded once it has risen 40% (v22b: the scope is defined by the day's high, so earlier entries would know it),
+    by the bars before the entry bar (v22c: a break inside the bar that made the rise would know it too)."""
     m, o, h, lo, c = b[0], b[1], b[2], b[3], b[4]
     n = len(c)
-    live = (m >= g.get("after", 5)) & (m <= vi.LAST_ENTRY)
-    if g.get("scope") == "runner":
-        live &= np.maximum.accumulate(h) >= 1.4 * pc
+    if live is None:
+        live = (m >= g.get("after", 5)) & (m <= vi.LAST_ENTRY)
+        if g.get("scope") == "runner":
+            live &= risen(h, pc)
 
     def at_close(mask):  # a signal known at a bar's close is filled at the next bar's open (v22b)
         j = vi.first_true(mask & live, 0)
@@ -151,7 +158,7 @@ def entry(family: str, g: dict, side: int, b: tuple, line: np.ndarray, L: dict,
                     break
                 lvl = seg_h.max() if side > 0 else seg_l.min()
                 k = q + 1
-                if (h[k] > lvl) if side > 0 else (lo[k] < lvl):
+                if live[k] and ((h[k] > lvl) if side > 0 else (lo[k] < lvl)):  # v22c: on a live bar only
                     ext = float(seg_l.min()) if side > 0 else float(seg_h.max())
                     return k, v19._past(side, float(o[k]), float(lvl), float(h[k] if side > 0 else lo[k])), ext
         return -1, np.nan, np.nan

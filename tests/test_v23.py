@@ -65,3 +65,13 @@ def test_ascending_triangle() -> None:
     b = _bars(c, h=hi, lo=lows)
     j, e, ref, height = v23._pattern({"pattern": "asc_triangle", "size": "small"}, 1, b, np.ones(len(c), bool))
     assert j == len(c) and e == pytest.approx(10.25) if j == len(c) else j == -1 or e > 10.0
+
+
+def test_double_top_takes_the_first_neckline_break() -> None:
+    # tops at 10.0 (bars 25, 40) with a neckline of 9.6; a later top at 11.0 matching the one at bar 10 must not
+    # replace that earlier break with its own
+    c = np.interp(np.arange(91), [0, 10, 18, 25, 32, 40, 50, 70, 80, 90], [10.0, 11.0, 9.7, 10.0, 9.6, 10.0, 9.4,
+                                                                          11.0, 8.0, 8.5])
+    j, e, ref, height = v23._pattern({"pattern": "double_top", "size": "small"}, -1, _bars(list(c)),
+                                     np.ones(len(c), bool))
+    assert j == 48 and e == pytest.approx(9.58) and ref == pytest.approx(10.01)

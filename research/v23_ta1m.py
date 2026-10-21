@@ -156,7 +156,7 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
     n = len(c)
     live = m <= vi.LAST_ENTRY
     if g.get("scope") == "runner":  # the runner scope is defined by the day's high: trade it only once risen 40%
-        live &= np.maximum.accumulate(h) >= 1.4 * float(cd["pc"])
+        live &= v22i.risen(h, float(cd["pc"]))  # by the bars before (a break inside the rising bar would know it)
     if family == "SR_LEVEL":
         a, z = WINDOWS[g["window"]]
         live &= (m >= a) & (m < z)
@@ -305,10 +305,8 @@ def _pattern(g: dict, side: int, b: tuple, live: np.ndarray) -> tuple:
     p = g["pattern"]
     if p in ("bull_flag", "bear_flag"):
         gg = {"pole": 0.15 if big else 0.06, "retrace": 0.50, "after": 5}
-        j, e, ext = v22i.entry("IF_FLAG", gg, side, b, np.zeros(n), {})
-        if j < 0 or not live[min(j, n - 1)]:
-            return NONE
-        return j, e, ext, np.nan
+        j, e, ext = v22i.entry("IF_FLAG", gg, side, b, np.zeros(n), {}, live=live)  # the first flag on a live bar
+        return (j, e, ext, np.nan) if j >= 0 else NONE
     tol, gap = (0.015, 20) if big else (0.005, 10)
     roll = 5
     if p in ("double_top", "double_bottom"):
@@ -317,19 +315,26 @@ def _pattern(g: dict, side: int, b: tuple, live: np.ndarray) -> tuple:
         ext = pd.Series(x).rolling(2 * roll + 1, center=True, min_periods=roll).max() if top else \
             pd.Series(x).rolling(2 * roll + 1, center=True, min_periods=roll).min()
         piv = np.flatnonzero(x == ext.to_numpy())
-        for a_i, a in enumerate(piv):
-            for bb in piv[a_i + 1:]:
-                if bb - a < gap:
-                    continue
-                if abs(x[bb] / x[a] - 1) > tol:
+        # v23b: each second extreme pairs with the earliest matching first one (known when it is confirmed, roll
+        # bars later); the trade is the earliest neckline break of any pair, so no later pattern decides it
+        best = None
+        for b_i, bb in enumerate(piv):
+            if best is not None and bb + roll >= best[0]:
+                break
+            for a in piv[:b_i]:
+                if bb - a < gap or abs(x[bb] / x[a] - 1) > tol:
                     continue
                 neck = float(lo[a:bb + 1].min()) if top else float(h[a:bb + 1].max())
-                k = vi.first_true((c < neck) if top else (c > neck), bb + roll)
-                if 0 <= k < n - 1 and live[k]:
+                brk = ((c < neck) if top else (c > neck)) & live
+                k = vi.first_true(brk, bb + roll)
+                if 0 <= k < n - 1 and (best is None or k < best[0]):
                     height = abs(max(x[a], x[bb]) - neck) if top else abs(neck - min(x[a], x[bb]))
-                    return k + 1, float(o[k + 1]), float(max(x[a], x[bb]) if top else min(x[a], x[bb])), height
+                    best = (k, float(max(x[a], x[bb]) if top else min(x[a], x[bb])), height)
                 break
-        return NONE
+        if best is None:
+            return NONE
+        k, ref, height = best
+        return k + 1, float(o[k + 1]), ref, height
     # triangles over the last 30 (60) bars in two halves: the flat side's two halves within tol of each other, the
     # other side rising (falling), and a close through the flat side
     asc = p == "asc_triangle"

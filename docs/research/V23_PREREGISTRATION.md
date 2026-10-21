@@ -68,3 +68,12 @@ Hansen's SPA test per family, the deflated Sharpe. **Success**: COMBO23 walk-for
 
 A first job waits for the data run (39561011760) to finish; then a canary, 300 shards x 4 processes of real returns,
 the selection, 300 shards x 4 processes of placebos, the report.
+
+## Amendment before any result (2026-10-21): v23b
+
+Found while checking v22b, before v23's canary ran: (1) a runner counts as risen only by the bars before the entry
+bar (a level break inside the bar that made the rise would know it); (2) bull and bear flags are searched on live bars
+(the first flag of the day no longer decides it); (3) a double top or bottom pairs each second extreme with the
+earliest matching first one and trades the earliest neckline break of any pair, where the search by first extremes
+let a later pattern (one that formed after an earlier break) decide the trade. Grids, data and tests otherwise as
+above.

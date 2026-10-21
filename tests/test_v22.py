@@ -98,3 +98,14 @@ def test_spa_separates_noise_from_signal() -> None:
     strong[:, 7] += 0.04
     p, best, t = R22.spa(strong, B=300)
     assert p < 0.05 and best == 7 and t > 3
+
+
+def test_runner_flags_wait_for_the_rise() -> None:
+    # a flag at 13 (a pole of 24% from 10.5, the prior close 10) before the runner's 40% rise to 14, then one at 16
+    c = np.array([10.5] * 20 + [11.0, 11.6, 12.2, 12.8, 13.0, 12.7, 12.6, 12.65, 12.9, 13.5, 14.5, 15.5, 16.0,
+                                15.6, 15.5, 15.55, 15.9, 16.3] + [16.3] * 9)
+    o = np.r_[c[0], c[:-1]]
+    b = (np.arange(len(c)), o, np.maximum(c * 1.001, o), np.minimum(c * 0.999, o), c)
+    g = {"pole": 0.20, "retrace": 0.50}
+    assert vin.entry("IF_FLAG", {**g, "scope": "gapup"}, 1, b, c, {}, pc=10.0)[0] == 29
+    assert vin.entry("IF_FLAG", {**g, "scope": "runner"}, 1, b, c, {}, pc=10.0)[0] == 37  # 13.5 broke before 14
