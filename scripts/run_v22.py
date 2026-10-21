@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 from scipy.stats import norm
 
 from aurora.research import v14_core as core
@@ -258,9 +259,24 @@ def family_frames(monthly: pd.DataFrame, counts: pd.DataFrame, reg: dict) -> dic
     return out
 
 
+def _read(path: Path) -> pd.DataFrame:
+    """A parquet file, allowing the very wide footers of the merged frames."""
+    return pq.read_table(path, thrift_string_size_limit=2 ** 31 - 1,
+                         thrift_container_size_limit=2 ** 31 - 1).to_pandas()
+
+
+def _frame(parts: Path, name: str) -> pd.DataFrame:
+    """The merged frame (stored transposed: one row a column) or the shards' frames side by side."""
+    long = sorted(parts.rglob(f"{name}_T.parquet"))
+    if long:
+        f = pd.concat([_read(p) for p in long]).T
+        f.index = pd.to_datetime(f.index)
+        return f.sort_index()
+    return pd.concat([_read(p) for p in sorted(parts.rglob(f"{name}.parquet"))], axis=1).sort_index()
+
+
 def _load_real(parts: Path) -> tuple[pd.DataFrame, pd.DataFrame, list]:
-    monthly = pd.concat([pd.read_parquet(p) for p in sorted(parts.rglob("monthly.parquet"))], axis=1).sort_index()
-    counts = pd.concat([pd.read_parquet(p) for p in sorted(parts.rglob("counts.parquet"))], axis=1).sort_index()
+    monthly, counts = _frame(parts, "monthly"), _frame(parts, "counts")
     meta = [m for p in sorted(parts.rglob("meta.json")) for m in json.loads(p.read_text(encoding="utf-8"))
             if "block" not in m]
     return monthly, counts, meta
@@ -288,8 +304,10 @@ def cmd_select(args) -> int:
     real_dir.mkdir(parents=True, exist_ok=True)
     daily = _script("run_v21").Lazy(sorted(args.parts.rglob("daily.parquet")))
     daily.get(names).to_parquet(real_dir / "daily.parquet")  # the selected configurations' daily returns
-    monthly.to_parquet(real_dir / "monthly.parquet")
-    counts.to_parquet(real_dir / "counts.parquet")
+    for nm, f in (("monthly", monthly), ("counts", counts)):  # one row a column: wide footers exceed thrift limits
+        t = f.T
+        t.columns = [str(c.date()) for c in f.index]
+        t.to_parquet(real_dir / f"{nm}_T.parquet")
     (real_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     (args.out / "selected.json").write_text(json.dumps({"choices": ch, "names": names}, indent=1), encoding="utf-8")
     (args.out / "selected.txt").write_text(",".join(names), encoding="utf-8")
