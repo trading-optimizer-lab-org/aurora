@@ -142,11 +142,12 @@ def _agg(b: tuple, k: int) -> tuple:
 NONE = (-1, np.nan, np.nan, np.nan)
 
 
-def _close_entry(mask: np.ndarray, live: np.ndarray, c: np.ndarray, ref=None, tgt=None):
+def _close_entry(mask: np.ndarray, live: np.ndarray, c: np.ndarray, ref=None, tgt=None, o: np.ndarray | None = None):
+    """A signal known at a bar's close, filled at the next bar's open."""
     j = vi.first_true(mask & live, 0)
     if not 0 <= j < len(c) - 1:
         return NONE
-    return j + 1, float(c[j]), (float(ref[j]) if ref is not None else np.nan), \
+    return j + 1, float(o[j + 1]),(float(ref[j]) if ref is not None else np.nan), \
         (float(tgt[j]) if tgt is not None else np.nan)
 
 
@@ -154,6 +155,8 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
     m, o, h, lo, c, v = b[0], b[1], b[2], b[3], b[4], b[5]
     n = len(c)
     live = m <= vi.LAST_ENTRY
+    if g.get("scope") == "runner":  # the runner scope is defined by the day's high: trade it only once risen 40%
+        live &= np.maximum.accumulate(h) >= 1.4 * float(cd["pc"])
     if family == "SR_LEVEL":
         a, z = WINDOWS[g["window"]]
         live &= (m >= a) & (m < z)
@@ -170,18 +173,21 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
         kind = g["setup"].split("_")[0]
         if kind == "break":
             x = (c > L) & (prev_c <= L) if up else (c < L) & (prev_c >= L)
-            return _close_entry(x, live, c, lvl)
-        if kind == "fail":
-            pierced = np.maximum.accumulate(h > L * 1.002) if up else np.maximum.accumulate(lo < L * 0.998)
-            x = pierced & ((c < L) if up else (c > L))
-            return _close_entry(x & np.r_[False, pierced[:-1]], live, c, lvl)
+            return _close_entry(x, live, c, lvl, o=o)
+        if kind == "fail":  # through the level by 0.2%, then a close back on the other side within three bars
+            p0 = vi.first_true((h > L * 1.002) if up else (lo < L * 0.998), 0)
+            if p0 < 0:
+                return NONE
+            idx = np.arange(n)
+            x = (idx >= p0) & (idx <= p0 + 3) & ((c < L) if up else (c > L))
+            return _close_entry(x, live, c, lvl, o=o)
         brk = (c > L) & (prev_c <= L) if up else (c < L) & (prev_c >= L)
         j0 = vi.first_true(brk, 0)
         if j0 < 0:
             return NONE
         after = np.arange(n) > j0 + 2
         x = after & ((lo <= L * 1.003) & (c > L) if up else (h >= L * 0.997) & (c < L))
-        return _close_entry(x, live, c, lvl)
+        return _close_entry(x, live, c, lvl, o=o)
     if family == "VW_VWAP":
         live &= m >= g["after"]
         if g["vol"]:
@@ -200,7 +206,7 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
             dev = v22i._vwap_dev(b, line)
             hi2, lo2 = line + 2 * dev, line - 2 * dev
             x = {"revert_lo": c < lo2, "revert_hi": c > hi2, "break_hi": c > hi2, "break_lo": c < lo2}[st] & (dev > 0)
-        return _close_entry(x, live, c)
+        return _close_entry(x, live, c, o=o)
     if family == "EM_EMA":
         f, s = (int(x) * g["tf"] for x in g["pair"].split("/"))
         fa, sl = v22i._ema(c, f), v22i._ema(c, s)
@@ -209,7 +215,7 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
             x = v22i._up(fa, sl) if side > 0 else v22i._dn(fa, sl)
         else:
             x = ((fa > sl) & (lo <= fa) & (c > fa)) if side > 0 else ((fa < sl) & (h >= fa) & (c < fa))
-        return _close_entry(x, live, c)
+        return _close_entry(x, live, c, o=o)
     if family == "OS_OSC":
         tf = g["tf"]
         if g["ind"].startswith("rsi"):
@@ -230,7 +236,7 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
                 near |= np.abs(c / L - 1) <= 0.01
             x &= near | (np.abs(c / line - 1) <= 0.01)
         live &= m >= 15
-        return _close_entry(x, live, c)
+        return _close_entry(x, live, c, o=o)
     if family == "MD_MACD":
         f, s, sg = (int(x) * g["tf"] for x in g["set"].split("/"))
         mc = v22i._ema(c, f) - v22i._ema(c, s)
@@ -246,7 +252,7 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
             hx = pd.Series(hist).rolling(30, min_periods=10)
             x = ((c <= ext.min().to_numpy()) & (hist > hx.min().shift(1).to_numpy())) if side > 0 else \
                 ((c >= ext.max().to_numpy()) & (hist < hx.max().shift(1).to_numpy()))
-        return _close_entry(x, live, c)
+        return _close_entry(x, live, c, o=o)
     if family == "SQ_SQUEEZE":
         cs = pd.Series(c)
         mid, sd = cs.rolling(20, min_periods=20).mean().to_numpy(), cs.rolling(20, min_periods=20).std().to_numpy()
@@ -257,7 +263,7 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
         x = run & ((c > mid + 2 * sd) if side > 0 else (c < mid - 2 * sd))
         if g["vol"]:
             x &= _rv(v) >= g["vol"]
-        return _close_entry(x, live, c)
+        return _close_entry(x, live, c, o=o)
     if family == "PT_PATTERN":
         live &= m >= g["after"]
         return _pattern(g, side, b, live)
@@ -269,7 +275,7 @@ def signal(family: str, g: dict, side: int, b: tuple, line: np.ndarray, cd: pd.S
         body = np.abs(c - o)
         shape = {"upwick": (h - np.maximum(o, c)) >= 0.6 * rng, "lowwick": (np.minimum(o, c) - lo) >= 0.6 * rng,
                  "bigup": (c > o) & (body >= 0.7 * rng), "bigdown": (c < o) & (body >= 0.7 * rng)}[g["candle"]]
-        return _close_entry((_rv(v) >= g["mult"]) & shape, live, c)
+        return _close_entry((_rv(v) >= g["mult"]) & shape, live, c, o=o)
     if family == "OR_ORB":
         hi_, lo_, first = vi.opening_range(m, h, lo, g["k"])
         if not first or not np.isfinite(hi_):
@@ -321,7 +327,7 @@ def _pattern(g: dict, side: int, b: tuple, live: np.ndarray) -> tuple:
                 k = vi.first_true((c < neck) if top else (c > neck), bb + roll)
                 if 0 <= k < n - 1 and live[k]:
                     height = abs(max(x[a], x[bb]) - neck) if top else abs(neck - min(x[a], x[bb]))
-                    return k + 1, float(c[k]), float(max(x[a], x[bb]) if top else min(x[a], x[bb])), height
+                    return k + 1, float(o[k + 1]), float(max(x[a], x[bb]) if top else min(x[a], x[bb])), height
                 break
         return NONE
     # triangles over the last 30 (60) bars in two halves: the flat side's two halves within tol of each other, the
@@ -341,7 +347,7 @@ def _pattern(g: dict, side: int, b: tuple, live: np.ndarray) -> tuple:
             flat = np.fmin(l1, l2)
             x = (np.abs(l2 / l1 - 1) <= tol) & (h2 < h1) & (c < flat)
             other = h2
-    j, e, ref, _ = _close_entry(x, live, c, other)
+    j, e, ref, _ = _close_entry(x, live, c, other, o=o)
     if j < 0:
         return NONE
     return j, e, ref, abs(float(flat[j - 1]) - ref)
@@ -382,7 +388,7 @@ def _candle_at(g: dict, side: int, b: tuple, line: np.ndarray, lv: dict, live: n
     k = vi.first_true(sig, 0)
     if k < 0 or ends[k] >= len(m) - 1:
         return NONE
-    return int(ends[k]) + 1, float(c[k]), float(lo[k] if side > 0 else h[k]), np.nan
+    return int(ends[k]) + 1, float(b[1][int(ends[k]) + 1]), float(lo[k] if side > 0 else h[k]), np.nan
 
 
 # ---------------------------------------------------------------- stops, exits, trades
