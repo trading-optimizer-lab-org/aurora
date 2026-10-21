@@ -87,7 +87,7 @@ def _cache(key, fn):
         return _C[key]
     val = fn()
     _C[key] = val
-    while len(_C) > 8:
+    while len(_C) > 5:
         _C.popitem(last=False)
     return val
 

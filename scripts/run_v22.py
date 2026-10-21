@@ -285,6 +285,8 @@ def cmd_select(args) -> int:
     names = sorted({n for c in ch.values() for n in [*c["picks"].values(), c["best"]] if n})
     real_dir = args.out / "real"
     real_dir.mkdir(parents=True, exist_ok=True)
+    daily = _script("run_v21").Lazy(sorted(args.parts.rglob("daily.parquet")))
+    daily.get(names).to_parquet(real_dir / "daily.parquet")  # the selected configurations' daily returns
     monthly.to_parquet(real_dir / "monthly.parquet")
     counts.to_parquet(real_dir / "counts.parquet")
     (real_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
