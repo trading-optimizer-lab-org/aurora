@@ -75,3 +75,15 @@ def test_double_top_takes_the_first_neckline_break() -> None:
     j, e, ref, height = v23._pattern({"pattern": "double_top", "size": "small"}, -1, _bars(list(c)),
                                      np.ones(len(c), bool))
     assert j == 48 and e == pytest.approx(9.58) and ref == pytest.approx(10.01)
+
+
+def test_worker_pool_can_pickle_the_patched_runner() -> None:
+    import importlib.util
+    import pickle
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "run_v23.py"
+    spec = importlib.util.spec_from_file_location("run_v23_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert pickle.loads(pickle.dumps(module.R22._work)) is module.R22._work  # the canary failed here in v23b run 1

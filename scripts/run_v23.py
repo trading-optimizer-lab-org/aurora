@@ -26,6 +26,7 @@ def _script(name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # so the worker pool pickles run_v22._work as this (patched) module's function
     spec.loader.exec_module(module)
     return module
 
