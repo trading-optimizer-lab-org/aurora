@@ -34,4 +34,12 @@ def test_bootstrap_draws_and_ruin() -> None:
     r = np.full(500, 0.001)
     r[::50] = -0.6
     bad = S.bootstrap(r, idx)
-    assert bad["p_dd50"] > 0.9 and bad["p_dd90"] > 0.5
+    assert bad["p_dd50"] > 0.9 and bad["p_dd90"] > 0.5 and bad["p_dd50"] >= bad["p_dd75"] >= bad["p_dd90"]
+
+
+def test_a_book_that_loses_the_account_stays_ruined() -> None:
+    dates = pd.bdate_range("2020-01-01", periods=60)
+    r = pd.Series(0.01, index=dates)
+    r.iloc[30] = -1.7  # a squeeze worse than the whole account
+    st = S.stats(r, pd.Series(0.0, index=dates))
+    assert st["ruined"] and st["cagr"] == -1.0 and st["dd"] == -1.0 and st["worst_day"] == -1.0

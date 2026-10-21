@@ -50,3 +50,16 @@ margin for low-priced and volatile small caps, so 2x may not be available on eve
 The picks and their period were seen before (no clean window); the bootstrap reshuffles history and cannot produce a
 squeeze bigger than the worst one in the sample; borrow availability is a current IBKR snapshot, and bigger positions
 need more shares to borrow than the snapshot guarantees.
+
+## Amendment before any result (2026-10-21, the owner's request)
+
+The first run (39606676199) computed the books and then failed while writing the report (a book whose equity went
+below zero made its CAGR undefined); none of its numbers was read. At the owner's request ("elimina esto" for the
+position-cap limit; "pon esto con costes realistas ... con 75% de caida en vez de 50"; "con mas servidores y cpu"):
+
+- the cap on one position is no longer limited by the choice; the grid adds 60% and 100% caps (CAPS 20/40/60/100%);
+- the ruin condition is a chance of a **75%** drawdown within ten years of at most 1% at the **middle (R4)** costs;
+  the gross cap of 2x stays; the high costs are still reported;
+- a day that loses more than the account ends the book (equity stays at zero, CAGR -100%);
+- the grid runs as 84 parallel jobs (one per account, risk and cap; 4 processes each for the picks' trades), then a
+  report job. Grid otherwise as above: 7 risks x 4 caps x 4 gross caps x 3 accounts x 2 costs = 672 books.
