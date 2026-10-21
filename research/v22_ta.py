@@ -109,7 +109,10 @@ def rsi(D: dict, n: int) -> np.ndarray:
         d = pd.DataFrame(np.diff(D["C"], axis=0, prepend=np.nan))
         up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
         dn = (-d).clip(lower=0).ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
-        return _f(100 - 100 / (1 + up / dn.replace(0, np.nan)))
+        u, w = up.to_numpy(), dn.to_numpy()
+        with np.errstate(invalid="ignore", divide="ignore"):
+            r = np.where(w > 0, 100 - 100 / (1 + u / np.where(w > 0, w, 1.0)), np.where(u > 0, 100.0, 50.0))
+        return _f(np.where(np.isfinite(u) & np.isfinite(w), r, np.nan))
     return _cache(("rsi", n), make)
 
 
