@@ -1,0 +1,64 @@
+name: v19s COMBO19 position sizing in one account (pre-registered)
+
+# docs/research/V19S_SIZING_PREREGISTRATION.md: the COMBO19 picks traded in one account on a grid of risk per trade,
+# position cap, gross cap and account size under R4 costs, with a block bootstrap of ruin. Uses the v18b inputs in the
+# Actions cache; uploads only the report, the book statistics and the strategy's daily returns.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v19s.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v19s
+  cancel-in-progress: true
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+
+jobs:
+  sizing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_v19s.py --out outputs/v19s
+      - name: Summary
+        if: always()
+        run: if [ -f outputs/v19s/REPORT.md ]; then cat outputs/v19s/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v19s-report
+          path: |
+            outputs/v19s/REPORT.md
+            outputs/v19s/summary.json
+            outputs/v19s/books.csv
+            outputs/v19s/streams.parquet
+          retention-days: 30
