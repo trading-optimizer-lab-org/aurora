@@ -1,6 +1,8 @@
 """v27 checks: the symbol halves, the rotation filter and the adds to a short on the entry day."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -69,3 +71,17 @@ def test_daily_rotation_uses_the_known_session() -> None:
         pytest.approx(1e6 / 3e7)
     sh.intra_row = R._ORIG_INTRA
     assert isinstance(pd.Timestamp("2020-01-01"), pd.Timestamp)
+
+
+def test_quote_legs_and_book_choice() -> None:
+    Q = _script("run_v27_quotes", "run_v27_quotes_under_test")
+    day, nxt = pd.Timestamp("2021-03-05"), pd.Timestamp("2021-03-08")  # a Friday and the Monday after
+    assert Q.leg_time(day, "open", -1, None) == pd.Timestamp("2021-03-05 14:30", tz="UTC")
+    assert Q.leg_time(day, "session", 30, None) == pd.Timestamp("2021-03-05 15:00", tz="UTC")
+    assert Q.leg_time(day, "stop", -1, None) == pd.Timestamp("2021-03-05 20:59", tz="UTC")
+    assert Q.leg_time(day, "ah", 90, nxt) == pd.Timestamp("2021-03-05 22:30", tz="UTC")
+    assert Q.leg_time(day, "pm", 300, nxt) == pd.Timestamp("2021-03-08 10:00", tz="UTC")
+    items = [(0, np.zeros(3), 1.0, 0.6, 7, 0), (1, np.zeros(2), 2.0, 0.3, 7, 1), (1, np.zeros(2), 1.0, 0.6, 8, 2),
+             (4, np.zeros(1), 1.0, 0.5, 9, 3)]
+    assert Q.taken_ids(items, 10, 1.0) == [0, 3]  # 1: symbol 7 still held; 2: gross over 1x
+    assert Q.book_terms(Path("does-not-exist"))[:3] == Q.DEFAULT
