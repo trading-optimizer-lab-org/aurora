@@ -1,0 +1,163 @@
+name: v26s sizing COMBO26 in one account with CenterPoint commissions (pre-registered)
+
+# docs/research/V26S_SIZING_PREREGISTRATION.md. v26's one-account book A (COMBO26's members, their v26 picks, from
+# run 39731260564's report) on a wider sizing grid with CenterPoint's $0.003 a share (and $0.006 with ECN fees).
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v26s.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v26s
+  cancel-in-progress: true
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+
+jobs:
+  book:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        comm: ["0.003", "0.006"]
+        account: [25000, 100000, 250000]
+        risk: [0.0025, 0.005, 0.01, 0.015, 0.02, 0.03, 0.04, 0.06]
+    env:
+      V26_COMM: ${{ matrix.comm }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v26-report
+          path: outputs/v26w/report
+          run-id: 39731260564
+          github-token: ${{ github.token }}
+      - run: python scripts/run_v26.py book --account ${{ matrix.account }} --risk ${{ matrix.risk }} --report outputs/v26w/report --out outputs/v26s/book
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v26s-book-${{ matrix.comm }}-${{ matrix.account }}-${{ matrix.risk }}
+          path: outputs/v26s/book
+          retention-days: 30
+
+  report:
+    needs: book
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v26-report
+          path: outputs/v26w/report
+          run-id: 39731260564
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v26s-book-0.003-*
+          path: outputs/v26s/c003
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v26s-book-0.006-*
+          path: outputs/v26s/c006
+      - run: |
+          mkdir -p outputs/v26s/none
+          python scripts/run_v26.py final --robust outputs/v26s/none --book outputs/v26s/c003 --report outputs/v26w/report --out outputs/v26s/report/comm_0.003
+          python scripts/run_v26.py final --robust outputs/v26s/none --book outputs/v26s/c006 --report outputs/v26w/report --out outputs/v26s/report/comm_0.006
+      - if: always()
+        run: for f in outputs/v26s/report/*/FINAL.md; do echo "## $f" >> "$GITHUB_STEP_SUMMARY"; cat "$f" >> "$GITHUB_STEP_SUMMARY"; done
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v26s-report
+          path: outputs/v26s/report
+          retention-days: 90

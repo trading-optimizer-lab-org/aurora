@@ -134,6 +134,8 @@ def ext_halves(spreads: pd.DataFrame | None, base: np.ndarray) -> np.ndarray:
 
 def load(base: Path) -> None:
     _base_load(base)
+    if os.environ.get("V26_COMM"):  # v26s: a broker's commission a share (and leg) instead of R4's $0.0065
+        v19.R3_COMM = float(os.environ["V26_COMM"])
     D, ev = R14._G["D"], R14._G["store"]
     lq, mv = _store(LIQUID), _store(MOVERS)
     R14._G["liquid"] = lq
@@ -644,8 +646,10 @@ def cmd_book(args) -> int:
                 for gcap in GROSS:
                     s = S.joint_book(net, dates, gcap).loc[a:b]  # type: ignore[misc]
                     name = f"{book}_A{int(args.account / 1000)}k_R{args.risk * 100:g}_C{int(cap * 100)}_G{gcap:g}_{cname}"
+                    yrs = max((s.index[-1] - s.index[0]).days / 365.25, 1e-9)
                     rows.append({"name": name, "book": book, "account": args.account, "risk": args.risk, "cap": cap,
-                                 "gross": gcap, "costs": cname, **S.stats(s, cash), **S.bootstrap(s.to_numpy(), idx)})
+                                 "gross": gcap, "costs": cname, "simple": float(s.clip(lower=-1.0).sum() / yrs),
+                                 **S.stats(s, cash), **S.bootstrap(s.to_numpy(), idx)})
                     if args.account == 100_000.0 and cname == "mid":
                         streams[name] = s.astype(np.float32)
             print(f"{cname} cap {cap}: A {len(books['A'])} paths, B {len(books['B'])}", flush=True)
@@ -774,17 +778,19 @@ def cmd_final(args) -> int:
                 tail = (f"; high costs: CAGR {_pc(h['cagr'])}, DD {_pc(h['dd'])}, p75 {h['p_dd75']:.1%}"
                         if h is not None else "")
                 L.append(f"- ${acct:,.0f}, book {bk}: {p['name']}: Sortino {_f2(p['sortino'])}, CAGR {_pc(p['cagr'])}, "
+                         f"a year on the starting capital {_pc(p.get('simple', np.nan))}, "
                          f"max DD {_pc(p['dd'])}, worst day {_pc(p['worst_day'])}, p75 {p['p_dd75']:.1%}, median "
                          f"bootstrap CAGR {_pc(p['cagr_med'])}{tail}")
-        L += ["", "| book | account | risk | cap | gross | Sortino | CAGR | max DD | worst day | p75 | median CAGR | "
-              "CAGR high | p75 high |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        L += ["", "| book | account | risk | cap | gross | Sortino | CAGR | a year on the start | max DD | worst day | p75 | "
+              "median CAGR | CAGR high | p75 high |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         hi = books[books["costs"] == "high"].set_index(["book", "account", "risk", "cap", "gross"])
         for _, r in books[books["costs"] == "mid"].sort_values(["book", "account", "risk", "cap", "gross"]).iterrows():
             k = (r["book"], r["account"], r["risk"], r["cap"], r["gross"])
             h = hi.loc[k] if k in hi.index else None
             h_cagr, h_p75 = (_pc(h["cagr"]), f"{h['p_dd75']:.1%}") if h is not None else ("-", "-")
             L.append(f"| {r['book']} | {r['account']:,.0f} | {r['risk']:.2%} | {r['cap']:.0%} | {r['gross']:g} | "
-                     f"{_f2(r['sortino'])} | {_pc(r['cagr'])}{' (ruined)' if r['ruined'] else ''} | {_pc(r['dd'])} | "
+                     f"{_f2(r['sortino'])} | {_pc(r['cagr'])}{' (ruined)' if r['ruined'] else ''} | "
+                     f"{_pc(r.get('simple', np.nan))} | {_pc(r['dd'])} | "
                      f"{_pc(r['worst_day'])} | {r['p_dd75']:.1%} | {_pc(r['cagr_med'])} | {h_cagr} | {h_p75} |")
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "FINAL.md").write_text("\n".join(L) + "\n", encoding="utf-8")
