@@ -1,0 +1,147 @@
+name: v28 data (SEC, Reg SHO, FINRA short interest, VIX, premarket of the gap days)
+
+# scripts/run_v28_data.py. Public inputs of the v28 megarun (docs/research/V28_PREREGISTRATION.md). Everything stays
+# in the Actions cache; nothing is published.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v28-data.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v28-data
+  cancel-in-progress: true
+
+jobs:
+  sec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/sec
+          key: v14-sec-none
+          restore-keys: v14-sec-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v28_data.py sec
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v28/sec
+          key: v28-sec-${{ github.run_id }}-${{ github.run_attempt }}
+
+  misc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - run: python scripts/run_v28_data.py regsho
+      - run: python scripts/run_v28_data.py finra
+      - run: python scripts/run_v28_data.py macro
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/regsho
+            outputs/v28/finra
+            outputs/v28/macro
+          key: v28-misc-${{ github.run_id }}-${{ github.run_attempt }}
+
+  pm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_v28_data.py pm --budget-min 150
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v28/pmstore
+          key: v28-pm-${{ github.run_id }}-${{ github.run_attempt }}
+
+  build:
+    needs: [sec, misc, pm]
+    if: always() && needs.sec.result == 'success' && needs.misc.result == 'success' && needs.pm.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/sec
+          key: v14-sec-none
+          restore-keys: v14-sec-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v28/sec
+          key: v28-sec-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: v28-sec-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/regsho
+            outputs/v28/finra
+            outputs/v28/macro
+          key: v28-misc-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: v28-misc-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v28/pmstore
+          key: v28-pm-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: v28-pm-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v28_data.py build
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs-${{ github.run_id }}-${{ github.run_attempt }}
