@@ -170,3 +170,24 @@ def test_books_and_registry() -> None:
     g = v28.event_grid("C:LOCKUP_SHORT")
     assert {x["trig"] for x in g} == {"open"}
     assert len(v19.COLS) >= 17
+
+
+def test_margin_by_price_and_the_joint_book() -> None:
+    from test_v24 import _script
+    A = _script("run_v28_after", "run_v28_after_under_test")
+    m = A.margin(np.array([1.5, 3.0, 10.0]), np.array([-1, -1, -1]), "tzi", "intra")
+    assert m == pytest.approx([2.5 / 1.5, 1.0, 1 / 6])
+    assert A.margin(np.array([10.0]), np.array([-1]), "tzi", "night")[0] == pytest.approx(0.5)
+    assert A.margin(np.array([3.0]), np.array([-1]), "tzus", "intra")[0] == pytest.approx(5 / 3)
+    dates = pd.bdate_range("2020-01-01", periods=20)
+    v28.X.clear()
+
+    def it(i0, j, w, price, r=(0.01,)):
+        return {"i0": i0, "r": np.array(r), "prio": 0.0, "w": w, "j": j, "price": price, "side": -1, "nights": 0.0,
+                "ah": False, "liq": 1e6, "fam": "F", "sym": "S"}
+    s, taken = A.joint([it(2, 0, 0.8, 1.5)], dates, 2.0, rule="tzi", locate=0.0)
+    assert taken == []  # 0.8 of the account at $1.50 needs 133% of the equity
+    s, taken = A.joint([it(2, 0, 0.8, 1.5)], dates, 2.0, rule="none", locate=0.0)
+    assert len(taken) == 1 and s.iloc[2] == pytest.approx(0.008)
+    s, taken = A.joint([it(2, 0, 0.3, 10.0, (0.01, 0.02)), it(3, 0, 0.3, 10.0)], dates, 2.0, rule="tzi", locate=0.01)
+    assert len(taken) == 1 and s.iloc[2] == pytest.approx(0.3 * (0.01 - 0.01))  # same symbol still held: skipped
