@@ -4,7 +4,7 @@ name: v27 v26 checked (symbol halves) and extended (rotation, adds) (pre-registe
 # grid on two halves of the symbols (300 shards, selection on each half, the holdout measure); C: v26's picks with a
 # rotation filter and adds (100 shards, selection, 300 shards of placebos, report). Failed shards rerun once.
 # Market data stays in the Actions cache; the jobs upload reports and strategy returns.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -39,7 +39,7 @@ jobs:
             echo "$(date -u +%H:%M) v26: $line"
             set -- $line
             if [ "$2" = "completed" ]; then
-              names=$(gh api "repos/${{ github.repository }}/actions/runs/$1/artifacts?per_page=100" -q '.artifacts[].name')
+              names=$(gh api "repos/${{ github.repository }}/actions/runs/$1/artifacts?per_page=100" --paginate -q '.artifacts[].name')
               echo "$names" | grep -qx v26-report || { echo "v26 left no report"; exit 1; }
               echo "run=$1" >> "$GITHUB_OUTPUT"
               exit 0

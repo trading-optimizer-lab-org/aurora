@@ -3,7 +3,7 @@ name: v27 A v26's one-account book with each trade's own quotes (pre-registered)
 # docs/research/V27_PREREGISTRATION.md, section A. Waits for the latest v26 resume run (its report and final report);
 # then the trades of v26's $100k book A, Alpaca SIP quotes in each leg's minute, and the book rebuilt with the
 # measured half-spreads. The trade list stays on the runner; the artifact holds the report and the book's returns.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -38,7 +38,7 @@ jobs:
             echo "$(date -u +%H:%M) v26 resume: $line"
             set -- $line
             if [ "$2" = "completed" ]; then
-              names=$(gh api "repos/${{ github.repository }}/actions/runs/$1/artifacts?per_page=100" -q '.artifacts[].name')
+              names=$(gh api "repos/${{ github.repository }}/actions/runs/$1/artifacts?per_page=100" --paginate -q '.artifacts[].name')
               echo "$names" | grep -qx v26-report || { echo "v26 left no report"; exit 1; }
               echo "run=$1" >> "$GITHUB_OUTPUT"
               exit 0
