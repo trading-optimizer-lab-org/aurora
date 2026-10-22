@@ -1,11 +1,11 @@
 name: v28 small-cap megarun (pre-registered)
 
-# docs/research/V28_PREREGISTRATION.md. Waits for the latest v28 data run; then the v18b inputs, the v23 liquid, v24
+# docs/research/V28_PREREGISTRATION.md. Waits for the latest v28 build run; then the v18b inputs, the v23 liquid, v24
 # mover and v26 night stores and the v28 inputs -> canary (the first and last configuration of every family) -> 300
 # shards x 4 processes of real returns -> failed shards rerun once -> selection -> 300 shards of placebos -> failed
 # shards rerun once -> report. The after-report stages are in v28-after.yml.
 # Market data stays in the Actions cache; the jobs upload reports and strategy returns.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -28,13 +28,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 358
     steps:
-      - name: Wait for the latest v28 data run to finish
+      - name: Wait for the latest v28 build run to finish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           for i in $(seq 1 350); do
-            line=$(gh run list --repo "${{ github.repository }}" --workflow v28-data.yml --branch research/stock-catalog --limit 1 --json databaseId,status,conclusion -q '.[0] | "\(.databaseId) \(.status) \(.conclusion)"' || echo "")
-            echo "$(date -u +%H:%M) v28 data: $line"
+            line=$(gh run list --repo "${{ github.repository }}" --workflow v28-build.yml --branch research/stock-catalog --limit 1 --json databaseId,status,conclusion -q '.[0] | "\(.databaseId) \(.status) \(.conclusion)"' || echo "")
+            echo "$(date -u +%H:%M) v28 build: $line"
             set -- $line
             if [ "$2" = "completed" ]; then
               if [ "$3" = "success" ]; then exit 0; fi
@@ -95,8 +95,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - run: python scripts/run_v28.py real --canary --workers 4 --out outputs/v28w/canary
       - if: always()
@@ -161,8 +161,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - run: python scripts/run_v28.py real --shard ${{ matrix.shard }} --shards 300 --workers 4 --out outputs/v28w/part
       - if: always()
@@ -227,8 +227,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - run: python scripts/run_v28.py real --shard ${{ matrix.shard }} --shards 300 --workers 4 --out outputs/v28w/part
       - if: always()
@@ -316,8 +316,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - run: python scripts/run_v28.py real --shard ${{ matrix.shard }} --shards 300 --workers 4 --out outputs/v28w/part
       - if: always()
@@ -382,8 +382,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -459,8 +459,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - run: python scripts/run_v28.py placebo --shard ${{ matrix.shard }} --shards 300 --workers 4 --selected "$SELECTED" --out outputs/v28w/part
       - if: always()
@@ -527,8 +527,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - run: python scripts/run_v28.py placebo --shard ${{ matrix.shard }} --shards 300 --workers 4 --selected "$SELECTED" --out outputs/v28w/part
       - if: always()
@@ -618,8 +618,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - run: python scripts/run_v28.py placebo --shard ${{ matrix.shard }} --shards 300 --workers 4 --selected "$SELECTED" --out outputs/v28w/part
       - if: always()
@@ -682,8 +682,8 @@ jobs:
           path: |
             outputs/v28/inputs
             outputs/v28/pmstore
-          key: v28-inputs-none
-          restore-keys: v28-inputs-
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
           fail-on-cache-miss: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

@@ -38,7 +38,8 @@ Filters (unknown values keep the trade, except the 'keep only' rules):
 - fails to deliver over shares outstanding (max of the last 10 known settlement days) at least 0.5%, 1%, 2%: skip;
 - on the threshold list in the last five sessions: skip; or keep only those;
 - short interest at least 10% or 20% of shares outstanding: skip; days to cover at least 3 or 5: skip;
-- cash runway (cash over a third of the last quarter's operating cash burn) under 6 or 12 months: keep only those;
+- cash runway (cash over the monthly operating cash burn of the latest reported period, 3-12 months, as 10-Qs report
+  cash flows year to date) under 6 or 12 months: keep only those;
   12 months or more: keep only those;
 - a going-concern doubt filed in the last 400 sessions: keep only those; or skip them;
 - shares outstanding up 20% or 50% over 250 sessions: keep only those;

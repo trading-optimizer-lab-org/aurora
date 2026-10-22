@@ -427,8 +427,9 @@ def _ffill_known(arr: np.ndarray, limit: int) -> np.ndarray:
 
 
 def facts_panel(D: dict, facts: pd.DataFrame, hist: pd.DataFrame) -> dict[str, np.ndarray]:
-    """Latest reported value of each fact known at each session (by filing date): cash, quarterly operating cash
-    flow (a 3-month duration), trailing net income over assets, equity."""
+    """Latest reported value of each fact known at each session (by filing date): cash, assets, equity, and from the
+    latest period of each filing (3 to 12 months: 10-Qs report cash flows year to date) the operating cash flow a
+    month and the net income a year."""
     out = {}
     f = facts.copy()
     f["date"] = f["filed"]
@@ -436,12 +437,14 @@ def facts_panel(D: dict, facts: pd.DataFrame, hist: pd.DataFrame) -> dict[str, n
         x = f[f["key"] == key].sort_values("end").drop_duplicates(["cik", "filed"], keep="last")
         r = _cik_rows(D, x, hist)
         out[key] = _ffill_known(_panel(D, r, "val"), 400)
-    for key in ("ocf", "ni"):
+    for key, unit in (("ocf", 30.44), ("ni", 365.25)):
         x = f[(f["key"] == key) & f["start"].notna()].copy()
-        days = (pd.to_datetime(x["end"]) - pd.to_datetime(x["start"])).dt.days
-        x = x[(days >= 80) & (days <= 100)].sort_values("end").drop_duplicates(["cik", "filed"], keep="last")
+        days = (pd.to_datetime(x["end"], errors="coerce") - pd.to_datetime(x["start"], errors="coerce")).dt.days
+        x = x.assign(days=days)[(days >= 80) & (days <= 380)]
+        x = x.sort_values(["end", "days"]).drop_duplicates(["cik", "filed"], keep="last")
+        x = x.assign(val=x["val"] / x["days"] * unit)
         r = _cik_rows(D, x, hist)
-        out[key + "_q"] = _ffill_known(_panel(D, r, "val"), 400)
+        out[key + ("_m" if key == "ocf" else "_y")] = _ffill_known(_panel(D, r, "val"), 400)
     return out
 
 
@@ -471,9 +474,9 @@ def cmd_build(args) -> int:
         X["si_known"] = _ffill_known(_panel(D, r), 25) > 0
     fp = facts_panel(D, pd.read_parquet(sec / "facts.parquet"), hist)
     with np.errstate(invalid="ignore", divide="ignore"):
-        burn = -np.minimum(fp["ocf_q"], 0.0) / 3.0
+        burn = -np.minimum(fp["ocf_m"], 0.0)
         X["runway"] = np.where(burn > 0, fp["cash"] / burn, np.where(fp["cash"] > 0, 999.0, np.nan)).astype(np.float32)
-        X["roa"] = np.where(fp["assets"] > 0, 4 * fp["ni_q"] / fp["assets"], np.nan).astype(np.float32)
+        X["roa"] = np.where(fp["assets"] > 0, fp["ni_y"] / fp["assets"], np.nan).astype(np.float32)
         X["eq_neg"] = fp["equity"] < 0
         so = pd.DataFrame(D["SO"]).ffill()
         X["so_g250"] = (so / so.shift(250) - 1).to_numpy(np.float32)

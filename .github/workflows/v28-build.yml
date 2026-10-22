@@ -1,0 +1,91 @@
+name: v28 build (the v28 inputs from the data run's parts, with the corrected cash-flow periods)
+
+# scripts/run_v28_data.py build. Waits for the latest v28 data run's download jobs (sec, misc, pm), then builds
+# extras28.pkl with this commit's code (10-Qs report cash flows year to date: the burn a month comes from the latest
+# period of 3-12 months). The v28 run waits for this workflow.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v28-build.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v28-build
+  cancel-in-progress: true
+
+jobs:
+  wait:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 358
+    steps:
+      - name: Wait for the v28 data run's download jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 350); do
+            id=$(gh run list --repo "${{ github.repository }}" --workflow v28-data.yml --branch research/stock-catalog --limit 1 --json databaseId -q '.[0].databaseId')
+            st=$(gh run view "$id" --repo "${{ github.repository }}" --json jobs -q '[.jobs[] | select(.name == "sec" or .name == "misc" or .name == "pm") | "\(.status):\(.conclusion)"] | join(" ")')
+            echo "$(date -u +%H:%M) data $id: $st"
+            if [ "$(echo "$st" | grep -o 'completed:success' | wc -l)" = 3 ]; then exit 0; fi
+            case "$st" in *completed:failure*|*completed:cancelled*) exit 1;; esac
+            sleep 60
+          done
+          exit 1
+
+  build:
+    needs: wait
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v14/sec
+          key: v14-sec-none
+          restore-keys: v14-sec-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v28/sec
+          key: v28-sec-none
+          restore-keys: v28-sec-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/regsho
+            outputs/v28/finra
+            outputs/v28/macro
+          key: v28-misc-none
+          restore-keys: v28-misc-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v28/pmstore
+          key: v28-pm-none
+          restore-keys: v28-pm-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v28_data.py build
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-${{ github.run_id }}-${{ github.run_attempt }}

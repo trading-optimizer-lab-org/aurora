@@ -191,3 +191,53 @@ def test_margin_by_price_and_the_joint_book() -> None:
     assert len(taken) == 1 and s.iloc[2] == pytest.approx(0.008)
     s, taken = A.joint([it(2, 0, 0.3, 10.0, (0.01, 0.02)), it(3, 0, 0.3, 10.0)], dates, 2.0, rule="tzi", locate=0.01)
     assert len(taken) == 1 and s.iloc[2] == pytest.approx(0.3 * (0.01 - 0.01))  # same symbol still held: skipped
+
+
+def test_every_family_kind_runs_on_a_small_panel() -> None:
+    rng = np.random.default_rng(11)
+    T, N = 700, 12
+    dates = pd.bdate_range("2018-01-01", periods=T)
+    C = 4 * np.exp(np.cumsum(rng.normal(0, 0.07, (T, N)), axis=0))
+    O = C * (1 + rng.normal(0, 0.1, (T, N)))
+    H, L = np.maximum(O, C) * 1.05, np.minimum(O, C) * 0.95
+    D = {"dates": dates, "O": O, "H": H, "L": L, "C": C, "P": C.copy(), "F": np.ones((T, N)),
+         "cols": np.array(["TNA", "TZA"] + [f"S{i}" for i in range(N - 2)]), "SO": np.full((T, N), 2e7),
+         "new": np.zeros((T, N), bool), "events": {"offering": pd.DataFrame({"t": [5], "j": [3]})},
+         "valid": np.ones((T, N), bool), "DV1": np.full((T, N), 6e6), "DV": np.full((T, N), 6e6)}
+    D["valid1"] = np.vstack([np.zeros((1, N), bool), D["valid"][:-1]])
+    D["P1"] = np.vstack([np.full((1, N), np.nan), C[:-1]])
+    ex = _extras(D)
+    ex["sic"] = np.array(["2834"] * N)
+    ex["vix"] = np.full(T, 20.0)
+    ex["runway"] = rng.uniform(1, 40, (T, N)).astype(np.float32)
+    ex["roa"] = rng.normal(0, 0.2, (T, N)).astype(np.float32)
+    ev_rows = pd.DataFrame({"t": rng.integers(20, T - 20, 40), "j": rng.integers(2, N, 40)})
+    ex["events"] = {k: ev_rows for k in ("effect", "pipe", "nt", "gc_new", "crypto", "rename", "despac", "s4",
+                                         "earn", "news", "buyback", "ipo")}
+    ex["events"]["pdufa"] = ev_rows.assign(t_target=ev_rows["t"] + 30).query("t_target < @T")
+    _prep(D, ex)
+    table: dict = {}
+    n_specs = {}
+    for key in v28.EVENT_FAMS:
+        g = v28.event_grid(key)[0]
+        specs = v28.event_specs(D, key, g)
+        n_specs[key] = len(specs)
+        sh.set_params({"hold": g["hold"], "stop": g["stop"], "ext": g["ext"], "rally": "none", "scale": "all"})
+        s, paths, taken = v19.daily_book(D, specs, table, 1.0)
+        sh.set_params(None)
+        assert np.isfinite(s.to_numpy()).all(), key
+    assert sum(n_specs.values()) > 20, n_specs
+    for key in v28.LONG_FAMS:
+        for g in v28.long_grid(key)[:3]:
+            s, _, _ = v19.daily_book(D, v28.long_specs(D, key, g), table, 1.0)
+            assert np.isfinite(s.to_numpy()).all(), key
+    for g in v28.FACTOR_GRID[:6]:
+        s, paths, taken = v28.factor_book(D, g, table, 1.0, 1.0, False)
+        assert np.isfinite(s.to_numpy()).all() and len(paths) == len(taken)
+        s2, _, _ = v28.factor_book(D, g, table, 1.0, 1.0, False, np.random.default_rng(1))
+        assert np.isfinite(s2.to_numpy()).all()
+    for g in v28.LEV_GRID:
+        assert np.isfinite(v28.lev_book(D, g, 1.0, 1.0, False)[0].to_numpy()).all()
+        assert np.isfinite(v28.lev_book(D, g, 1.0, 1.0, False, np.random.default_rng(2))[0].to_numpy()).all()
+    for rule in v28.FILTERS28:
+        assert v28.keep28(D, np.array([300, 400]), np.array([3, 4]), rule).dtype == bool
