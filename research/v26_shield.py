@@ -165,6 +165,14 @@ def walk(D: dict, u0: int, j: int, e: float, stop: float, prev: float, w: float,
             rets.append(w * (prev - px) / e)
             EXIT.update(row=u, kind="open" if o >= stop else "stop", minute=-1)
             return rets, nights, 2
+        tg = P.get("target", "none")  # v28: cover at a fall of 20/30/50% from the entry; v26 has none
+        if tg != "none":
+            lvl, lo = e * (1 - int(tg[1:]) / 100), float(D["L"][u, j])
+            if np.isfinite(lo) and lo <= lvl:
+                px = o if o <= lvl else lvl
+                rets.append(w * (prev - px) / e)
+                EXIT.update(row=u, kind="target", minute=-1)
+                return rets, nights, 2
         rets.append(w * (prev - c) / e)
         prev = c
         EXIT.update(row=u, kind="close", minute=-1)
