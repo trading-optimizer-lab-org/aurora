@@ -143,3 +143,11 @@ margin with a 0.5% locate cost per short at the middle costs; the high-cost twin
 **G. Symbol halves**: each family's walk-forward stream recomputed on each half of the symbols (SHA-256 parity of the
 ticker, as v27), with the same picks. This is weaker than v27's holdout (the picks saw both halves); it shows whether
 a result rests on one half of the names.
+
+## 7. Notes added before any result (2026-10-22, after the canary)
+
+- IPO family: a new listing has no 20-day dollar volume in its first ten sessions, so its size cap and liquidity
+  filter use the mean dollar volume of its sessions so far (DV) and before the entry (DV1); other families unchanged.
+- The shards take blocks of 50 neighbouring configurations in a seeded random order (the premarket and after-hours
+  families are slow); the configurations and their names are unchanged.
+- Premarket and after-hours trades are walked once at the middle slippage; their gross record reuses those walks.
