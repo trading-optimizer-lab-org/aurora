@@ -96,7 +96,9 @@ def load(base: Path) -> None:
     v28.install()
     v28.prepare(D, E, extras, btc)
     if (PM / "nights.parquet").exists():
-        v28.PM_STORE = sh.Nights(pd.read_parquet(PM / "nights.parquet"), dict(np.load(PM / "nights.npz")))
+        arrays = dict(np.load(PM / "nights.npz"))
+        v28.PM_STORE = sh.Nights(pd.read_parquet(PM / "nights.parquet"), arrays)
+        v28.PM_STORE.a["v"] = arrays["v"]  # the size cap reads the premarket dollar volume before the entry
     registry()
 
 

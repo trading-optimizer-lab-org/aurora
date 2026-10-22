@@ -5,7 +5,7 @@ name: v28 small-cap megarun (pre-registered)
 # shards x 4 processes of real returns -> failed shards rerun once -> selection -> 300 shards of placebos -> failed
 # shards rerun once -> report. The after-report stages are in v28-after.yml.
 # Market data stays in the Actions cache; the jobs upload reports and strategy returns.
-# run: 2
+# run: 3
 on:
   push:
     branches: [research/stock-catalog]
