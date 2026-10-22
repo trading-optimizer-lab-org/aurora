@@ -241,3 +241,13 @@ def test_every_family_kind_runs_on_a_small_panel() -> None:
         assert np.isfinite(v28.lev_book(D, g, 1.0, 1.0, False, np.random.default_rng(2))[0].to_numpy()).all()
     for rule in v28.FILTERS28:
         assert v28.keep28(D, np.array([300, 400]), np.array([3, 4]), rule).dtype == bool
+
+
+def test_ipo_panel_fills_the_first_sessions_of_a_listing() -> None:
+    D = _D28(T=60)
+    D["DV"][:15, 0] = np.nan
+    D["DV1"][:16, 0] = np.nan
+    _prep(D)
+    P = v28.ipo_panel(D)
+    assert np.isfinite(P["DV"][0, 0]) and np.isfinite(P["DV1"][1, 0]) and not np.isfinite(P["DV1"][0, 0])
+    assert P["DV"][20, 0] == D["DV"][20, 0]

@@ -82,8 +82,16 @@ def registry() -> dict[str, tuple[str, list[dict]]]:
     return _S["reg"]
 
 
+BLOCK = 50
+
+
 def configs() -> list[tuple[str, int]]:
-    return [(k, i) for k, (_, cfgs) in registry().items() for i in range(len(cfgs))]
+    """Blocks of 50 neighbouring configurations in a seeded random order, so that the slow families (premarket and
+    after-hours entries) spread over the shards while a block still shares its entries."""
+    allc = [(k, i) for k, (_, cfgs) in registry().items() for i in range(len(cfgs))]
+    blocks = [allc[i:i + BLOCK] for i in range(0, len(allc), BLOCK)]
+    order = np.random.default_rng(28).permutation(len(blocks))
+    return [c for b in order for c in blocks[b]]
 
 
 def load(base: Path) -> None:
@@ -162,6 +170,8 @@ def evaluate(key: str, ci: int, placebo_rng: np.random.Generator | None = None) 
     kind, cfgs = registry()[key]
     g = cfgs[ci]
     D, table = R14._G["D"], R16._W["table"]
+    if key == "C:IPO_SHORT":
+        D = v28.ipo_panel(D)
     dates = D["dates"]
     if kind == "shield":
         _TARGET["v"] = g["target"]

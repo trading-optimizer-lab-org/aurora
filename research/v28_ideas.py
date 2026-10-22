@@ -319,6 +319,23 @@ def ipo_rows(D: dict) -> np.ndarray:
     return out
 
 
+def ipo_panel(D: dict) -> dict:
+    """The panel for the IPO family: where a new listing has no 20-day dollar volume yet (its first ten sessions),
+    the mean dollar volume of its sessions so far (DV) and before (DV1)."""
+    if "ipo_D" not in X:
+        V = X.get("E_V")
+        P = np.asarray(D["P"], float)
+        dollar = P * V if V is not None else np.full(P.shape, np.nan)
+        fin = np.isfinite(dollar)
+        mean = np.nancumsum(np.where(fin, dollar, 0.0), axis=0) / np.maximum(np.cumsum(fin, axis=0), 1)
+        mean = np.where(np.cumsum(fin, axis=0) > 0, mean, np.nan)
+        dv = np.asarray(D["DV"], float)
+        dv_f = np.where(np.isfinite(dv), dv, mean)
+        dv1_f = np.where(np.isfinite(np.asarray(D["DV1"], float)), D["DV1"], _shift(dv_f))
+        X["ipo_D"] = {**D, "DV": dv_f.astype(np.float32), "DV1": dv1_f.astype(np.float32)}
+    return X["ipo_D"]
+
+
 def sympathy_mask(D: dict, x: float) -> np.ndarray:
     """Session t: a company of the same four-digit SIC code (a leader) closed +50% (prior close $1-$20) and this one
     closed +x without an 8-K that session or the one before."""
