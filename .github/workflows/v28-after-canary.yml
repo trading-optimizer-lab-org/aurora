@@ -1,0 +1,85 @@
+name: v28 after-canary (the after-report stages on a test summary)
+
+# scripts/run_v28_after.py in quick mode (V28_QUICK) on a test summary of five picks, before the real report exists.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v28-after-canary.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v28-after-canary
+  cancel-in-progress: true
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+  V28_QUICK: "1"
+
+jobs:
+  canary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - name: Test summary
+        run: |
+          mkdir -p outputs/v28w/fake
+          cp tests/data/v28_after_canary_summary.json outputs/v28w/fake/summary.json
+      - run: python scripts/run_v28_after.py core --shard 0 --shards 1 --report outputs/v28w/fake --out outputs/v28w/fake/core
+      - run: python scripts/run_v28_after.py halves --shard 0 --shards 1 --report outputs/v28w/fake --out outputs/v28w/fake/halves
+      - run: python scripts/run_v28_after.py sens --core outputs/v28w/fake/core --report outputs/v28w/fake --out outputs/v28w/fake/sens
+      - run: python scripts/run_v28_after.py final --sens outputs/v28w/fake/sens --halves outputs/v28w/fake/halves --report outputs/v28w/fake --out outputs/v28w/fake/after
+      - if: always()
+        run: if [ -f outputs/v28w/fake/after/AFTER.md ]; then cat outputs/v28w/fake/after/AFTER.md >> "$GITHUB_STEP_SUMMARY"; fi

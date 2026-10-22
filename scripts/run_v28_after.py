@@ -54,6 +54,12 @@ SPREADS = (1.0, 1.25, 1.5, 1.75, 2.0)
 DELAYS = (0, 1, 2, 5)
 ACCOUNTS = (25_000.0, 100_000.0, 250_000.0, 500_000.0, 1_000_000.0)
 BASE_LOCATE = 0.005
+QUICK = bool(__import__("os").environ.get("V28_QUICK"))  # the after-canary: a small grid on a test summary
+if QUICK:
+    RISKS, CAPS, GROSS, MAX_OPEN, MAX_NEW = (0.005,), (0.20,), (1.0,), (20,), (5,)
+    ORDERS, SECTOR, LOCATE, PREBORROW = ("time", "risk"), ("none", "sic2"), (0.0, 0.005), (0.0,)
+    SPREADS, DELAYS, ACCOUNTS = (1.0,), (0, 1), (100_000.0,)
+    S.PATHS = 50
 T1, NASDAQ = pd.Timestamp("2024-05-28"), pd.Timestamp("2025-01-17")
 _HALF: dict = {}
 
@@ -357,6 +363,8 @@ def cmd_sens(args) -> int:
     out: dict = {"choice": {}, "battery": [], "worst": {}, "segments": {}}
     for bk in ("A28", "A26"):
         p = choice(df, bk) if len(df) else None
+        if p is None and QUICK and len(df[df["book"] == bk]):
+            p = df[df["book"] == bk].iloc[0]
         if p is None:
             out["choice"][bk] = None
             continue

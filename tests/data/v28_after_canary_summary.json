@@ -1,0 +1,149 @@
+{
+ "families": {
+  "B:v19:DS1": {
+   "picks": {
+    "2018": "B:v19:DS1_RUNUP|0",
+    "2019": "B:v19:DS1_RUNUP|0",
+    "2020": "B:v19:DS1_RUNUP|0",
+    "2021": "B:v19:DS1_RUNUP|0",
+    "2022": "B:v19:DS1_RUNUP|0",
+    "2023": "B:v19:DS1_RUNUP|0",
+    "2024": "B:v19:DS1_RUNUP|0",
+    "2025": "B:v19:DS1_RUNUP|0",
+    "2026": "B:v19:DS1_RUNUP|0"
+   },
+   "wf": {
+    "sortino": 1.0
+   }
+  },
+  "B:v25:PS": {
+   "picks": {
+    "2018": "B:v25:PS_PATTERN|1000",
+    "2019": "B:v25:PS_PATTERN|1000",
+    "2020": "B:v25:PS_PATTERN|1000",
+    "2021": "B:v25:PS_PATTERN|1000",
+    "2022": "B:v25:PS_PATTERN|1000",
+    "2023": "B:v25:PS_PATTERN|1000",
+    "2024": "B:v25:PS_PATTERN|1000",
+    "2025": "B:v25:PS_PATTERN|1000",
+    "2026": "B:v25:PS_PATTERN|1000"
+   },
+   "wf": {
+    "sortino": 1.0
+   }
+  },
+  "C:PM": {
+   "picks": {
+    "2018": "C:PM_SHORT|0",
+    "2019": "C:PM_SHORT|0",
+    "2020": "C:PM_SHORT|0",
+    "2021": "C:PM_SHORT|0",
+    "2022": "C:PM_SHORT|0",
+    "2023": "C:PM_SHORT|0",
+    "2024": "C:PM_SHORT|0",
+    "2025": "C:PM_SHORT|0",
+    "2026": "C:PM_SHORT|0"
+   },
+   "wf": {
+    "sortino": 1.0
+   }
+  },
+  "C:EFFECT": {
+   "picks": {
+    "2018": "C:EFFECT_SHORT|0",
+    "2019": "C:EFFECT_SHORT|0",
+    "2020": "C:EFFECT_SHORT|0",
+    "2021": "C:EFFECT_SHORT|0",
+    "2022": "C:EFFECT_SHORT|0",
+    "2023": "C:EFFECT_SHORT|0",
+    "2024": "C:EFFECT_SHORT|0",
+    "2025": "C:EFFECT_SHORT|0",
+    "2026": "C:EFFECT_SHORT|0"
+   },
+   "wf": {
+    "sortino": 1.0
+   }
+  },
+  "D:FACTOR": {
+   "picks": {
+    "2018": "D:FACTOR_BOOK|0",
+    "2019": "D:FACTOR_BOOK|0",
+    "2020": "D:FACTOR_BOOK|0",
+    "2021": "D:FACTOR_BOOK|0",
+    "2022": "D:FACTOR_BOOK|0",
+    "2023": "D:FACTOR_BOOK|0",
+    "2024": "D:FACTOR_BOOK|0",
+    "2025": "D:FACTOR_BOOK|0",
+    "2026": "D:FACTOR_BOOK|0"
+   },
+   "wf": {
+    "sortino": 1.0
+   }
+  }
+ },
+ "members": {
+  "2018": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2019": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2020": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2021": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2022": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2023": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2024": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2025": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ],
+  "2026": [
+   "B:v19:DS1",
+   "B:v25:PS",
+   "C:EFFECT",
+   "C:PM",
+   "D:FACTOR"
+  ]
+ }
+}
