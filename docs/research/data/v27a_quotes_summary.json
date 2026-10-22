@@ -1,0 +1,242 @@
+{
+ "book": {
+  "risk": 0.01,
+  "cap": 0.4,
+  "gross": 1.0,
+  "name": "A_A100k_R1_C40_G1_mid",
+  "trades": 11049
+ },
+ "results": {
+  "tier": {
+   "sortino": 4.602647692793367,
+   "cagr": 1.1258222878140285,
+   "dd": -0.5424862931588399,
+   "total": 753.3523877792543,
+   "worst_day": -0.2758051337481867,
+   "worst_month": -0.3543305881687906,
+   "ruined": false,
+   "p_dd50": 0.2795,
+   "p_dd75": 0.002,
+   "p_dd90": 0.0,
+   "dd_p95": -0.6117676160062424,
+   "cagr_med": 1.128262233821975,
+   "cagr_p05": 0.6909275834351079
+  },
+  "measured": {
+   "sortino": 4.242524076677755,
+   "cagr": 1.03407599886956,
+   "dd": -0.5457013336551028,
+   "total": 510.96582771906975,
+   "worst_day": -0.2760151229194483,
+   "worst_month": -0.355624930752903,
+   "ruined": false,
+   "p_dd50": 0.3225,
+   "p_dd75": 0.0025,
+   "p_dd90": 0.0,
+   "dd_p95": -0.6277739883221333,
+   "cagr_med": 1.0373093257213504,
+   "cagr_p05": 0.6101453882158575
+  },
+  "measured x1.5": {
+   "sortino": 2.6221606566350824,
+   "cagr": 0.6297330480652625,
+   "dd": -0.6517819251580288,
+   "total": 72.04745537443357,
+   "worst_day": -0.27644425294080843,
+   "worst_month": -0.3698261276035021,
+   "ruined": false,
+   "p_dd50": 0.569,
+   "p_dd75": 0.0295,
+   "p_dd90": 0.0,
+   "dd_p95": -0.7160540592530246,
+   "cagr_med": 0.6318511493078709,
+   "cagr_p05": 0.29343955848768477
+  }
+ },
+ "legs": [
+  {
+   "leg": "open",
+   "tier": 0,
+   "legs": 196,
+   "quoted": 196,
+   "measured": 0.00394815864152536,
+   "tier_value": 0.006633
+  },
+  {
+   "leg": "open",
+   "tier": 1,
+   "legs": 363,
+   "quoted": 363,
+   "measured": 0.003551496702181648,
+   "tier_value": 0.008026
+  },
+  {
+   "leg": "open",
+   "tier": 2,
+   "legs": 268,
+   "quoted": 267,
+   "measured": 0.004390779363336997,
+   "tier_value": 0.008188
+  },
+  {
+   "leg": "open",
+   "tier": 3,
+   "legs": 230,
+   "quoted": 229,
+   "measured": 0.005067105548586701,
+   "tier_value": 0.009853
+  },
+  {
+   "leg": "session",
+   "tier": 0,
+   "legs": 2353,
+   "quoted": 2318,
+   "measured": 0.0036363636363635587,
+   "tier_value": 0.004728
+  },
+  {
+   "leg": "session",
+   "tier": 1,
+   "legs": 5951,
+   "quoted": 5855,
+   "measured": 0.0026385224274406358,
+   "tier_value": 0.003602
+  },
+  {
+   "leg": "session",
+   "tier": 2,
+   "legs": 3019,
+   "quoted": 2992,
+   "measured": 0.002962255002704841,
+   "tier_value": 0.003977
+  },
+  {
+   "leg": "close",
+   "tier": 0,
+   "legs": 1509,
+   "quoted": 1473,
+   "measured": 0.00460829493087558,
+   "tier_value": 0.005763
+  },
+  {
+   "leg": "close",
+   "tier": 1,
+   "legs": 3974,
+   "quoted": 3862,
+   "measured": 0.0036363636363635587,
+   "tier_value": 0.004782
+  },
+  {
+   "leg": "close",
+   "tier": 2,
+   "legs": 2597,
+   "quoted": 2536,
+   "measured": 0.002766254374883566,
+   "tier_value": 0.004642
+  },
+  {
+   "leg": "close",
+   "tier": 3,
+   "legs": 559,
+   "quoted": 545,
+   "measured": 0.0027226760015558256,
+   "tier_value": 0.004473
+  },
+  {
+   "leg": "stop",
+   "tier": 0,
+   "legs": 133,
+   "quoted": 132,
+   "measured": 0.0035461438829018053,
+   "tier_value": 0.005763
+  },
+  {
+   "leg": "stop",
+   "tier": 1,
+   "legs": 456,
+   "quoted": 444,
+   "measured": 0.00270272244501422,
+   "tier_value": 0.004782
+  },
+  {
+   "leg": "stop",
+   "tier": 2,
+   "legs": 258,
+   "quoted": 250,
+   "measured": 0.002122579381429327,
+   "tier_value": 0.004642
+  },
+  {
+   "leg": "stop",
+   "tier": 3,
+   "legs": 30,
+   "quoted": 30,
+   "measured": 0.002312180826929107,
+   "tier_value": 0.004473
+  },
+  {
+   "leg": "ah",
+   "tier": 0,
+   "legs": 20,
+   "quoted": 19,
+   "measured": 0.0030030030030030056,
+   "tier_value": 0.00460829493087558
+  },
+  {
+   "leg": "ah",
+   "tier": 1,
+   "legs": 52,
+   "quoted": 50,
+   "measured": 0.004179866445117123,
+   "tier_value": 0.004066451101478581
+  },
+  {
+   "leg": "ah",
+   "tier": 2,
+   "legs": 19,
+   "quoted": 19,
+   "measured": 0.003344481605351159,
+   "tier_value": 0.002461060133450451
+  },
+  {
+   "leg": "ah",
+   "tier": 3,
+   "legs": 10,
+   "quoted": 10,
+   "measured": 0.0045392809657449,
+   "tier_value": 0.0018214936247722747
+  },
+  {
+   "leg": "pm",
+   "tier": 0,
+   "legs": 17,
+   "quoted": 12,
+   "measured": 0.007045398164227246,
+   "tier_value": 0.0048059149722735305
+  },
+  {
+   "leg": "pm",
+   "tier": 1,
+   "legs": 52,
+   "quoted": 38,
+   "measured": 0.013353603581297259,
+   "tier_value": 0.0040160642570281156
+  },
+  {
+   "leg": "pm",
+   "tier": 2,
+   "legs": 27,
+   "quoted": 19,
+   "measured": 0.004277159965782705,
+   "tier_value": 0.0024252223120452905
+  },
+  {
+   "leg": "pm",
+   "tier": 3,
+   "legs": 5,
+   "quoted": 3,
+   "measured": 0.005058018446890857,
+   "tier_value": 0.0017323488264753208
+  }
+ ]
+}
