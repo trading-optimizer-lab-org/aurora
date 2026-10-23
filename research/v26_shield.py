@@ -26,6 +26,7 @@ LEG_AH, LEG_PM = 3, 4  # cost legs after v19's open (0), session (1) and close (
 OFFER_ROWS, SQUEEZE_ROWS, SQUEEZE = 63, 60, 1.0
 
 PARAMS: dict | None = None  # the shield of the configuration being evaluated (None: the families' own exits)
+EXT_DELAY = False  # v29: a night stop fills one bar after the bar that crosses it
 EXIT: dict = {}  # where the last trade walked left: session row, kind (session/open/stop/close/ah/pm), minute
 NIGHTS: "Nights | None" = None
 FACTS: dict = {}
@@ -127,7 +128,14 @@ def _night(u: int, j: int, stop: float, prev: float, F: np.ndarray, P: dict) -> 
         ok, hh, cc = float(o[k]) * f, float(h[k]) * f, float(c[k]) * f
         live = P["ext"] == "both" or P["ext"] == ("pm" if pm else "ah")
         if live and hh >= stop:
-            return (ok if ok >= stop else v19._slip(stop, hh)), (LEG_PM if pm else LEG_AH), int(m[k])
+            if not EXT_DELAY:
+                return (ok if ok >= stop else v19._slip(stop, hh)), (LEG_PM if pm else LEG_AH), int(m[k])
+            if k + 1 < len(m):  # v29: seen on this bar, a marketable limit fills at the next night bar's open
+                pm2 = m[k + 1] >= AH_END
+                f2 = f_pm if pm2 else f_ah
+                if np.isfinite(f2) and f2 > 0:
+                    return float(o[k + 1]) * f2, (LEG_PM if pm2 else LEG_AH), int(m[k + 1])
+            return None  # no later bar that night: the next session's open covers it
         if P["rally"] != "none" and cc >= prev * (1 + int(P["rally"][1:]) / 100):
             return cc, (LEG_PM if pm else LEG_AH), int(m[k])
     return None

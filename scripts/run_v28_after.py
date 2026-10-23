@@ -125,7 +125,8 @@ def _rows_items(t: pd.DataFrame, table: dict, risk: float, cap: float, account: 
         out.append({"i0": int(i0), "r": rr, "prio": float(pr), "w": float(w[i] * avail[i]), "j": int(cols[i]),
                     "price": float(t["price"].iloc[i]), "side": int(t["side"].iloc[i]),
                     "nights": float(t["nights"].iloc[i]), "ah": int(t["leg_in"].iloc[i]) == sh.LEG_AH,
-                    "liq": float(t["liq"].iloc[i]), "fam": fam, "sym": str(t["symbol"].iloc[i])})
+                    "liq": float(t["liq"].iloc[i]), "fam": fam, "sym": str(t["symbol"].iloc[i]), "t": int(i0),
+                    "so": float(t["so"].iloc[i])})
     return out
 
 
@@ -140,7 +141,8 @@ def _spec_items(D: dict, specs: list, table: dict, risk: float, cap: float, acco
         raw = float(D["P"][max(s.t - 1, 0), s.j]) if s.kind == "open" else float(D["P"][s.t, s.j])
         out.append({"i0": p[0], "r": np.array(p[1], float), "prio": float(p[2]), "w": float(p[3]), "j": int(s.j),
                     "price": raw, "side": int(s.side), "nights": float(max(len(p[1]) - 1, 0)), "ah": False,
-                    "liq": float(np.nan_to_num(D["DV1"][s.t, s.j])), "fam": fam, "sym": str(D["cols"][s.j])})
+                    "liq": float(np.nan_to_num(D["DV1"][s.t, s.j])), "fam": fam, "sym": str(D["cols"][s.j]),
+                    "t": int(s.t), "so": float(D["SO"][s.t, s.j])})
     return out
 
 
@@ -259,11 +261,18 @@ def book_items(book: str, risk: float, cap: float, account: float, spread: float
 
 def joint(items: list[dict], dates: pd.DatetimeIndex, gross_cap: float, max_open: int = 20, max_new: int = 99,
           order: str = "time", sector: str = "none", rule: str = "tzi", locate: float = BASE_LOCATE,
-          preborrow: float = 0.0, streams: dict | None = None) -> tuple[pd.Series, list[dict]]:
+          preborrow: float = 0.0, streams: dict | None = None,
+          sleeve: tuple[np.ndarray, float, float] | None = None) -> tuple[pd.Series, list[dict]]:
     """One account: one position a symbol, at most ``max_open`` open and ``max_new`` new a session, gross notional at
-    most ``gross_cap``, the margin of the open positions at most the equity, at most two open a SIC code ('sic2')."""
+    most ``gross_cap``, the margin of the open positions at most the equity, at most two open a SIC code ('sic2').
+    An item's own ``loc`` replaces ``locate`` (v29); ``sleeve`` (v29): daily returns held at a weight, with the
+    margin a dollar of it needs."""
     T = len(dates)
     out, gross, req = np.zeros(T), np.zeros(T), np.zeros(T)
+    if sleeve is not None:
+        out += sleeve[1] * np.asarray(sleeve[0], float)
+        gross += sleeve[1]
+        req += sleeve[1] * sleeve[2]
     sq = v28.X.get("sq_p")
     sic = v28.X.get("sic")
     if streams:
@@ -326,7 +335,7 @@ def joint(items: list[dict], dates: pd.DatetimeIndex, gross_cap: float, max_open
                 continue
         rr = np.array(r[:n], float)
         if it["side"] < 0:
-            rr[0] -= locate
+            rr[0] -= it.get("loc", locate)
             if preborrow:
                 rr -= preborrow * it["nights"] / n
         out[sl] += w * rr
