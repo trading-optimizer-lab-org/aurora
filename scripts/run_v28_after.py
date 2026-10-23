@@ -144,49 +144,77 @@ def _spec_items(D: dict, specs: list, table: dict, risk: float, cap: float, acco
     return out
 
 
-def pick_items(name: str, v26_name: bool, years: set, risk: float, cap: float, account: float, spread: float,
-               fee: float, delay: int = 0) -> list[dict]:
-    """Sized trade items of one pick in the given years (a v28 name, or a v26 name with v26's own grid)."""
-    D, table = R14._G["D"], R16._W["table"]
-    keep = core.ACCOUNT
-    core.ACCOUNT = account
-    fam = R14.family_of(name.split("|")[0])
-    v19.set_costs("r4", R22.SLIP, R22.R4)
-    try:
-        if v26_name:
-            kind_e, cfg = _v26_cfg(name)
-            kind, key = "shield", name.rsplit("|", 1)[0]
-        else:
-            k, ci = name.rsplit("|", 1)
-            kind, cfgs = R28.registry()[k]
-            cfg = cfgs[int(ci)]
-            key = k[2:] if kind == "shield" else k
-        dates = D["dates"]
+_TR: dict = {}
+_ST: dict = {}
 
-        def in_years(t: pd.DataFrame) -> pd.DataFrame:
-            return t[pd.to_datetime(t["date"]).dt.year.isin(years)] if len(t) else t
+
+def _unsized(name: str, v26_name: bool, delay: int) -> tuple[str, object, dict | None, str]:
+    """A pick's trades over the whole sample, once: ('rows', trade rows) or ('specs', daily specs), the shield it is
+    walked with, and its family."""
+    ck = (name, v26_name, delay)
+    if ck in _TR:
+        return _TR[ck]
+    D = R14._G["D"]
+    fam = R14.family_of(name.split("|")[0])
+    if v26_name:
+        _, cfg = _v26_cfg(name)
+        kind, key = "shield", name.rsplit("|", 1)[0]
+    else:
+        k, ci = name.rsplit("|", 1)
+        kind, cfgs = R28.registry()[k]
+        cfg = cfgs[int(ci)]
+        key = k[2:] if kind == "shield" else k
+    v19.set_costs("r4", R22.SLIP, R22.R4)
+    shield = None
+    try:
         if kind == "shield":
             R28._TARGET["v"] = cfg.get("target", "none")
-            sh.set_params({k2: cfg[k2] for k2 in ("hold", "stop", "ext", "rally", "scale")})
+            shield = {k2: cfg[k2] for k2 in ("hold", "stop", "ext", "rally", "scale")}
+            sh.set_params(shield)
             ekind, g, data = R26.entries(key, cfg["entry"])
             if ekind == "intra":
                 args = data if delay == 0 else [x for a in data if (x := R26._delayed(a, delay)) is not None]
                 tr = R26._keep_rows(pd.DataFrame([sh.intra_row(D, *a) for a in args], columns=v19.COLS), cfg["filt"])
-                return _rows_items(in_years(tr), table, risk, cap, account, spread, fee, fam)
-            specs = [s for s in R26._keep_specs(data, cfg["filt"]) if dates[s.t].year in years]
-            return _spec_items(D, specs, table, risk, cap, account, spread, fee, fam)
-        if kind in ("event", "long"):
+                out = ("rows", tr, None, fam)
+            else:
+                out = ("specs", R26._keep_specs(data, cfg["filt"]), {**shield, "target": cfg.get("target", "none")},
+                       fam)
+        elif kind in ("event", "long"):
             specs = v28.event_specs(D, key, cfg) if kind == "event" else v28.long_specs(D, key, cfg)
-            specs = [s for s in specs if dates[s.t].year in years]
             if kind == "event":
-                sh.set_params({"hold": cfg["hold"], "stop": cfg["stop"], "ext": cfg["ext"], "rally": "none",
-                               "scale": "all"})
-            return _spec_items(D, specs, table, risk, cap, account, spread, fee, fam)
-        if kind in ("pm", "ah"):
-            tr = R28._ext_trades(kind, D, cfg)
-            sh.set_params(None)
-            return _rows_items(in_years(tr), table, risk, cap, account, spread, fee, fam)
-        return []  # factor books and ETF pairs are added as streams (stream_members)
+                shield = {"hold": cfg["hold"], "stop": cfg["stop"], "ext": cfg["ext"], "rally": "none",
+                          "scale": "all"}
+            out = ("specs", specs, shield, fam)
+        elif kind in ("pm", "ah"):
+            out = ("rows", R28._ext_trades(kind, D, cfg), None, fam)
+        else:
+            out = ("stream", None, None, fam)
+    finally:
+        sh.set_params(None)
+        R28._TARGET["v"] = "none"
+    _TR[ck] = out
+    return out
+
+
+def pick_items(name: str, v26_name: bool, years: set, risk: float, cap: float, account: float, spread: float,
+               fee: float, delay: int = 0) -> list[dict]:
+    """Sized trade items of one pick in the given years (a v28 name, or a v26 name with v26's own grid)."""
+    D, table = R14._G["D"], R16._W["table"]
+    form, x, shield, fam = _unsized(name, v26_name, delay)
+    if form == "stream":
+        return []
+    keep = core.ACCOUNT
+    core.ACCOUNT = account
+    v19.set_costs("r4", R22.SLIP, R22.R4)
+    try:
+        if form == "rows":
+            t = x[pd.to_datetime(x["date"]).dt.year.isin(years)] if len(x) else x
+            return _rows_items(t, table, risk, cap, account, spread, fee, fam)
+        if shield is not None:
+            R28._TARGET["v"] = shield.get("target", "none")
+            sh.set_params({k: shield[k] for k in ("hold", "stop", "ext", "rally", "scale")})
+        dates = D["dates"]
+        return _spec_items(D, [s for s in x if dates[s.t].year in years], table, risk, cap, account, spread, fee, fam)
     finally:
         core.ACCOUNT = keep
         sh.set_params(None)
@@ -217,8 +245,10 @@ def book_items(book: str, risk: float, cap: float, account: float, spread: float
     for y, fam, nm, v26n in members(book):
         kind = "shield" if v26n else R28.registry()[nm.rsplit("|", 1)[0]][0]
         if kind in ("factor", "lev"):
-            k, ci = nm.rsplit("|", 1)
-            s = R22.evaluate(k, int(ci))[0]["mid"]
+            if nm not in _ST:
+                k, ci = nm.rsplit("|", 1)
+                _ST[nm] = R22.evaluate(k, int(ci))[0]["mid"]
+            s = _ST[nm]
             streams.setdefault(fam, []).append(s[s.index.year == y])
             continue
         items += pick_items(nm, v26n, {y}, risk, cap, account, spread, fee, delay)
@@ -236,65 +266,80 @@ def joint(items: list[dict], dates: pd.DatetimeIndex, gross_cap: float, max_open
     out, gross, req = np.zeros(T), np.zeros(T), np.zeros(T)
     sq = v28.X.get("sq_p")
     sic = v28.X.get("sic")
-
-    def okey(it: dict) -> tuple:
-        if order == "move":
-            return (it["i0"], -abs(it["prio"]))
-        if order == "liquid":
-            return (it["i0"], -it["liq"])
-        if order == "risk":
-            p = float(sq[it["i0"], it["j"]]) if sq is not None and it["j"] >= 0 else np.nan
-            return (it["i0"], p if np.isfinite(p) else 9.0)
-        return (it["i0"], -it["prio"])
-    n_new = np.zeros(T, int)
-    open_: list[tuple[int, int, str]] = []
-    until: dict[int, int] = {}
-    taken = []
-    stream_w = 0.0
     if streams:
         stream_w = min(0.2, 1.0 / max(len(streams), 1))
-        for s in streams.values():
-            x = s.reindex(dates).fillna(0.0).to_numpy()
-            out += stream_w * x
+        for st in streams.values():
+            out += stream_w * st.reindex(dates).fillna(0.0).to_numpy()
             gross += stream_w
             req += stream_w * 0.5
-    for it in sorted(items, key=okey):
+    if not items:
+        return pd.Series(out, index=dates), []
+    i0s = np.array([it["i0"] for it in items])
+    if order == "move":
+        sec_key = -np.abs(np.array([it["prio"] for it in items]))
+    elif order == "liquid":
+        sec_key = -np.array([it["liq"] for it in items])
+    elif order == "risk":
+        js = np.array([it["j"] for it in items])
+        p = np.array([float(sq[a, b]) if sq is not None and b >= 0 else np.nan for a, b in zip(i0s, js)])
+        sec_key = np.where(np.isfinite(p), p, 9.0)
+    else:
+        sec_key = -np.array([it["prio"] for it in items])
+    order_idx = np.lexsort((sec_key, i0s))
+    price = np.array([it["price"] for it in items])
+    side = np.array([it["side"] for it in items])
+    m_in, m_ni, m_ah = (margin(price, side, rule, w) for w in ("intra", "night", "ah"))
+    n_new = np.zeros(T, int)
+    open_end: list[int] = []
+    open_code: list[str] = []
+    until: dict[int, int] = {}
+    taken = []
+    check = rule != "none"
+    for k in order_idx:
+        it = items[k]
         i0, r, w = it["i0"], it["r"], it["w"]
         n = min(len(r), T - i0)
         if n <= 0 or w <= 0:
             continue
-        open_ = [x for x in open_ if x[0] >= i0]
         j = it["j"]
         if j >= 0 and until.get(j, -1) >= i0:
             continue
-        if len(open_) >= max_open or n_new[i0] >= max_new:
+        if open_end and min(open_end) < i0:
+            keep_ = [q for q, e in enumerate(open_end) if e >= i0]
+            open_end = [open_end[q] for q in keep_]
+            open_code = [open_code[q] for q in keep_]
+        if len(open_end) >= max_open or n_new[i0] >= max_new:
             continue
         code = str(sic[j])[:4] if sic is not None and j >= 0 else ""
-        if sector == "sic2" and code and sum(1 for x in open_ if x[2] == code) >= 2:
+        if sector == "sic2" and code and open_code.count(code) >= 2:
             continue
-        side = np.array([it["side"]])
-        m_day = np.full(n, margin(np.array([it["price"]]), side, rule, "night")[0])
-        m_day[-1] = margin(np.array([it["price"]]), side, rule, "intra")[0]
-        if n > 1 or it["nights"] > 0:
-            m_day[:max(n - 1, 1)] = np.maximum(m_day[:max(n - 1, 1)],
-                                               margin(np.array([it["price"]]), side, rule, "night")[0])
-        if it["ah"]:
-            m_day[0] = max(m_day[0], margin(np.array([it["price"]]), side, rule, "ah")[0])
-        if gross[i0:i0 + n].max() + w > gross_cap + 1e-9 or (rule != "none"
-                                                              and (req[i0:i0 + n] + w * m_day).max() > 1.0 + 1e-9):
+        sl = slice(i0, i0 + n)
+        if gross[sl].max() + w > gross_cap + 1e-9:
             continue
+        if check:
+            m_day = np.full(n, m_ni[k])
+            if n == 1 and it["nights"] <= 0:
+                m_day[0] = m_in[k]
+            if it["ah"]:
+                m_day[0] = max(m_day[0], m_ah[k])
+            if (req[sl] + w * m_day).max() > 1.0 + 1e-9:
+                continue
         rr = np.array(r[:n], float)
         if it["side"] < 0:
             rr[0] -= locate
-            rr -= preborrow * it["nights"] / n
-        out[i0:i0 + n] += w * rr
-        gross[i0:i0 + n] += w
-        req[i0:i0 + n] += w * m_day
+            if preborrow:
+                rr -= preborrow * it["nights"] / n
+        out[sl] += w * rr
+        gross[sl] += w
+        if check:
+            req[sl] += w * m_day
         n_new[i0] += 1
-        open_.append((i0 + n - 1, j, code))
+        open_end.append(i0 + n - 1)
+        open_code.append(code)
         until[j] = i0 + n - 1
-        taken.append({**it, "net": float(np.sum(rr)), "contrib": float(w * np.sum(rr)), "date": str(dates[i0].date())})
-    return pd.Series(out, index=dates), taken
+        taken.append((k, float(np.sum(rr)), float(w * np.sum(rr))))
+    tk = [{**items[k], "net": net, "contrib": c, "date": str(dates[items[k]["i0"]].date())} for k, net, c in taken]
+    return pd.Series(out, index=dates), tk
 
 
 def _row(s: pd.Series, idx: np.ndarray, cash: pd.Series, **kw) -> dict:
@@ -411,6 +456,7 @@ def cmd_sens(args) -> int:
 # ---------------------------------------------------------------- symbol halves
 
 _HALF_ON: dict = {"h": None}
+_HV: dict = {}
 _orig_intra, _orig_daily = v19.intra_book, v19.daily_book
 
 
@@ -449,7 +495,9 @@ def cmd_halves(args) -> int:
                 k, ci = nm.rsplit("|", 1)
                 if R28.registry()[k][0] in ("factor", "lev"):
                     continue
-                s = R22.evaluate(k, int(ci))[0]["mid"]
+                if (nm, h) not in _HV:
+                    _HV[(nm, h)] = R22.evaluate(k, int(ci))[0]["mid"]
+                s = _HV[(nm, h)]
                 parts.append(s.loc[pd.Timestamp(f"{y}-01-01"):min(b, pd.Timestamp(f"{y}-12-31"))])
             _HALF_ON["h"] = None
             if parts:

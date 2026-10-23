@@ -1,7 +1,7 @@
 name: v28 after-canary (the after-report stages on a test summary)
 
 # scripts/run_v28_after.py in quick mode (V28_QUICK) on a test summary of five picks, before the real report exists.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -22,7 +22,7 @@ env:
 jobs:
   canary:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:

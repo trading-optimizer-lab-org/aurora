@@ -2,7 +2,7 @@ name: v28 after the report (TradeZero margin, construction, battery, symbol halv
 
 # docs/research/V28_PREREGISTRATION.md section 6, scripts/run_v28_after.py. Waits for the latest v28 run's report;
 # then 20 construction shards and 10 symbol-half shards -> the choice and its battery -> AFTER.md.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -28,12 +28,12 @@ jobs:
       run: ${{ steps.w.outputs.run }}
     steps:
       - id: w
-        name: Wait for the latest v28 run to finish
+        name: Wait for the latest v28 resume run to finish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           for i in $(seq 1 350); do
-            line=$(gh run list --repo "${{ github.repository }}" --workflow v28.yml --branch research/stock-catalog --limit 1 --json databaseId,status,conclusion -q '.[0] | "\(.databaseId) \(.status) \(.conclusion)"' || echo "")
+            line=$(gh run list --repo "${{ github.repository }}" --workflow v28-resume.yml --branch research/stock-catalog --limit 1 --json databaseId,status,conclusion -q '.[0] | "\(.databaseId) \(.status) \(.conclusion)"' || echo "")
             echo "$(date -u +%H:%M) v28: $line"
             set -- $line
             if [ "$2" = "completed" ]; then
