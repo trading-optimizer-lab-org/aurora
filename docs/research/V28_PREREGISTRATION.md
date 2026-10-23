@@ -151,3 +151,7 @@ a result rests on one half of the names.
 - The shards take blocks of 50 neighbouring configurations in a seeded random order (the premarket and after-hours
   families are slow); the configurations and their names are unchanged.
 - Premarket and after-hours trades are walked once at the middle slippage; their gross record reuses those walks.
+- 2026-10-23, before any v28 result: run 39830929424 skipped its placebo jobs (the default job condition after a
+  skipped retry job, as in v26), so its report failed; `v28-resume.yml` runs the placebos and the report on that
+  run's selection, with the same code and rules. In the one-account book a position held over a close needs the
+  overnight margin on every session it is held (the intraday margin only for a trade closed the session it opens).
