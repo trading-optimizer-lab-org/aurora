@@ -85,3 +85,11 @@ plan is a candidate for v30. It does not enter v29's choice.
 The construction is chosen on the same 2018-2026 walk-forward stream it is measured on (as in v28); DSR 0; the
 2023-07+ window is not clean for the researcher; locates are a grid, not quotes; entries at a close use that close
 (all versions); the trades are the walk-forward picks of a search of 466,074 configurations.
+
+## 8. Notes added before the IEX result (2026-10-24, after the download covered all 2,712 days)
+
+- Section 6's evaluation is `scripts/run_v29_iex_eval.py` (`v29-iex-eval.yml`): the B intraday members of COMBO28
+  (C:PM uses the premarket store, which was not downloaded, so it is left out); the criterion is pooled over those
+  members, trade-weighted (per family shown); a candidate with no IEX bar that session is dropped (the bot would
+  see nothing); SIP entries one minute late are shown for reference (not part of the criterion); v28's R4 middle
+  costs; index minute bars stay SIP's.
