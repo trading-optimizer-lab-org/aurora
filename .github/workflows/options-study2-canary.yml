@@ -1,7 +1,7 @@
 name: "Options study 2 canary (4 months, 12 names, counts only)"
 
 # docs/research/OPTIONS_STUDY2_PREREGISTRATION.md: the whole pipeline on a short window; prints counts, no returns.
-# run: 3
+# run: 4
 on:
   push:
     branches: [research/options-study-2]
