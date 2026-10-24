@@ -1,0 +1,79 @@
+name: "Options study 2 (pre-registered, 11 trials)"
+
+# docs/research/OPTIONS_STUDY2_PREREGISTRATION.md: data (Alpaca, cache os2-cache-*), then the evaluation.
+# Only the report, the summary and the trade returns are uploaded.
+# run: 1
+on:
+  push:
+    branches: [research/options-study-2]
+    paths:
+      - .github/workflows/options-study2.yml
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+  APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+
+concurrency:
+  group: options-study2
+  cancel-in-progress: false
+
+jobs:
+  data:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/os2_cache
+          key: os2-cache-none
+          restore-keys: os2-cache-
+      - run: python scripts/run_options_study2.py data --cache outputs/os2_cache --end 2026-10-23
+      - if: always()
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/os2_cache
+          key: os2-cache-${{ github.run_id }}-${{ github.run_attempt }}
+  evaluate:
+    needs: data
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/os2_cache
+          key: os2-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: os2-cache-${{ github.run_id }}-
+          fail-on-cache-miss: true
+      - run: python scripts/run_options_study2.py eval --cache outputs/os2_cache --out outputs/options_study2
+      - if: always()
+        run: |
+          if [ -f outputs/options_study2/REPORT.md ]; then cat outputs/options_study2/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: options-study2
+          path: |
+            outputs/options_study2/REPORT.md
+            outputs/options_study2/summary.json
+            outputs/options_study2/trades.csv
+          retention-days: 90

@@ -424,14 +424,8 @@ def x_trades(C: Path) -> tuple[list[dict], dict]:
         c, q = os2.bar_vw(xo.get((p.C, p.F)), 15, 30), os2.bar_vw(xo.get((p.P, p.F)), 15, 30)
         if c is None or q is None:
             drop["no_entry"] += 1
-            miss = drop.setdefault("no_entry_by_symbol", {})
-            miss[p.symbol] = miss.get(p.symbol, 0) + 1
             if xo.get((p.C, p.F)) is None and xo.get((p.P, p.F)) is None:
                 drop["no_entry_without_bars"] = drop.get("no_entry_without_bars", 0) + 1
-            drop.setdefault("no_entry_examples", []).append(
-                [p.symbol, p.month, str(p.exp.date()), p.C,
-                 *[[] if xo.get((o, p.F)) is None else [str(x.time())[:5] for x in xo[(o, p.F)]["t"]]
-                   for o in (p.C, p.P)]])
             continue
         t = ((p.exp + 16 * eo.H) - (p.F + 15.5 * eo.H)) / pd.Timedelta(days=365)
         iv = os2.implied_vol(c + q, p.s_f, p.k, t)

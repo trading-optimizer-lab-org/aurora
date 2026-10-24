@@ -113,3 +113,15 @@ Spreads are assumed; option prices are 15-minute trade VWAPs, not quotes; data s
 0DTE exits at 15:45-16:00 and settle at the 16:00 price without assignment; the delta hedge is computed once at
 entry; X uses today's list of optionable stocks. The researcher has read the papers above; nothing about 2024-2026
 SPY/QQQ option returns.
+
+## Notes added before any result (2026-10-24, after the canary)
+
+The canary (`options-study2-canary.yml`, runs 1-4: 2025-01-02 to 2025-04-30 for SPY/QQQ, 12 large stocks for X)
+printed counts and bar times only.
+
+- Alpaca marks optionable equities with the attribute `has_options`; the X universe is the active, tradable
+  `us_equity` assets carrying it, which includes optionable ETFs.
+- The last session has no next session, so its N1 trades are dropped (counted with the gaps).
+- In X, about a third of planned positions had no trade in the 15:30 bar of one leg, and some had no bar at all that
+  day even for very liquid names (vendor holes). The rule stands: no 15:30 trade in both legs, no position. The
+  count is reported.
