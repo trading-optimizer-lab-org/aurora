@@ -132,6 +132,21 @@ def cmd_probe2(args) -> int:
     return 0
 
 
+def cmd_probe3(args) -> int:
+    """Option bars on the reaction day for a contract that does not expire that day, and on its own expiry day."""
+    a = alpaca()
+    out = {}
+    for sym, st, en in (("AAPL240209C00185000", "2024-02-02T14:00:00Z", "2024-02-02T21:00:00Z"),
+                        ("AAPL240209C00185000", "2024-02-09T14:00:00Z", "2024-02-09T21:00:00Z"),
+                        ("MSFT240202C00400000", "2024-01-31T14:00:00Z", "2024-01-31T21:00:00Z"),
+                        ("MSFT240202C00400000", "2024-02-02T14:00:00Z", "2024-02-02T21:00:00Z")):
+        b = a.get(f"{DATA}/v1beta1/options/bars", {"symbols": sym, "timeframe": "15Min", "start": st, "end": en,
+                                                   "limit": 10000})
+        out[f"{sym} {st[:10]}"] = [(x["t"][11:16], x["n"]) for x in (b or {}).get("bars", {}).get(sym, [])]
+    print(json.dumps(out))
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -140,6 +155,8 @@ def main() -> int:
     q.set_defaults(fn=cmd_probe)
     q = sub.add_parser("probe2")
     q.set_defaults(fn=cmd_probe2)
+    q = sub.add_parser("probe3")
+    q.set_defaults(fn=cmd_probe3)
     args = p.parse_args()
     return args.fn(args)
 
