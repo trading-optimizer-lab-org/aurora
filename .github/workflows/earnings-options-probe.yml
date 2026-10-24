@@ -1,7 +1,7 @@
 name: "Earnings options probe (data format only)"
 
 # scripts/run_earnings_options.py probe: expired option contracts, option bars and SEC acceptance times. No result.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/earnings-options]
@@ -27,4 +27,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install requests
-      - run: python scripts/run_earnings_options.py probe
+      - run: python scripts/run_earnings_options.py probe2

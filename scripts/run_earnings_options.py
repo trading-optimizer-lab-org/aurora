@@ -103,12 +103,43 @@ def cmd_probe(args) -> int:
     return 0
 
 
+def cmd_probe2(args) -> int:
+    """SEC clock on known before-open (JPM, WMT, PG, JNJ) and after-close (MSFT, NVDA, META, NFLX) reporters, and
+    option bars on a reaction day."""
+    a, s = alpaca(), sec_http()
+    ciks = {"JPM": 19617, "WMT": 104169, "PG": 80424, "JNJ": 200406, "MSFT": 789019, "NVDA": 1045810,
+            "META": 1326801, "NFLX": 1065280}
+    out: dict = {"sec": {}}
+    for t, c in ciks.items():
+        rec = (s.get(f"https://data.sec.gov/submissions/CIK{c:010d}.json") or {}).get("filings", {}).get("recent", {})
+        out["sec"][t] = [(d, x) for f, d, x, it in zip(rec.get("form", []), rec.get("filingDate", []),
+                                                      rec.get("acceptanceDateTime", []), rec.get("items", []))
+                         if f == "8-K" and "2.02" in str(it)][:6]
+    sym = "AAPL240202C00185000"
+    for tf, st, en in (("15Min", "2024-02-02T13:00:00Z", "2024-02-02T22:00:00Z"),
+                       ("1Min", "2024-02-02T14:30:00Z", "2024-02-02T15:00:00Z"),
+                       ("1Day", "2024-01-29", "2024-02-02")):
+        b = a.get(f"{DATA}/v1beta1/options/bars", {"symbols": sym, "timeframe": tf, "start": st, "end": en,
+                                                   "limit": 10000})
+        out[tf] = [(x["t"], x["n"]) for x in (b or {}).get("bars", {}).get(sym, [])]
+    t = a.get(f"{DATA}/v1beta1/options/trades", {"symbols": sym, "start": "2024-02-02T14:30:00Z",
+                                                 "end": "2024-02-02T14:40:00Z", "limit": 5})
+    out["trades"] = [x.get("t") for x in (t or {}).get("trades", {}).get(sym, [])]
+    q = a.get(f"{DATA}/v1beta1/options/quotes", {"symbols": sym, "start": "2024-02-01T20:00:00Z",
+                                                 "end": "2024-02-01T20:05:00Z", "limit": 5})
+    out["hist_quotes"] = None if q is None else len(q.get("quotes", {}).get(sym, []))
+    print(json.dumps(out))
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     q = sub.add_parser("probe")
     q.add_argument("--out", type=Path, default=Path("outputs/earnings_options"))
     q.set_defaults(fn=cmd_probe)
+    q = sub.add_parser("probe2")
+    q.set_defaults(fn=cmd_probe2)
     args = p.parse_args()
     return args.fn(args)
 
