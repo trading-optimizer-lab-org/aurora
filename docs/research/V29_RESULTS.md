@@ -28,3 +28,19 @@ data: `data/v29_summary.json`. 4,608 books, all shards succeeded.
 
 The construction was chosen on the stream it is measured on; DSR 0; locate and borrow prices are assumptions until
 quoted; 2023-07+ is not clean for the researcher; the members come from a search of 466,074 configurations.
+
+## Section 6: free real-time data (IEX), run 40076893288
+
+Download 39997337207 covered all 2,712 days; 349,744 of 556,679 candidate symbol-days (63%) had IEX bars that
+session. Signals on IEX's bars, fills on SIP's one minute later, v28's R4 middle costs, the same picks
+(`data/v29_iex_summary.json`; table in the run's `v29-iex-report` artifact).
+
+| pooled over 19 intraday members | SIP (v28) | SIP 1 minute late | IEX |
+|---|---|---|---|
+| trades | 57,914 | 57,913 | 35,830 (62%) |
+| mean net return a trade | 2.63% | 2.50% | 3.09% (118%) |
+
+**The criterion is not met**: IEX keeps more than enough return a trade but only 62% of the trades (70% needed).
+The trades it loses are the candidates with no IEX print; those it keeps are better a trade (names liquid enough to
+print on IEX). Sortinos fall in 14 of 19 families (fewer trades); SQ keeps only 100 of 2,747. The minute of latency
+alone costs little (2.63% -> 2.50%). So a FREE+IEX plan is not a v30 candidate under the pre-registered rule.
