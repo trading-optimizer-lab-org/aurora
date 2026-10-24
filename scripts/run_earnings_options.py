@@ -198,7 +198,8 @@ def fetch_bars(a: Http, url: str, syms: list[str], params: dict) -> dict[str, li
         for s, v in got.items():
             out.setdefault(s, []).extend(v)
 
-    run(syms)
+    for i in range(0, len(syms), 100):
+        run(syms[i:i + 100])
     return out
 
 
