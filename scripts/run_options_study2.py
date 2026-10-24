@@ -211,7 +211,7 @@ def data_x(a, C: Path, end: pd.Timestamp, symbols: list[str], top: int) -> None:
         got = a.get(f"{TRADE}/v2/assets", {"status": "active", "asset_class": "us_equity",
                                             "attributes": "options_enabled"}) or []
         return sorted(x["symbol"] for x in got
-                      if x.get("tradable") and "options_enabled" in (x.get("attributes") or []))
+                      if x.get("tradable") and "has_options" in (x.get("attributes") or []))
     assets = _cached_json(C / "assets.json", fetch_assets)
     if symbols:
         assets = [s for s in assets if s in set(symbols)]
