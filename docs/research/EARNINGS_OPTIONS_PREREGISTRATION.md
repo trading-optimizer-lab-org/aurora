@@ -92,3 +92,15 @@ Spreads are assumed; option bars are trade prices (no bid/ask), a 15-minute VWAP
 (about 11 seasons); the release date is the realized one (the scheduled filter removes most surprises); today's
 ticker list; the researcher read a vendor blog saying straddle buyers did well in the 2026-02 season, which is in
 validation.
+
+## Notes added before any result (2026-10-24, with the code)
+
+- H1's exit on the eve: the 15:30 bar's VWAP, else the latest bar with a trade that session, else intrinsic value
+  at the stock's last price of the eve.
+- One ticker per SEC CIK (the most traded since 2024), so share classes do not count a release twice.
+- The contract search: expiries from the day after R to 35 days after it, strikes 60%-140% of the eve's price;
+  contracts with a 100-share deliverable and the underlying as root only. An event without an expiry in that range
+  or without a strike listed as both a call and a put has no plan and is counted.
+- The price filter uses the last regular-session 15-minute close of the session before the entry; an entry also
+  needs a stock price at the entry by the same rule.
+- Iron fly maximum loss uses the wider wing; a fly whose net credit is not below that width is skipped.
