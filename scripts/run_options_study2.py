@@ -401,7 +401,9 @@ def etf_trades(C: Path) -> tuple[list[dict], dict]:
         p_out = [x for x, _ in outs]
         net = {c: os2.hedged_return(side, p_in, p_out, s0, s_out, delta, cost)
                for c, cost in (("base", os2.ETF_BASE), ("high", os2.ETF_HIGH))}
+        seen = [oday[(o, exit_day)]["t"].max() for o in occs if (o, exit_day) in oday]
         row = dict(base, net=net["base"], net_high=net["high"], fallback=any(f for _, f in outs),
+                   exit_last=str(max(seen).time())[:5] if seen else "none",
                    ret_ml=float("nan"), t_in=t_in, t_out=exit_day + 9.75 * eo.H if side < 0 else d + 15.75 * eo.H)
         if r["trial"] == "N1":
             rows.append(dict(row, trial="N1_overnight_short"))
@@ -412,7 +414,11 @@ def etf_trades(C: Path) -> tuple[list[dict], dict]:
     return rows, drop
 
 
-def x_trades(C: Path) -> tuple[list[dict], dict]:
+def _entry_1530(day):
+    return os2.bar_vw(day, 15, 30)
+
+
+def x_trades(C: Path, entry=_entry_1530) -> tuple[list[dict], dict]:
     plan = pd.read_parquet(C / "x_plan.parquet")
     drop = json.loads((C / "x_drops.json").read_text(encoding="utf-8"))
     drop["no_entry"] = drop["no_iv"] = 0
@@ -421,7 +427,7 @@ def x_trades(C: Path) -> tuple[list[dict], dict]:
     xo = _days(_load(C / "x_opt"))
     pos = []
     for p in plan.itertuples():
-        c, q = os2.bar_vw(xo.get((p.C, p.F)), 15, 30), os2.bar_vw(xo.get((p.P, p.F)), 15, 30)
+        c, q = entry(xo.get((p.C, p.F))), entry(xo.get((p.P, p.F)))
         if c is None or q is None:
             drop["no_entry"] += 1
             if xo.get((p.C, p.F)) is None and xo.get((p.P, p.F)) is None:
@@ -551,11 +557,30 @@ def render(res: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def cmd_diag(args) -> int:
+    """Exploratory checks after the result (no decision): N2 without intrinsic-value exits, the last bar time of
+    those exits, and X with the entry rule of the earnings study (15:30 bar, else the latest bar from 14:30)."""
+    er, _ = etf_trades(args.cache)
+    tr = pd.DataFrame(er)
+    n2 = tr[tr["trial"] == "N2_intraday_long"]
+    out: dict = {"n2_fallback_exit_last_bar": n2[n2["fallback"]]["exit_last"].str[:2].value_counts().to_dict(),
+                 "n2_without_fallback": {per: os2.stats(g) for per, g in n2[~n2["fallback"]].groupby("period")}}
+    xr, xd = x_trades(args.cache, eo.price_entry)
+    xt = pd.DataFrame(xr)
+    out["x_latest_bar_entry"] = {"drops": xd, **{f"{k}:{per}": os2.stats(g, monthly=True)
+                                                 for (k, per), g in xt.groupby(["trial", "period"])}}
+    print(json.dumps(out, indent=1, default=str))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(required=True)
     p = sub.add_parser("probe")
     p.set_defaults(fn=cmd_probe)
+    p = sub.add_parser("diag")
+    p.add_argument("--cache", type=Path, default=Path("outputs/os2_cache"))
+    p.set_defaults(fn=cmd_diag)
     p = sub.add_parser("probe2")
     p.set_defaults(fn=cmd_probe2)
     p = sub.add_parser("data")

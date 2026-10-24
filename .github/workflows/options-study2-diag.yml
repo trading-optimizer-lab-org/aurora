@@ -1,0 +1,42 @@
+name: "Options study 2 diagnostics (exploratory, no decision)"
+
+# docs/research/OPTIONS_STUDY2_PREREGISTRATION.md: data (Alpaca, cache os2-cache-*), then the evaluation.
+# Only the report, the summary and the trade returns are uploaded.
+# run: 1
+on:
+  push:
+    branches: [research/options-study-2]
+    paths:
+      - .github/workflows/options-study2-diag.yml
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+  APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+
+concurrency:
+  group: options-study2-diag
+  cancel-in-progress: false
+
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/os2_cache
+          key: os2-cache-40115411744-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_options_study2.py diag --cache outputs/os2_cache
