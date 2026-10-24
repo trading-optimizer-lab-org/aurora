@@ -1,0 +1,30 @@
+name: "Earnings options probe (data format only)"
+
+# scripts/run_earnings_options.py probe: expired option contracts, option bars and SEC acceptance times. No result.
+# run: 1
+on:
+  push:
+    branches: [research/earnings-options]
+    paths:
+      - .github/workflows/earnings-options-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests
+      - run: python scripts/run_earnings_options.py probe
