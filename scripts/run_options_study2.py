@@ -73,6 +73,24 @@ def cmd_probe(args) -> int:
     return 0
 
 
+def cmd_probe2(args) -> int:
+    """Format check of the assets list: counts and attribute names only."""
+    a = alpaca()
+    out = {}
+    for params in ({"status": "active", "asset_class": "us_equity"},
+                   {"status": "active", "asset_class": "us_equity", "attributes": "options_enabled"}):
+        got = a.get(f"{TRADE}/v2/assets", params) or []
+        attrs: dict[str, int] = {}
+        for x in got:
+            for t in x.get("attributes") or []:
+                attrs[t] = attrs.get(t, 0) + 1
+        out[json.dumps(params)] = {"n": len(got), "tradable": sum(bool(x.get("tradable")) for x in got),
+                                   "attributes": attrs, "keys": sorted(got[0]) if got else [],
+                                   "spy_aapl": [x for x in got if x.get("symbol") in ("AAPL", "SPY")][:2]}
+    print(json.dumps(out, indent=1))
+    return 0
+
+
 def _chain(df: pd.DataFrame, und: str) -> pd.DataFrame:
     df = df[(df["root_symbol"].fillna(und) == und) & (df["size"].fillna("100").astype(str) == "100")].copy()
     df["exp"] = pd.to_datetime(df["expiration_date"])
@@ -536,6 +554,8 @@ def main() -> int:
     sub = ap.add_subparsers(required=True)
     p = sub.add_parser("probe")
     p.set_defaults(fn=cmd_probe)
+    p = sub.add_parser("probe2")
+    p.set_defaults(fn=cmd_probe2)
     p = sub.add_parser("data")
     p.add_argument("--cache", type=Path, default=Path("outputs/os2_cache"))
     p.add_argument("--start", default=START)

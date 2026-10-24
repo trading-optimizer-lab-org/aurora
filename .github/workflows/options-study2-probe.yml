@@ -1,7 +1,7 @@
 name: "Options study 2 probe (data format only)"
 
 # scripts/run_options_study2.py probe: listed expiries, 0DTE bar coverage. Counts and times only, no prices.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/options-study-2]
@@ -26,4 +26,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip && python -m pip install -e .
-      - run: python scripts/run_options_study2.py probe
+      - run: python scripts/run_options_study2.py probe2
