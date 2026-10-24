@@ -2,7 +2,7 @@ name: "Earnings options study (pre-registered, 10 trials)"
 
 # docs/research/EARNINGS_OPTIONS_PREREGISTRATION.md: data (SEC + Alpaca, cache eo-cache-*), then the evaluation.
 # Only the report, the summary and the trade returns are uploaded.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/earnings-options]
