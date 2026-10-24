@@ -305,9 +305,12 @@ def _days(df: pd.DataFrame) -> dict[tuple[str, pd.Timestamp], pd.DataFrame]:
 
 
 def _load(folder: Path, prefix: str = "") -> pd.DataFrame:
-    fs = sorted(folder.glob(f"{prefix}*.parquet"))
-    return pd.concat([pd.read_parquet(f) for f in fs], ignore_index=True) if fs else pd.DataFrame(
-        columns=["symbol", "t", "vw", "c", "v"])
+    dfs = [d for d in (pd.read_parquet(f) for f in sorted(folder.glob(f"{prefix}*.parquet"))) if len(d)]
+    if not dfs:
+        return pd.DataFrame(columns=["symbol", "t", "vw", "c", "v"])
+    df = pd.concat(dfs, ignore_index=True)
+    df["t"] = pd.to_datetime(df["t"])  # files with no bars were written with an object column
+    return df
 
 
 def _plan_row(ev, sessions, chains, sday) -> dict | None:

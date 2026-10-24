@@ -166,3 +166,13 @@ def test_one_event_end_to_end(tmp_path: Path) -> None:
     fb = dict(zip(tr["trial"], tr["fallback"]))
     assert fb["H4_fly_all"] and not fb["H2_hold_all"]
     assert (tr["period"] == "discovery").all() and (tr["timing"] == "after_close").all()
+
+
+def test_load_skips_files_without_bars(tmp_path: Path) -> None:
+    S = _script()
+    S._frame({}).to_parquet(tmp_path / "A_1.parquet", index=False)
+    S._frame({"X": [{"t": "2024-03-05T20:30:00Z", "vw": 1.0, "c": 1.0, "v": 1}]}).to_parquet(
+        tmp_path / "A_2.parquet", index=False)
+    df = S._load(tmp_path, "A_")
+    assert len(df) == 1 and df["t"].iloc[0] == T("2024-03-05 15:30") and df["vw"].dtype == float
+    assert set(S._days(df)) == {("X", T("2024-03-05"))}
