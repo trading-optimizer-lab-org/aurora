@@ -262,13 +262,14 @@ def book_items(book: str, risk: float, cap: float, account: float, spread: float
 def joint(items: list[dict], dates: pd.DatetimeIndex, gross_cap: float, max_open: int = 20, max_new: int = 99,
           order: str = "time", sector: str = "none", rule: str = "tzi", locate: float = BASE_LOCATE,
           preborrow: float = 0.0, streams: dict | None = None,
-          sleeve: tuple[np.ndarray, float, float] | None = None) -> tuple[pd.Series, list[dict]]:
+          sleeve: tuple[np.ndarray, float, float] | None = None,
+          hot_cap: float | None = None) -> tuple[pd.Series, list[dict]]:
     """One account: one position a symbol, at most ``max_open`` open and ``max_new`` new a session, gross notional at
     most ``gross_cap``, the margin of the open positions at most the equity, at most two open a SIC code ('sic2').
     An item's own ``loc`` replaces ``locate`` (v29); ``sleeve`` (v29): daily returns held at a weight, with the
-    margin a dollar of it needs."""
+    margin a dollar of it needs; ``hot_cap`` (v32): the open HOT shorts' (tier 2) total weight at most this."""
     T = len(dates)
-    out, gross, req = np.zeros(T), np.zeros(T), np.zeros(T)
+    out, gross, req, hot = np.zeros(T), np.zeros(T), np.zeros(T), np.zeros(T)
     if sleeve is not None:
         out += sleeve[1] * np.asarray(sleeve[0], float)
         gross += sleeve[1]
@@ -325,6 +326,9 @@ def joint(items: list[dict], dates: pd.DatetimeIndex, gross_cap: float, max_open
         sl = slice(i0, i0 + n)
         if gross[sl].max() + w > gross_cap + 1e-9:
             continue
+        is_hot = hot_cap is not None and it["side"] < 0 and it.get("tier") == 2
+        if is_hot and hot[sl].max() + w > hot_cap + 1e-9:
+            continue
         if check:
             m_day = np.full(n, m_ni[k])
             if n == 1 and it["nights"] <= 0:
@@ -340,6 +344,8 @@ def joint(items: list[dict], dates: pd.DatetimeIndex, gross_cap: float, max_open
                 rr -= preborrow * it["nights"] / n
         out[sl] += w * rr
         gross[sl] += w
+        if is_hot:
+            hot[sl] += w
         if check:
             req[sl] += w * m_day
         n_new[i0] += 1
