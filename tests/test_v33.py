@@ -112,3 +112,12 @@ def test_verdict(V) -> None:
             get[(name, t)] = {"med": arm if name != "limit" else a1 - 1, "p_ruin": 0.005}
     v = V.verdict(get)
     assert v["arms"]["repick"]["raises"] and not v["arms"]["limit"]["raises"] and v["choice"] in V.ARMS[1:]
+
+
+def test_liquidation_uses_the_limit_fill(V) -> None:
+    D = _D([10, 10.5, 10], [10, 11.2, 10], [10, 10, 10], [10, 10.4, 10])
+    r0 = (11 - 10.4) / 11
+    it = {"i0": 1, "t": 1, "j": 0, "side": -1, "w": 0.2, "r": [r0], "raw0": r0, "loc": 0.0, "entry": 11.0}
+    P = V.R31.position_days([it], D, 3)
+    assert P["a"][0] == pytest.approx(0.0) and P["b"][0] == pytest.approx(-0.2 * 0.2 / 11)
+    assert P["m0"][0] == pytest.approx(0.2) and P["cl"][0] == pytest.approx(0.2 * r0)

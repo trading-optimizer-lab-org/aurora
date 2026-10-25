@@ -97,7 +97,7 @@ def position_days(taken: list[dict], D: dict, T: int) -> dict[str, np.ndarray]:
         if j < 0 or "raw0" not in it or i0 not in (t, t + 1):
             a, b, m0, m1 = rr, np.zeros(n), np.ones(n), np.zeros(n)
         else:
-            entry = O[t, j] if i0 == t else C[t, j]
+            entry = float(it["entry"]) if "entry" in it else (O[t, j] if i0 == t else C[t, j])  # v33: a limit fill
             c = C[u, j]
             prev = np.concatenate([[entry], c[:-1]])
             o = np.where(np.isfinite(O[u, j]), O[u, j], c)

@@ -54,6 +54,7 @@ ARMS = ("A1", "repick", "limit", "exit", "nohot", "no_night", "all")
 TASKS: dict[str, dict] = {"base": {}, "hot5": {"hot": 0.05}, "spread2": {"spread": 2.0},
                           "high": {"spread": 2.0, "fee": 3.0}}
 VARIANT: dict = {"limit": None, "cat": None}
+ENTRIES: list[float] = []  # each trade's entry price, in the order the daily path returns them
 
 
 # ---------------------------------------------------------------- the variants inside the shield's daily path
@@ -173,6 +174,7 @@ def daily_path(D: dict, s: v19.Spec, table: dict, spread: float, fee_mult: float
     if not gross and s.kind == "open" and t > 0 and e <= 0.9 * C[t - 1, j]:
         cost = cost + v19.vs.SSR_EXTRA
     r[0] -= cost[0]
+    ENTRIES.append(e)
     return first, r, s.prio, w * float(avail[0])
 
 
@@ -186,10 +188,13 @@ def member_items(name: str, years: set, level: float, var: tuple = BASE_VAR, spr
                  hot: float = R29.BASE_LOC[1]) -> list[dict]:
     """One pick's trades at an equity level under TradeZero's account, with a variant (limit, exit, HOT skip)."""
     VARIANT.update(limit=var[0], cat=var[1])
+    ENTRIES.clear()
     try:
         raw = A.pick_items(name, False, years, RISK, CAP, level, spread, fee)
     finally:
         VARIANT.update(limit=None, cat=None)
+    assert len(ENTRIES) == len(raw)  # every member is a short walked by the shield's daily path
+    raw = [{**it, "entry": e} for it, e in zip(raw, ENTRIES)]
     its = R29.tz_items(raw, level, R29.BASE_LOC[0], hot, floor=FLOOR)
     return [it for it in its if it["tier"] != 2] if var[2] else its
 
