@@ -54,7 +54,7 @@ ARMS = ("A1", "repick", "limit", "exit", "nohot", "no_night", "all")
 TASKS: dict[str, dict] = {"base": {}, "hot5": {"hot": 0.05}, "spread2": {"spread": 2.0},
                           "high": {"spread": 2.0, "fee": 3.0}}
 VARIANT: dict = {"limit": None, "cat": None}
-ENTRIES: list[float] = []  # each trade's entry price, in the order the daily path returns them
+ENTRIES: list[tuple[float, float]] = []  # each trade's (entry price, first session's return before costs)
 
 
 # ---------------------------------------------------------------- the variants inside the shield's daily path
@@ -167,6 +167,7 @@ def daily_path(D: dict, s: v19.Spec, table: dict, spread: float, fee_mult: float
     if not rets:
         return None
     r = np.array(rets)
+    raw0 = float(r[0])
     w = min(w_max, 0.01 * D["DV1"][t, j] / core.ACCOUNT) if np.isfinite(D["DV1"][t, j]) else 0.0
     cost, avail = v19._costs(np.array([raw]), np.array([D["SO"][t, j]]), np.array([-1]), np.array([nights]),
                              np.array([int(leg_in == 0) + int(leg == 0)]), table, spread, fee_mult, gross,
@@ -174,7 +175,7 @@ def daily_path(D: dict, s: v19.Spec, table: dict, spread: float, fee_mult: float
     if not gross and s.kind == "open" and t > 0 and e <= 0.9 * C[t - 1, j]:
         cost = cost + v19.vs.SSR_EXTRA
     r[0] -= cost[0]
-    ENTRIES.append(e)
+    ENTRIES.append((e, raw0))
     return first, r, s.prio, w * float(avail[0])
 
 
@@ -194,7 +195,7 @@ def member_items(name: str, years: set, level: float, var: tuple = BASE_VAR, spr
     finally:
         VARIANT.update(limit=None, cat=None)
     assert len(ENTRIES) == len(raw)  # every member is a short walked by the shield's daily path
-    raw = [{**it, "entry": e} for it, e in zip(raw, ENTRIES)]
+    raw = [{**it, "entry": e, "raw0": r0} for it, (e, r0) in zip(raw, ENTRIES)]  # v31's raw0 assumes the open
     its = R29.tz_items(raw, level, R29.BASE_LOC[0], hot, floor=FLOOR)
     return [it for it in its if it["tier"] != 2] if var[2] else its
 

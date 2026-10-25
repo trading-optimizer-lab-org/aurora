@@ -2,7 +2,7 @@ name: "v33 arms: the accounts again, on run 40192951586's choice"
 
 # scripts/run_v33.py arms + final on the picks and the arms' members of v33's run 40192951586 (its arms jobs failed
 # on v31's liquidation model reading the open as a limit fill's entry; fixed in run_v31.position_days).
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]

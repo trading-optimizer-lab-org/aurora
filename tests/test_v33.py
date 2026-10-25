@@ -121,3 +121,12 @@ def test_liquidation_uses_the_limit_fill(V) -> None:
     P = V.R31.position_days([it], D, 3)
     assert P["a"][0] == pytest.approx(0.0) and P["b"][0] == pytest.approx(-0.2 * 0.2 / 11)
     assert P["m0"][0] == pytest.approx(0.2) and P["cl"][0] == pytest.approx(0.2 * r0)
+
+
+def test_limit_fill_after_a_gap_down_records_its_own_first_return(V, free) -> None:
+    V.ENTRIES.clear()
+    p = {**P0, "hold": "d3"}
+    D = _D([10, 8.9, 10, 10], [10, 12, 10, 10], [10, 8.5, 9, 9], [10, 10.5, 10, 10])
+    out, _ = free(D, _spec(V, "open"), p, (0.10, None))
+    e, r0 = V.ENTRIES[-1]
+    assert e == pytest.approx(11.0) and r0 == pytest.approx((11 - 10.5) / 11) and out[1][0] == pytest.approx(r0)
