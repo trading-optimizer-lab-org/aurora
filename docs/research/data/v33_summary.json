@@ -1,0 +1,3639 @@
+{
+ "verdict": {
+  "arms": {
+   "repick": {
+    "beats_base": false,
+    "beats_base_late": false,
+    "beats_hot5": false,
+    "beats_spread2": false,
+    "ruin_ok": false,
+    "raises": false,
+    "med": 10914.449454311449
+   },
+   "limit": {
+    "beats_base": false,
+    "beats_base_late": false,
+    "beats_hot5": true,
+    "beats_spread2": true,
+    "ruin_ok": true,
+    "raises": false,
+    "med": 12777.395457954777
+   },
+   "exit": {
+    "beats_base": false,
+    "beats_base_late": false,
+    "beats_hot5": false,
+    "beats_spread2": false,
+    "ruin_ok": true,
+    "raises": false,
+    "med": 12831.010763152783
+   },
+   "nohot": {
+    "beats_base": false,
+    "beats_base_late": false,
+    "beats_hot5": false,
+    "beats_spread2": false,
+    "ruin_ok": true,
+    "raises": false,
+    "med": 12831.010763152783
+   },
+   "no_night": {
+    "beats_base": false,
+    "beats_base_late": false,
+    "beats_hot5": false,
+    "beats_spread2": false,
+    "ruin_ok": true,
+    "raises": false,
+    "med": 10063.646788316019
+   },
+   "all": {
+    "beats_base": false,
+    "beats_base_late": false,
+    "beats_hot5": false,
+    "beats_spread2": false,
+    "ruin_ok": false,
+    "raises": false,
+    "med": 10857.051595727293
+   }
+  },
+  "choice": null
+ },
+ "picks1": {
+  "B:v19:DS1": {
+   "2018": {
+    "name": "B:v19:DS1_RUNUP|0",
+    "score": 0.939661805189279,
+    "cfg": {
+     "entry": "DS1_RUNUP|1281",
+     "hold": "d1",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2019": {
+    "name": "B:v19:DS1_RUNUP|6482",
+    "score": 1.9974107209272314,
+    "cfg": {
+     "entry": "DS1_RUNUP|1295",
+     "hold": "d3",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "nogc",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2020": {
+    "name": "B:v19:DS1_RUNUP|3726",
+    "score": 2.0723559538383367,
+    "cfg": {
+     "entry": "DS1_RUNUP|1281",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "t20",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2021": {
+    "name": "B:v19:DS1_RUNUP|8346",
+    "score": 2.9793451729552114,
+    "cfg": {
+     "entry": "DS1_RUNUP|1295",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "t20",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2022": {
+    "name": "B:v19:DS1_RUNUP|12966",
+    "score": 2.0280509586045823,
+    "cfg": {
+     "entry": "DS1_RUNUP|1822",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "t20",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2023": {
+    "name": "B:v19:DS1_RUNUP|12936",
+    "score": 1.4318356268999197,
+    "cfg": {
+     "entry": "DS1_RUNUP|1822",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2024": {
+    "name": "B:v19:DS1_RUNUP|12936",
+    "score": 1.9200836692499135,
+    "cfg": {
+     "entry": "DS1_RUNUP|1822",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2025": {
+    "name": "B:v19:DS1_RUNUP|12936",
+    "score": 1.9079865767157067,
+    "cfg": {
+     "entry": "DS1_RUNUP|1822",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2026": {
+    "name": "B:v19:DS1_RUNUP|12940",
+    "score": 1.7754909557031477,
+    "cfg": {
+     "entry": "DS1_RUNUP|1822",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "thr",
+     "rally": "none",
+     "scale": "all"
+    }
+   }
+  },
+  "B:v20:RU": {
+   "2019": {
+    "name": "B:v20:RU_RUNUP|21283",
+    "score": 2.8486106293435087,
+    "cfg": {
+     "entry": "RU_RUNUP|4876",
+     "hold": "d5",
+     "stop": "own",
+     "ext": "none",
+     "target": "t30",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2020": {
+    "name": "B:v20:RU_RUNUP|8316",
+    "score": 3.9829255328063167,
+    "cfg": {
+     "entry": "RU_RUNUP|10636",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2021": {
+    "name": "B:v20:RU_RUNUP|3720",
+    "score": 2.967624209778187,
+    "cfg": {
+     "entry": "RU_RUNUP|10635",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "nofri",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2022": {
+    "name": "B:v20:RU_RUNUP|8340",
+    "score": 2.7724302123934237,
+    "cfg": {
+     "entry": "RU_RUNUP|10636",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "nofri",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2023": {
+    "name": "B:v20:RU_RUNUP|3720",
+    "score": 2.644122316649847,
+    "cfg": {
+     "entry": "RU_RUNUP|10635",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "nofri",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2024": {
+    "name": "B:v20:RU_RUNUP|8329",
+    "score": 3.446843553749538,
+    "cfg": {
+     "entry": "RU_RUNUP|10636",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "gc",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2025": {
+    "name": "B:v20:RU_RUNUP|19404",
+    "score": 2.458047765443156,
+    "cfg": {
+     "entry": "RU_RUNUP|4876",
+     "hold": "d2",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2026": {
+    "name": "B:v20:RU_RUNUP|8320",
+    "score": 2.3742736159396194,
+    "cfg": {
+     "entry": "RU_RUNUP|10636",
+     "hold": "d10",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "thr",
+     "rally": "none",
+     "scale": "all"
+    }
+   }
+  },
+  "B:v19:ON1": {
+   "2018": {
+    "name": "B:v19:ON1_NIGHTSHORT|25741",
+    "score": 3.071799892374258,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|8",
+     "hold": "d3",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "ftd05",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2019": {
+    "name": "B:v19:ON1_NIGHTSHORT|2649",
+    "score": 6.641068033053368,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|10",
+     "hold": "d3",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc5",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2020": {
+    "name": "B:v19:ON1_NIGHTSHORT|6345",
+    "score": 3.777770438610052,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|11",
+     "hold": "d2",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc5",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2021": {
+    "name": "B:v19:ON1_NIGHTSHORT|12021",
+    "score": 2.336097072832328,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|14",
+     "hold": "d5",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc5",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2022": {
+    "name": "B:v19:ON1_NIGHTSHORT|15584",
+    "score": 2.1436916997325683,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|15",
+     "hold": "d2",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc3",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2023": {
+    "name": "B:v19:ON1_NIGHTSHORT|15320",
+    "score": 1.7317901827221274,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|15",
+     "hold": "d2",
+     "stop": "pct50",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc3",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2024": {
+    "name": "B:v19:ON1_NIGHTSHORT|15584",
+    "score": 2.5162799158040934,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|15",
+     "hold": "d2",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc3",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2025": {
+    "name": "B:v19:ON1_NIGHTSHORT|6344",
+    "score": 2.168668562778411,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|11",
+     "hold": "d2",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc3",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2026": {
+    "name": "B:v19:ON1_NIGHTSHORT|12571",
+    "score": 1.8573474989178569,
+    "cfg": {
+     "entry": "ON1_NIGHTSHORT|14",
+     "hold": "d5",
+     "stop": "pct50",
+     "ext": "none",
+     "target": "t30",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   }
+  },
+  "B:v20:NS": {
+   "2018": {
+    "name": "B:v20:NS_NIGHTSHORT|11881",
+    "score": 3.1661585923290736,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|418",
+     "hold": "d3",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "ftd05",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2019": {
+    "name": "B:v20:NS_NIGHTSHORT|2664",
+    "score": 4.944394695036007,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|228",
+     "hold": "d3",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "nofri",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2020": {
+    "name": "B:v20:NS_NIGHTSHORT|6476",
+    "score": 5.80958197414229,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|308",
+     "hold": "d3",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc3",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2021": {
+    "name": "B:v20:NS_NIGHTSHORT|15600",
+    "score": 3.5197811305715985,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|540",
+     "hold": "d2",
+     "stop": "atr4",
+     "ext": "none",
+     "target": "none",
+     "filt": "nofri",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2022": {
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "score": 4.115612046068558,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|308",
+     "hold": "d2",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "nogc",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2023": {
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "score": 4.006150020658094,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|308",
+     "hold": "d2",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "nogc",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2024": {
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "score": 3.9613028345725736,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|308",
+     "hold": "d2",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "nogc",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2025": {
+    "name": "B:v20:NS_NIGHTSHORT|5544",
+    "score": 3.322378994667655,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|308",
+     "hold": "d2",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "none",
+     "rally": "none",
+     "scale": "all"
+    }
+   },
+   "2026": {
+    "name": "B:v20:NS_NIGHTSHORT|24033",
+    "score": 2.6959639976133163,
+    "cfg": {
+     "entry": "NS_NIGHTSHORT|548",
+     "hold": "d2",
+     "stop": "own",
+     "ext": "none",
+     "target": "none",
+     "filt": "dtc5",
+     "rally": "none",
+     "scale": "all"
+    }
+   }
+  }
+ },
+ "arms": {
+  "A1": [
+   {
+    "year": 2018,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|66",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|24861",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|10077",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|15343",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|0",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|2725",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|1905",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16762",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3179",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|7514",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1758",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|15600",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16662",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|3726",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1757",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|25809",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3774",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3688",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24056",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13035",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24024",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14816",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3787",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14792",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|20359",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   }
+  ],
+  "repick": [
+   {
+    "year": 2018,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|0",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|25741",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|11881",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|6482",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|2649",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|2664",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|21283",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3179",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|3726",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6345",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|6476",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8316",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|8346",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|12021",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|15600",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3720",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3688",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12966",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|15584",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8340",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|15320",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3720",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|15584",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8329",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6344",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5544",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|19404",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12940",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|12571",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24033",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8320",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   }
+  ],
+  "limit": [
+   {
+    "year": 2018,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|66",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|24861",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|10077",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|15343",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|0",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|2725",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|1905",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16762",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3179",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|7514",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1758",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|15600",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16662",
+    "var": [
+     0.05,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|3726",
+    "var": [
+     0.1,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1757",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|25809",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3774",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3688",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24056",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13035",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24024",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14816",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3787",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13002",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14792",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|13002",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|20359",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|12936",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   }
+  ],
+  "exit": [
+   {
+    "year": 2018,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|66",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|24861",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|10077",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|15343",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|0",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|2725",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|1905",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16762",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3179",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|7514",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1758",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|15600",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16662",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|3726",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1757",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|25809",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3774",
+    "var": [
+     null,
+     1.0,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3688",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24056",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     1.0,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13035",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24024",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     0.5,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14816",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3787",
+    "var": [
+     null,
+     1.0,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14792",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|20359",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   }
+  ],
+  "nohot": [
+   {
+    "year": 2018,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|66",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|24861",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|10077",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|15343",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|0",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|2725",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|1905",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16762",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3179",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|7514",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1758",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|15600",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16662",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|3726",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|1757",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|25809",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3774",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3688",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24056",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13035",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24024",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6400",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14816",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3787",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|14792",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|8248",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|20359",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   }
+  ],
+  "no_night": [
+   {
+    "year": 2018,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|66",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|15343",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|0",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16762",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3179",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|7514",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|16662",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|3726",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3774",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3688",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13035",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3786",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12969",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3787",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|13002",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   }
+  ],
+  "all": [
+   {
+    "year": 2018,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|0",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|25741",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2018,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|11881",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|6482",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|2649",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|2664",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|21283",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2019,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3179",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|3726",
+    "var": [
+     0.1,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6345",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|6476",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2020,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8316",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|8346",
+    "var": [
+     0.1,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|12021",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|15600",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3720",
+    "var": [
+     null,
+     1.0,
+     false
+    ]
+   },
+   {
+    "year": 2021,
+    "fam": "C:SYMPATHY",
+    "name": "C:SYMPATHY_SHORT|3688",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12966",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|15584",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2022,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8340",
+    "var": [
+     null,
+     1.0,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|15320",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2023,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|3720",
+    "var": [
+     null,
+     0.5,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|15584",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5558",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2024,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8329",
+    "var": [
+     null,
+     0.5,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12936",
+    "var": [
+     0.2,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|6344",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|5544",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2025,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|19404",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:DS1",
+    "name": "B:v19:DS1_RUNUP|12940",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v19:ON1",
+    "name": "B:v19:ON1_NIGHTSHORT|12571",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:NS",
+    "name": "B:v20:NS_NIGHTSHORT|24033",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   },
+   {
+    "year": 2026,
+    "fam": "B:v20:RU",
+    "name": "B:v20:RU_RUNUP|8320",
+    "var": [
+     null,
+     null,
+     false
+    ]
+   }
+  ]
+ },
+ "results": [
+  {
+   "arm": "A1",
+   "task": "base",
+   "med": 12831.010763152783,
+   "mean": 16619.64900531332,
+   "p10": 4482.414215663138,
+   "p90": 31568.688311759965,
+   "p_ruin": 0.005,
+   "p_half": 0.1005,
+   "p_loss": 0.12275,
+   "es5": 2568.8223942588606,
+   "liq_5k": {
+    "n": 0,
+    "worst_on": -0.5201752205718491,
+    "worst_off": -0.5201752205718491
+   },
+   "trades_5k": 1325,
+   "hot_5k": 0.8369811320754716,
+   "fams_5k": {
+    "B:v19:DS1": 509,
+    "B:v20:NS": 397,
+    "B:v19:ON1": 330,
+    "B:v20:RU": 50,
+    "C:SYMPATHY": 39
+   }
+  },
+  {
+   "arm": "A1",
+   "task": "base_early",
+   "med": 9021.937335655639,
+   "mean": 10893.79090310957,
+   "p10": 4262.14326331332,
+   "p90": 19747.53521038306,
+   "p_ruin": 0.003,
+   "p_half": 0.0785,
+   "p_loss": 0.16025,
+   "es5": 2613.7379828719336
+  },
+  {
+   "arm": "A1",
+   "task": "base_late",
+   "med": 20528.351221370445,
+   "mean": 29705.001680614932,
+   "p10": 5679.866233599051,
+   "p90": 61685.616566092525,
+   "p_ruin": 0.0115,
+   "p_half": 0.11125,
+   "p_loss": 0.08525,
+   "es5": 2586.438222493213
+  },
+  {
+   "arm": "exit",
+   "task": "spread2",
+   "med": 10221.27538351612,
+   "mean": 13103.493644634373,
+   "p10": 3553.3946585652056,
+   "p90": 25056.95749474394,
+   "p_ruin": 0.01275,
+   "p_half": 0.14625,
+   "p_loss": 0.1925,
+   "es5": 2051.2609200920833
+  },
+  {
+   "arm": "A1",
+   "task": "hot5",
+   "med": 9000.231198751055,
+   "mean": 11587.975271444417,
+   "p10": 3150.4952302078727,
+   "p90": 22085.253319705364,
+   "p_ruin": 0.01875,
+   "p_half": 0.17025,
+   "p_loss": 0.23625,
+   "es5": 1813.8761029652983
+  },
+  {
+   "arm": "exit",
+   "task": "high",
+   "med": 4759.395750207097,
+   "mean": 6152.574287445892,
+   "p10": 1616.7546059287542,
+   "p90": 11733.39241560173,
+   "p_ruin": 0.10125,
+   "p_half": 0.3665,
+   "p_loss": 0.5205,
+   "es5": 885.7229222614932
+  },
+  {
+   "arm": "A1",
+   "task": "spread2",
+   "med": 10221.27538351612,
+   "mean": 13103.493644634373,
+   "p10": 3553.3946585652056,
+   "p90": 25056.95749474394,
+   "p_ruin": 0.01275,
+   "p_half": 0.14625,
+   "p_loss": 0.1925,
+   "es5": 2051.2609200920833
+  },
+  {
+   "arm": "nohot",
+   "task": "base",
+   "med": 12831.010763152783,
+   "mean": 16619.64900531332,
+   "p10": 4482.414215663138,
+   "p90": 31568.688311759965,
+   "p_ruin": 0.005,
+   "p_half": 0.1005,
+   "p_loss": 0.12275,
+   "es5": 2568.8223942588606,
+   "liq_5k": {
+    "n": 0,
+    "worst_on": -0.5201752205718491,
+    "worst_off": -0.5201752205718491
+   },
+   "trades_5k": 1325,
+   "hot_5k": 0.8369811320754716,
+   "fams_5k": {
+    "B:v19:DS1": 509,
+    "B:v20:NS": 397,
+    "B:v19:ON1": 330,
+    "B:v20:RU": 50,
+    "C:SYMPATHY": 39
+   }
+  },
+  {
+   "arm": "nohot",
+   "task": "base_early",
+   "med": 9021.937335655639,
+   "mean": 10893.79090310957,
+   "p10": 4262.14326331332,
+   "p90": 19747.53521038306,
+   "p_ruin": 0.003,
+   "p_half": 0.0785,
+   "p_loss": 0.16025,
+   "es5": 2613.7379828719336
+  },
+  {
+   "arm": "nohot",
+   "task": "base_late",
+   "med": 20528.351221370445,
+   "mean": 29705.001680614932,
+   "p10": 5679.866233599051,
+   "p90": 61685.616566092525,
+   "p_ruin": 0.0115,
+   "p_half": 0.11125,
+   "p_loss": 0.08525,
+   "es5": 2586.438222493213
+  },
+  {
+   "arm": "A1",
+   "task": "high",
+   "med": 4759.395750207097,
+   "mean": 6152.574287445892,
+   "p10": 1616.7546059287542,
+   "p90": 11733.39241560173,
+   "p_ruin": 0.10125,
+   "p_half": 0.3665,
+   "p_loss": 0.5205,
+   "es5": 885.7229222614932
+  },
+  {
+   "arm": "nohot",
+   "task": "hot5",
+   "med": 9000.231198751055,
+   "mean": 11587.975271444417,
+   "p10": 3150.4952302078727,
+   "p90": 22085.253319705364,
+   "p_ruin": 0.01875,
+   "p_half": 0.17025,
+   "p_loss": 0.23625,
+   "es5": 1813.8761029652983
+  },
+  {
+   "arm": "repick",
+   "task": "base",
+   "med": 10914.449454311449,
+   "mean": 13442.897652973284,
+   "p10": 3560.408509724724,
+   "p90": 25881.501789299244,
+   "p_ruin": 0.03125,
+   "p_half": 0.15575,
+   "p_loss": 0.178,
+   "es5": 1825.2196704560683,
+   "liq_5k": {
+    "n": 1,
+    "worst_on": -0.7279163052152856,
+    "worst_off": -0.8556593705971245
+   },
+   "trades_5k": 1249,
+   "hot_5k": 0.8414731785428343,
+   "fams_5k": {
+    "B:v19:DS1": 493,
+    "B:v19:ON1": 325,
+    "B:v20:NS": 316,
+    "B:v20:RU": 77,
+    "C:SYMPATHY": 38
+   }
+  },
+  {
+   "arm": "repick",
+   "task": "base_early",
+   "med": 8620.347773627029,
+   "mean": 10041.006138022885,
+   "p10": 2983.6004128704108,
+   "p90": 18593.914573910766,
+   "p_ruin": 0.0425,
+   "p_half": 0.1815,
+   "p_loss": 0.23275,
+   "es5": 1454.5736291387796
+  },
+  {
+   "arm": "repick",
+   "task": "base_late",
+   "med": 16111.304723171548,
+   "mean": 20893.44901284899,
+   "p10": 4778.871169934611,
+   "p90": 41890.176090160414,
+   "p_ruin": 0.01125,
+   "p_half": 0.11375,
+   "p_loss": 0.11025,
+   "es5": 2436.2081287790293
+  },
+  {
+   "arm": "nohot",
+   "task": "spread2",
+   "med": 10221.27538351612,
+   "mean": 13103.493644634373,
+   "p10": 3553.3946585652056,
+   "p90": 25056.95749474394,
+   "p_ruin": 0.01275,
+   "p_half": 0.14625,
+   "p_loss": 0.1925,
+   "es5": 2051.2609200920833
+  },
+  {
+   "arm": "repick",
+   "task": "hot5",
+   "med": 7870.450150791609,
+   "mean": 9697.573469652532,
+   "p10": 2491.09235972274,
+   "p90": 18827.56333873751,
+   "p_ruin": 0.0585,
+   "p_half": 0.21975,
+   "p_loss": 0.295,
+   "es5": 1239.7314359279878
+  },
+  {
+   "arm": "nohot",
+   "task": "high",
+   "med": 4759.395750207097,
+   "mean": 6152.574287445892,
+   "p10": 1616.7546059287542,
+   "p90": 11733.39241560173,
+   "p_ruin": 0.10125,
+   "p_half": 0.3665,
+   "p_loss": 0.5205,
+   "es5": 885.7229222614932
+  },
+  {
+   "arm": "repick",
+   "task": "spread2",
+   "med": 8782.368197159161,
+   "mean": 10830.268293037921,
+   "p10": 2820.078498231078,
+   "p90": 20812.083221878587,
+   "p_ruin": 0.046,
+   "p_half": 0.19925,
+   "p_loss": 0.24625,
+   "es5": 1416.8674392505407
+  },
+  {
+   "arm": "no_night",
+   "task": "base",
+   "med": 10063.646788316019,
+   "mean": 12636.580439396,
+   "p10": 4296.047479663553,
+   "p90": 23626.43363791581,
+   "p_ruin": 0.00275,
+   "p_half": 0.09,
+   "p_loss": 0.14275,
+   "es5": 2737.662223106304,
+   "liq_5k": {
+    "n": 0,
+    "worst_on": -0.5201752205718491,
+    "worst_off": -0.5201752205718491
+   },
+   "trades_5k": 616,
+   "hot_5k": 0.9707792207792207,
+   "fams_5k": {
+    "B:v19:DS1": 526,
+    "B:v20:RU": 51,
+    "C:SYMPATHY": 39
+   }
+  },
+  {
+   "arm": "no_night",
+   "task": "base_early",
+   "med": 7346.529316043663,
+   "mean": 8799.526019082432,
+   "p10": 3877.2849858735,
+   "p90": 15376.107331895337,
+   "p_ruin": 0.003,
+   "p_half": 0.09825,
+   "p_loss": 0.22575,
+   "es5": 2623.181000046184
+  },
+  {
+   "arm": "no_night",
+   "task": "base_late",
+   "med": 16024.670855119595,
+   "mean": 20976.55332470283,
+   "p10": 5746.473426804185,
+   "p90": 40938.28300399948,
+   "p_ruin": 0.00575,
+   "p_half": 0.0835,
+   "p_loss": 0.07925,
+   "es5": 2888.077341655943
+  },
+  {
+   "arm": "repick",
+   "task": "high",
+   "med": 4423.0236679093705,
+   "mean": 5662.268746572886,
+   "p10": 1330.420834901431,
+   "p90": 11355.45862428236,
+   "p_ruin": 0.1465,
+   "p_half": 0.40775,
+   "p_loss": 0.555,
+   "es5": 632.8085971292257
+  },
+  {
+   "arm": "no_night",
+   "task": "hot5",
+   "med": 8318.314506349487,
+   "mean": 10298.201301658497,
+   "p10": 3560.2888235714518,
+   "p90": 19268.21035157983,
+   "p_ruin": 0.007,
+   "p_half": 0.124,
+   "p_loss": 0.2205,
+   "es5": 2288.033230270523
+  },
+  {
+   "arm": "limit",
+   "task": "base",
+   "med": 12777.395457954777,
+   "mean": 14948.5741898222,
+   "p10": 5817.0583697580705,
+   "p90": 26269.188979657018,
+   "p_ruin": 0.001,
+   "p_half": 0.0445,
+   "p_loss": 0.06825,
+   "es5": 3500.6405826542036,
+   "liq_5k": {
+    "n": 0,
+    "worst_on": -0.35248516566187477,
+    "worst_off": -0.35248516566187477
+   },
+   "trades_5k": 1198,
+   "hot_5k": 0.8080133555926544,
+   "fams_5k": {
+    "B:v20:NS": 410,
+    "B:v19:ON1": 354,
+    "B:v19:DS1": 324,
+    "B:v20:RU": 72,
+    "C:SYMPATHY": 38
+   }
+  },
+  {
+   "arm": "limit",
+   "task": "base_early",
+   "med": 11584.692980915994,
+   "mean": 13448.075415660745,
+   "p10": 6200.179306858762,
+   "p90": 22548.69122930214,
+   "p_ruin": 0.00025,
+   "p_half": 0.02525,
+   "p_loss": 0.0465,
+   "es5": 4113.334823918247
+  },
+  {
+   "arm": "limit",
+   "task": "base_late",
+   "med": 14334.954003405091,
+   "mean": 17257.745028005844,
+   "p10": 5236.710056113717,
+   "p90": 32595.380861809837,
+   "p_ruin": 0.004,
+   "p_half": 0.072,
+   "p_loss": 0.0915,
+   "es5": 2863.084843733674
+  },
+  {
+   "arm": "no_night",
+   "task": "spread2",
+   "med": 8880.178479980772,
+   "mean": 11005.506632250897,
+   "p10": 3800.7322582362044,
+   "p90": 20632.43093153083,
+   "p_ruin": 0.006,
+   "p_half": 0.109,
+   "p_loss": 0.19125,
+   "es5": 2423.387679387478
+  },
+  {
+   "arm": "limit",
+   "task": "hot5",
+   "med": 9588.542253057429,
+   "mean": 11070.2394964388,
+   "p10": 4207.788614052132,
+   "p90": 19554.421189922152,
+   "p_ruin": 0.0035,
+   "p_half": 0.0805,
+   "p_loss": 0.15125,
+   "es5": 2526.639846878849
+  },
+  {
+   "arm": "no_night",
+   "task": "high",
+   "med": 5237.611454202752,
+   "mean": 6449.562698453532,
+   "p10": 2239.710432465827,
+   "p90": 12078.697937524457,
+   "p_ruin": 0.04025,
+   "p_half": 0.27925,
+   "p_loss": 0.46975,
+   "es5": 1351.2002650889324
+  },
+  {
+   "arm": "limit",
+   "task": "spread2",
+   "med": 10619.70733817084,
+   "mean": 12314.524445069785,
+   "p10": 4737.923218162203,
+   "p90": 21703.36112329702,
+   "p_ruin": 0.002,
+   "p_half": 0.06775,
+   "p_loss": 0.114,
+   "es5": 2849.278908456592
+  },
+  {
+   "arm": "all",
+   "task": "base",
+   "med": 10857.051595727293,
+   "mean": 12996.66390123822,
+   "p10": 3559.9648760949844,
+   "p90": 24731.58436800256,
+   "p_ruin": 0.03425,
+   "p_half": 0.15625,
+   "p_loss": 0.18825,
+   "es5": 1789.3794750834838,
+   "liq_5k": {
+    "n": 1,
+    "worst_on": -0.7383140306421262,
+    "worst_off": -0.5666801998158356
+   },
+   "trades_5k": 1160,
+   "hot_5k": 0.8155172413793104,
+   "fams_5k": {
+    "B:v19:ON1": 340,
+    "B:v20:NS": 320,
+    "B:v19:DS1": 304,
+    "B:v20:RU": 159,
+    "C:SYMPATHY": 37
+   }
+  },
+  {
+   "arm": "all",
+   "task": "base_early",
+   "med": 10171.927401147752,
+   "mean": 11485.943464931908,
+   "p10": 3778.998205438623,
+   "p90": 20584.45713247915,
+   "p_ruin": 0.03225,
+   "p_half": 0.15025,
+   "p_loss": 0.15975,
+   "es5": 1931.457576637106
+  },
+  {
+   "arm": "all",
+   "task": "base_late",
+   "med": 12328.961516672673,
+   "mean": 15807.429938521278,
+   "p10": 3367.3897395698177,
+   "p90": 31992.813886257667,
+   "p_ruin": 0.032,
+   "p_half": 0.16675,
+   "p_loss": 0.18125,
+   "es5": 1573.287402942669
+  },
+  {
+   "arm": "limit",
+   "task": "high",
+   "med": 6214.503193066304,
+   "mean": 7107.156208441205,
+   "p10": 2626.836855021645,
+   "p90": 12305.071435930558,
+   "p_ruin": 0.02825,
+   "p_half": 0.19275,
+   "p_loss": 0.3725,
+   "es5": 1476.828627088759
+  },
+  {
+   "arm": "all",
+   "task": "hot5",
+   "med": 8197.457050585432,
+   "mean": 9812.136704969906,
+   "p10": 2589.3749575347997,
+   "p90": 18780.19660276157,
+   "p_ruin": 0.05975,
+   "p_half": 0.21025,
+   "p_loss": 0.2865,
+   "es5": 1264.7723680264648
+  },
+  {
+   "arm": "exit",
+   "task": "base",
+   "med": 12831.010763152783,
+   "mean": 16619.64900531332,
+   "p10": 4482.414215663138,
+   "p90": 31568.688311759965,
+   "p_ruin": 0.005,
+   "p_half": 0.1005,
+   "p_loss": 0.12275,
+   "es5": 2568.8223942588606,
+   "liq_5k": {
+    "n": 0,
+    "worst_on": -0.5201752205718491,
+    "worst_off": -0.5201752205718491
+   },
+   "trades_5k": 1325,
+   "hot_5k": 0.8369811320754716,
+   "fams_5k": {
+    "B:v19:DS1": 509,
+    "B:v20:NS": 397,
+    "B:v19:ON1": 330,
+    "B:v20:RU": 50,
+    "C:SYMPATHY": 39
+   }
+  },
+  {
+   "arm": "exit",
+   "task": "base_early",
+   "med": 9021.937335655639,
+   "mean": 10893.79090310957,
+   "p10": 4262.14326331332,
+   "p90": 19747.53521038306,
+   "p_ruin": 0.003,
+   "p_half": 0.0785,
+   "p_loss": 0.16025,
+   "es5": 2613.7379828719336
+  },
+  {
+   "arm": "exit",
+   "task": "base_late",
+   "med": 20528.351221370445,
+   "mean": 29705.001680614932,
+   "p10": 5679.866233599051,
+   "p90": 61685.616566092525,
+   "p_ruin": 0.0115,
+   "p_half": 0.11125,
+   "p_loss": 0.08525,
+   "es5": 2586.438222493213
+  },
+  {
+   "arm": "all",
+   "task": "spread2",
+   "med": 9037.687134436474,
+   "mean": 10834.09017758783,
+   "p10": 2890.659414683679,
+   "p90": 20690.01064389154,
+   "p_ruin": 0.046,
+   "p_half": 0.19075,
+   "p_loss": 0.247,
+   "es5": 1434.3122375485189
+  },
+  {
+   "arm": "exit",
+   "task": "hot5",
+   "med": 9000.231198751055,
+   "mean": 11587.975271444417,
+   "p10": 3150.4952302078727,
+   "p90": 22085.253319705364,
+   "p_ruin": 0.01875,
+   "p_half": 0.17025,
+   "p_loss": 0.23625,
+   "es5": 1813.8761029652983
+  },
+  {
+   "arm": "all",
+   "task": "high",
+   "med": 5113.829798993633,
+   "mean": 6291.760434880542,
+   "p10": 1558.2090948690093,
+   "p90": 12249.36273209573,
+   "p_ruin": 0.12225,
+   "p_half": 0.33825,
+   "p_loss": 0.48875,
+   "es5": 729.4141383721441
+  }
+ ]
+}
