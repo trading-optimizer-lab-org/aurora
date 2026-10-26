@@ -1,0 +1,250 @@
+{
+ "improved": false,
+ "n": 5174400,
+ "picks": {
+  "2018": {
+   "id": 2,
+   "name": "base book"
+  },
+  "2019": {
+   "id": 35619,
+   "name": "cluster (5, 'skip'), dilution ('any', 'boost'), scale 1.25"
+  },
+  "2020": {
+   "id": 19491,
+   "name": "calendar qend, dilution ('gc', 'boost'), scale 1.25"
+  },
+  "2021": {
+   "id": 94955,
+   "name": "cluster (10, 'skip'), dilution ('any', 'boost'), crowd ('si15', 'skip'), target 0.3, scale 1.25"
+  },
+  "2022": {
+   "id": 92083,
+   "name": "cluster (10, 'skip'), dilution ('so', 'boost'), target 0.5, scale 1.25"
+  },
+  "2023": {
+   "id": 92083,
+   "name": "cluster (10, 'skip'), dilution ('so', 'boost'), target 0.5, scale 1.25"
+  },
+  "2024": {
+   "id": 92179,
+   "name": "cluster (10, 'skip'), dilution ('so', 'boost'), crowd ('si15', 'half'), target 0.5, scale 1.25"
+  },
+  "2025": {
+   "id": 92275,
+   "name": "cluster (10, 'skip'), dilution ('so', 'boost'), crowd ('si15', 'skip'), target 0.5, scale 1.25"
+  },
+  "2026": {
+   "id": 92275,
+   "name": "cluster (10, 'skip'), dilution ('so', 'boost'), crowd ('si15', 'skip'), target 0.5, scale 1.25"
+  }
+ },
+ "results": {
+  "base": {
+   "wf": {
+    "all": {
+     "med": 25182.20326881458,
+     "mean": 35194.328847346005,
+     "p10": 6844.542399430897,
+     "p90": 72255.14008812397,
+     "p_ruin": 0.025,
+     "p_half": 0.116,
+     "p_loss": 0.057,
+     "es5": 2914.9097847678136
+    },
+    "early": {
+     "med": 23986.521830934646,
+     "mean": 35502.27838874679,
+     "p10": 6225.144578934639,
+     "p90": 75133.29540319374,
+     "p_ruin": 0.0355,
+     "p_half": 0.1295,
+     "p_loss": 0.07425,
+     "es5": 2603.272464686844
+    },
+    "late": {
+     "med": 26893.289771874166,
+     "mean": 34007.45271851269,
+     "p10": 6990.53473674618,
+     "p90": 69906.46455382703,
+     "p_ruin": 0.01975,
+     "p_half": 0.10375,
+     "p_loss": 0.05775,
+     "es5": 2980.546002653537
+    }
+   },
+   "base": {
+    "all": {
+     "med": 23143.39766972547,
+     "mean": 29480.497006493366,
+     "p10": 8318.972878836685,
+     "p90": 57630.403303205465,
+     "p_ruin": 0.0015,
+     "p_half": 0.046,
+     "p_loss": 0.02375,
+     "es5": 4810.224288781941
+    },
+    "early": {
+     "med": 23441.948901728392,
+     "mean": 31656.321539637574,
+     "p10": 9537.971057947749,
+     "p90": 63882.62104746256,
+     "p_ruin": 0.00075,
+     "p_half": 0.03675,
+     "p_loss": 0.017,
+     "es5": 5456.095379832757
+    },
+    "late": {
+     "med": 20988.720000932222,
+     "mean": 26139.39118186058,
+     "p10": 7179.922147090854,
+     "p90": 50673.223024173465,
+     "p_ruin": 0.00775,
+     "p_half": 0.07475,
+     "p_loss": 0.047,
+     "es5": 3568.155047410591
+    }
+   }
+  },
+  "hot5": {
+   "wf": {
+    "all": {
+     "med": 17188.27098422686,
+     "mean": 24230.924127669638,
+     "p10": 4495.246233837182,
+     "p90": 51596.22701667392,
+     "p_ruin": 0.04275,
+     "p_half": 0.15275,
+     "p_loss": 0.11775,
+     "es5": 1910.8384727175173
+    }
+   },
+   "base": {
+    "all": {
+     "med": 16940.966643551023,
+     "mean": 21799.504281915782,
+     "p10": 6101.109205066353,
+     "p90": 42621.790190596315,
+     "p_ruin": 0.00525,
+     "p_half": 0.07125,
+     "p_loss": 0.06175,
+     "es5": 3398.7048104769615
+    }
+   }
+  },
+  "spread2": {
+   "wf": {
+    "all": {
+     "med": 19887.993734379095,
+     "mean": 27836.105144445257,
+     "p10": 5349.8263553048355,
+     "p90": 58738.701312635094,
+     "p_ruin": 0.03375,
+     "p_half": 0.13775,
+     "p_loss": 0.09025,
+     "es5": 2252.729576114886
+    }
+   },
+   "base": {
+    "all": {
+     "med": 19033.09774733054,
+     "mean": 24384.774909496875,
+     "p10": 6893.396968643156,
+     "p90": 47509.69055283031,
+     "p_ruin": 0.004,
+     "p_half": 0.05775,
+     "p_loss": 0.042,
+     "es5": 3906.498649889872
+    }
+   }
+  },
+  "high": {
+   "wf": {
+    "all": {
+     "med": 9522.43122895826,
+     "mean": 13395.188069610092,
+     "p10": 2329.7410034116606,
+     "p90": 28608.560417012923,
+     "p_ruin": 0.088,
+     "p_half": 0.25775,
+     "p_loss": 0.2685,
+     "es5": 962.6522896252817
+    }
+   },
+   "base": {
+    "all": {
+     "med": 10682.715269224485,
+     "mean": 13778.566067465023,
+     "p10": 3699.842783767924,
+     "p90": 27240.222684481156,
+     "p_ruin": 0.0255,
+     "p_half": 0.14625,
+     "p_loss": 0.1765,
+     "es5": 1908.6153169131667
+    }
+   }
+  }
+ },
+ "top": [
+  {
+   "id": 12211,
+   "name": "calendar june, dilution ('gc', 'boost'), crowd ('si15', 'half'), target 0.5, scale 1.25",
+   "log_growth": 17.092495381832123,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 189619,
+   "name": "cluster (20, 'half'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'half'), target 0.5, scale 1.25",
+   "log_growth": 17.092495381832123,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 160051,
+   "name": "cluster (20, 'skip'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'half'), target 0.5, scale 1.25",
+   "log_growth": 17.092495381832123,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 160147,
+   "name": "cluster (20, 'skip'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'skip'), target 0.5, scale 1.25",
+   "log_growth": 17.06838607788086,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 189715,
+   "name": "cluster (20, 'half'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'skip'), target 0.5, scale 1.25",
+   "log_growth": 17.06838607788086,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 12307,
+   "name": "calendar june, dilution ('gc', 'boost'), crowd ('si15', 'skip'), target 0.5, scale 1.25",
+   "log_growth": 17.06838607788086,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 130483,
+   "name": "cluster (10, 'half'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'half'), target 0.5, scale 1.25",
+   "log_growth": 17.062797725200653,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 130579,
+   "name": "cluster (10, 'half'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'skip'), target 0.5, scale 1.25",
+   "log_growth": 17.026983559131622,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 100915,
+   "name": "cluster (10, 'skip'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'half'), target 0.5, scale 1.25",
+   "log_growth": 16.96163773536682,
+   "dd": -0.6288371086120605
+  },
+  {
+   "id": 101011,
+   "name": "cluster (10, 'skip'), calendar june, dilution ('gc', 'boost'), crowd ('si15', 'skip'), target 0.5, scale 1.25",
+   "log_growth": 16.92637175321579,
+   "dd": -0.6288371086120605
+  }
+ ]
+}
