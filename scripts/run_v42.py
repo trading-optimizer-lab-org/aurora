@@ -111,10 +111,21 @@ def gate_flag(D: dict, X: dict) -> np.ndarray:
     return np.asarray(s, bool)
 
 
+_D64: dict = {}
+
+
+def _d64(D: dict) -> dict:
+    """The data with float64 prices, so a path's returns match v31's position_days checks to 1e-9."""
+    if _D64.get("id") != id(D):
+        _D64.clear()
+        _D64.update(id=id(D), D={**D, **{k: np.asarray(D[k], float) for k in ("O", "H", "L", "C")}})
+    return _D64["D"]
+
+
 def long_items(sp: list, level: float, size: float, spread: float = 1.0, fee: float = 1.0, hot: float = 0.0
                ) -> list[dict]:
     """The long specs as account items at an equity level (v19's costs; TradeZero's commissions, no locate)."""
-    D, table = R14._G["D"], A.R16._W["table"]
+    D, table = _d64(R14._G["D"]), A.R16._W["table"]
     keep = core.ACCOUNT
     core.ACCOUNT = level
     v19.set_costs("r4", A.R22.SLIP, A.R22.R4)

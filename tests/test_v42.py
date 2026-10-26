@@ -78,3 +78,9 @@ def test_history_and_verdict(V) -> None:
     res["base"]["wf"]["all"]["med"] = 120.0
     res["base"]["wf"]["late"]["med"] = 120.0
     assert V.improved(res, hist)["growth"]
+
+
+def test_d64(V) -> None:
+    D = {k: np.ones((3, 2), np.float32) for k in ("O", "H", "L", "C", "P")}
+    a = V._d64(D)
+    assert a["C"].dtype == np.float64 and a["P"].dtype == np.float32 and V._d64(D) is a

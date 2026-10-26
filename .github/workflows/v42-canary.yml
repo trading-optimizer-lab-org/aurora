@@ -2,7 +2,7 @@ name: "v42 canary: a long small-cap sleeve beside v39's best book"
 
 # docs/research/V42_PREREGISTRATION.md, scripts/run_v42.py: v39's best book, 18 long-sleeve variants plus the base book,
 # one runner of 4 CPUs, walk-forward picks -> V42_REPORT.md.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
