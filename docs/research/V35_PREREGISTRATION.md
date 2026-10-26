@@ -49,3 +49,12 @@ separately pre-registered study.
 The members and their limit variants were chosen at 20%; the account levers are chosen on 2018-2022 paths, but the
 researcher has seen v32-v34 on all years; 2023-07+ is not clean; limit fills on daily bars; locates assumed; DSR 0.
 A book reaching the target on all paths while chosen on 2018-2022 is still in-sample for the members.
+
+## 5. Amendment before phase 2 was computed (2026-10-26)
+
+Phase 1 (run 40307069098) chose 20% under $10k, 30% from $10k, base caps, single limit; target not met. Phase 2
+details fixed now, before any phase 2 number: the PAID intraday members are A28's members whose trades are not
+daily specs (v29's PAID set), sized at the book's size where they trade (risk s/10, cap s), in the same joint
+account and caps as the FREE members, with v29's PAID stops (extended-session stops one bar late); the FREE
+members keep FREE's rules (no extended-session stops). The data fee is $105 a month on every session the path's
+equity is at or above the threshold, else $6. Stress costs apply to both sets.

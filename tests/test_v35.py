@@ -74,3 +74,20 @@ def test_stress_jobs(V) -> None:
     r = {"book": [[0.3, 0.4], 1, 2]}
     jobs = V.stress_jobs({"choice": r, "top": [r, {"book": [[0.2, 0.3], 0, 0]}]})
     assert len(jobs) == 6 and jobs[0] == (((0.3, 0.4), 1, 2), "hot5")
+
+
+def test_threshold_rows(V) -> None:
+    parts = {li: {"free": np.full(3, li), "paid": np.full(3, 10 + li)} for li in range(2, 5)}
+    parts.update({li: {"free": np.full(3, li)} for li in range(2)})
+    assert np.allclose(V.threshold_R(parts, 10_000.0)[:, 0], [0, 1, 12, 13, 14])
+    assert np.allclose(V.threshold_R(parts, 25_000.0)[:, 0], [0, 1, 2, 13, 14])
+    assert np.allclose(V.threshold_R(parts, None)[:, 0], [0, 1, 2, 3, 4])
+
+
+def test_data_fee_only_above_threshold(V) -> None:
+    R = np.zeros((5, 1))
+    idx = np.zeros((2, 21), int)
+    lo, _ = V.paths_fee(R, idx, 10_000.0, e0=5_000.0)
+    hi, _ = V.paths_fee(R, idx, 10_000.0, e0=12_000.0)
+    assert lo[0] == pytest.approx(5_000 - 21 * V.FIXED * 12 / 252)
+    assert hi[0] == pytest.approx(12_000 - 21 * V.PAID_FIXED * 12 / 252)

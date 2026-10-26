@@ -388,6 +388,122 @@ def cmd_final(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- phase 2
+
+THRESHOLDS: dict[str, float | None] = {"never": None, "10k": 10_000.0, "25k": 25_000.0}
+PAID_FIXED = R29.FIXED["PAID"]
+P2_TASKS = ("base",) + STRESS
+
+
+def paid_items(level: float, size: float, spread: float = 1.0, fee: float = 1.0,
+               hot: float = R29.BASE_LOC[1]) -> list[dict]:
+    """v29's PAID intraday members (A28's members that are not daily specs) at the book's size, v29's PAID stops."""
+    R29.set_plan("PAID")
+    try:
+        raw: list[dict] = []
+        for y, fam, nm, v26n in A.members("A28"):
+            form = A._unsized(nm, v26n, 0)[0]
+            if form in ("stream", "specs"):
+                continue
+            raw += [{**it, "member": fam} for it in A.pick_items(nm, v26n, {y}, size / 10, size, level, spread, fee)]
+        return R29.tz_items(raw, level, R29.BASE_LOC[0], hot, floor=R33.FLOOR)
+    finally:
+        R29.set_plan("FREE")
+
+
+def p2_jobs() -> list[tuple[str, int]]:
+    return [(task, li) for task in P2_TASKS for li in range(len(LEVELS))]
+
+
+def cmd_paid(args) -> int:
+    """One (task, level): the phase 1 choice's FREE returns at its size there and, from $10k, with the PAID members."""
+    books = json.loads((args.books / "books.json").read_text(encoding="utf-8"))
+    c = books["choice"]
+    jobs = p2_jobs()[args.shard::args.shards]
+    if not jobs or c is None:
+        return 0
+    rows = _rows(args)
+    R29.load(args.inputs, args.report)
+    R29.set_plan("FREE")
+    _, pos = R29._cal()
+    caps = CAPS1[c["book"][1]]
+    ladder = LADDERS[c["book"][2]]
+    args.out.mkdir(parents=True, exist_ok=True)
+    for task, li in jobs:
+        level = float(LEVELS[li])
+        size = c["s1"] if level < SPLIT_LEVEL else c["s2"]
+        free = book_items(rows, level, size, ladder, **R33.TASKS[task])
+        out = {"free": liq_stream(free, caps)[pos]}
+        if level >= SPLIT_LEVEL:
+            out["paid"] = liq_stream(free + paid_items(level, size, **R33.TASKS[task]), caps)[pos]
+        np.savez(args.out / f"p2_{task}_{li}.npz", **out)
+        print(task, level, {k: round(float(v.sum()), 3) for k, v in out.items()}, flush=True)
+    return 0
+
+
+def threshold_R(parts: dict[int, dict[str, np.ndarray]], x: float | None) -> np.ndarray:
+    """The five levels' returns: FREE below the threshold, FREE + PAID from it."""
+    return np.stack([parts[li]["paid"] if x is not None and LEVELS[li] >= x else parts[li]["free"]
+                     for li in range(len(LEVELS))])
+
+
+def paths_fee(R: np.ndarray, idx: np.ndarray, x: float | None, e0: float = E0) -> tuple[np.ndarray, np.ndarray]:
+    """R32.paths with the data fee: $105 a month while the equity is at or above the threshold, else $6."""
+    eq = np.full(idx.shape[0], e0)
+    low = eq.copy()
+    for s in range(idx.shape[1]):
+        k = np.clip(np.searchsorted(LEVELS, eq, side="right") - 1, 0, len(LEVELS) - 1)
+        r = R[k, idx[:, s]]
+        fixed = (np.where(eq >= x, PAID_FIXED, FIXED) if x is not None else np.full(len(eq), FIXED)) * 12 / 252
+        eq = np.where(eq > 0, np.maximum(eq * (1 + np.maximum(r, -1.0)) - fixed, 0.0), 0.0)
+        low = np.minimum(low, eq)
+    return eq, low
+
+
+def cmd_final2(args) -> int:
+    books = json.loads((args.books / "books.json").read_text(encoding="utf-8"))
+    R29.load(args.inputs, args.report)
+    cal, _ = R29._cal()
+    idx = R32._sub_idx(cal)
+    res: dict = {}
+    for task in P2_TASKS:
+        parts = {li: dict(np.load(args.runs / f"p2_{task}_{li}.npz")) for li in range(len(LEVELS))
+                 if (args.runs / f"p2_{task}_{li}.npz").exists()}
+        if len(parts) < len(LEVELS):
+            continue
+        samples = idx if task == "base" else {"all": idx["all"]}
+        for name, x in THRESHOLDS.items():
+            R = threshold_R(parts, x)
+            res[(name, task)] = {s: R32.stats(*paths_fee(R, ix, x)) for s, ix in samples.items()}
+    base = [{"x": n, **res[(n, "base")]} for n in THRESHOLDS if (n, "base") in res]
+    choice = pick(base)
+    L = ["# v35 phase 2: intraday members once the account can pay for data", "",
+         f"Phase 1's choice ({_desc(books['choice'])}) below the threshold; from it the same book plus v29's PAID "
+         "intraday members at the book's size, paying $105 a month while at or above it. Choice: highest median on "
+         "2018-2022 paths with ruin <= 2.5% there.", ""]
+    if choice:
+        L += [f"Choice: threshold {choice['x']}. All paths: median {_d(choice['all']['med'])}, ruin "
+              f"{choice['all']['p_ruin']:.1%}. **Target (median >= $30,000, ruin <= 2.5%) met: {met(choice)}.**", ""]
+    else:
+        L += ["No threshold has ruin <= 2.5% on 2018-2022 paths. **Target not met.**", ""]
+    L += ["| threshold | all median | all ruin | -50% | p10 | 2018-22 median | 2018-22 ruin | 2023+ median | 2023+ ruin | "
+          "HOT 5% | spreads x2 | high |", "|" + "---|" * 12]
+    for r in base:
+        sx = [res.get((r["x"], t)) for t in STRESS]
+        L.append(f"| {r['x']} | {_d(r['all']['med'])} | {r['all']['p_ruin']:.1%} | {r['all']['p_half']:.1%} | "
+                 f"{_d(r['all']['p10'])} | {_d(r['early']['med'])} | {r['early']['p_ruin']:.1%} | "
+                 f"{_d(r['late']['med'])} | {r['late']['p_ruin']:.1%} | " +
+                 " | ".join(f"{_d(x['all']['med'])} / {x['all']['p_ruin']:.1%}" if x else "-" for x in sx) + " |")
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "V35_PHASE2.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+    (args.out / "v35_phase2.json").write_text(json.dumps({"met": met(choice), "choice": choice, "rows": base,
+                                                          "stress": {f"{n}|{t}": v for (n, t), v in res.items()
+                                                                     if t != "base"}}, indent=1, default=float),
+                                              encoding="utf-8")
+    print("\n".join(L), flush=True)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -407,13 +523,21 @@ def main() -> int:
     f = sub.add_parser("final")
     f.add_argument("--books", type=Path, required=True)
     f.add_argument("--stress", type=Path, required=True)
+    p2 = sub.add_parser("paid")
+    p2.add_argument("--choice", type=Path, required=True)
+    p2.add_argument("--books", type=Path, required=True)
+    p2.add_argument("--shard", type=int, required=True)
+    p2.add_argument("--shards", type=int, default=1)
+    f2 = sub.add_parser("final2")
+    f2.add_argument("--books", type=Path, required=True)
+    f2.add_argument("--runs", type=Path, required=True)
     for p in sub.choices.values():
         p.add_argument("--inputs", type=Path, default=Path("outputs/v18"))
         p.add_argument("--report", type=Path, default=Path("outputs/v28w/report"))
         p.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     return {"diag": cmd_diag, "run": cmd_run, "choose": cmd_choose, "stress": cmd_stress,
-            "final": cmd_final}[args.cmd](args)
+            "final": cmd_final, "paid": cmd_paid, "final2": cmd_final2}[args.cmd](args)
 
 
 if __name__ == "__main__":
