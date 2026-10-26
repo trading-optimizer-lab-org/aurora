@@ -312,7 +312,7 @@ def joint(items: list[dict], dates: pd.DatetimeIndex, gross_cap: float, max_open
         if n <= 0 or w <= 0:
             continue
         j = it["j"]
-        if j >= 0 and until.get(j, -1) >= i0:
+        if j >= 0 and until.get(j, -1) >= i0 and not it.get("tranche"):  # v35: a ladder's later half
             continue
         if open_end and min(open_end) < i0:
             keep_ = [q for q, e in enumerate(open_end) if e >= i0]
