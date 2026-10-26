@@ -13,7 +13,10 @@ fixed fraction per trade, cut losers at the day's low.
 
 ## Data, universe, bias, periods
 
-Exactly as `STOCKS_SEPA_PREREGISTRATION.md`: the local `free_us_daily` catalog (total-return adjusted prices), the
+Exactly as `STOCKS_SEPA_PREREGISTRATION.md`, with one change made before any result (2026-10-26, so the study runs
+on GitHub's servers): the `free_us_daily` layout is downloaded from Yahoo inside the workflow for the same 5,332
+symbols (`config/x_swing/symbols.csv`, with Yahoo's exchange and industry from the local catalog's metadata), so the
+prices are Yahoo's as of the run rather than the local June 2026 snapshot. Then: total-return adjusted prices, the
 universe of the 1,000 stocks with the highest 50-day dollar volume among those at $10 or more with 260 days of
 history, the French top-decile survivorship adjustment (the same `b` per period, times the invested fraction), the
 3-month T-bill as cash, SPY as the benchmark.

@@ -1,0 +1,5333 @@
+symbol,yfinance_symbol,exchange,industry
+A,A,NYQ,Diagnostics & Research
+AA,AA,NYQ,Aluminum
+AACB,AACB,NGM,Shell Companies
+AACI,AACI,NGM,Shell Companies
+AACO,AACO,NGM,Shell Companies
+AACP,AACP,NGM,Shell Companies
+AADX,AADX,NYQ,Aerospace & Defense
+AAL,AAL,NMS,Airlines
+AAME,AAME,,
+AAMI,AAMI,NYQ,Asset Management
+AAOI,AAOI,NGM,Communication Equipment
+AAON,AAON,NMS,Building Products & Equipment
+AAP,AAP,NYQ,Auto Parts
+AAPG,AAPG,NGM,Biotechnology
+AAPL,AAPL,NMS,Consumer Electronics
+AARD,AARD,NMS,Biotechnology
+AAT,AAT,NYQ,REIT - Diversified
+AAUC,AAUC,NYQ,Gold
+ABAT,ABAT,NCM,Waste Management
+ABBV,ABBV,NYQ,Drug Manufacturers - General
+ABCB,ABCB,NYQ,Banks - Regional
+ABCL,ABCL,NMS,Biotechnology
+ABEO,ABEO,NCM,Biotechnology
+ABG,ABG,NYQ,Auto & Truck Dealerships
+ABLV,ABLV,NCM,Specialty Retail
+ABM,ABM,NYQ,Specialty Business Services
+ABNB,ABNB,NMS,Travel Services
+ABOS,ABOS,NMS,Biotechnology
+ABR,ABR,NYQ,REIT - Mortgage
+ABSI,ABSI,NMS,Biotechnology
+ABT,ABT,NYQ,Medical Devices
+ABTC,ABTC,NCM,Capital Markets
+ABTS,ABTS,,
+ABUS,ABUS,NMS,Biotechnology
+ABVC,ABVC,,
+ABX,ABX,NYQ,Insurance - Life
+ACA,ACA,NYQ,Engineering & Construction
+ACAA,ACAA,NGM,Shell Companies
+ACAD,ACAD,NMS,Biotechnology
+ACB,ACB,NCM,Drug Manufacturers - Specialty & Generic
+ACCL,ACCL,,
+ACCO,ACCO,NYQ,Business Equipment & Supplies
+ACCS,ACCS,,
+ACDC,ACDC,NMS,Oil & Gas Equipment & Services
+ACEL,ACEL,NYQ,Gambling
+ACET,ACET,NCM,Biotechnology
+ACFN,ACFN,,
+ACGC,ACGC,NGM,Shell Companies
+ACGL,ACGL,NMS,Insurance - Diversified
+ACH,ACH,NYQ,Medical Distribution
+ACHC,ACHC,NMS,Medical Care Facilities
+ACHR,ACHR,NYQ,Aerospace & Defense
+ACHV,ACHV,NCM,Biotechnology
+ACI,ACI,NYQ,Grocery Stores
+ACIC,ACIC,NCM,Insurance - Property & Casualty
+ACIU,ACIU,NGM,Biotechnology
+ACIW,ACIW,NMS,Software - Infrastructure
+ACLS,ACLS,NMS,Semiconductor Equipment & Materials
+ACM,ACM,NYQ,Engineering & Construction
+ACMR,ACMR,NGM,Semiconductor Equipment & Materials
+ACN,ACN,NYQ,Information Technology Services
+ACNB,ACNB,NCM,Banks - Regional
+ACNT,ACNT,NGM,Chemicals
+ACOG,ACOG,NCM,Biotechnology
+ACON,ACON,,
+ACR,ACR,NYQ,REIT - Mortgage
+ACRE,ACRE,NYQ,REIT - Mortgage
+ACRS,ACRS,NMS,Biotechnology
+ACRV,ACRV,NGM,Biotechnology
+ACT,ACT,NMS,Insurance - Specialty
+ACTG,ACTG,NMS,Business Equipment & Supplies
+ACTU,ACTU,,
+ACU,ACU,ASE,Household & Personal Products
+ACVA,ACVA,NYQ,Auto & Truck Dealerships
+ACXP,ACXP,,
+AD,AD,NYQ,Telecom Services
+ADAC,ADAC,NGM,Shell Companies
+ADAG,ADAG,NGM,Biotechnology
+ADAM,ADAM,NMS,REIT - Mortgage
+ADBE,ADBE,NMS,Software - Application
+ADC,ADC,NYQ,REIT - Retail
+ADCT,ADCT,NYQ,Biotechnology
+ADEA,ADEA,NMS,Software - Application
+ADGM,ADGM,,
+ADI,ADI,NMS,Semiconductors
+ADIL,ADIL,,
+ADM,ADM,NYQ,Farm Products
+ADMA,ADMA,NGM,Biotechnology
+ADNT,ADNT,NYQ,Auto Parts
+ADP,ADP,NMS,Software - Application
+ADPT,ADPT,NMS,Diagnostics & Research
+ADSE,ADSE,NCM,Electrical Equipment & Parts
+ADSK,ADSK,NMS,Software - Application
+ADT,ADT,NYQ,Security & Protection Services
+ADTN,ADTN,NMS,Communication Equipment
+ADTX,ADTX,,
+ADUR,ADUR,NCM,Pollution & Treatment Controls
+ADUS,ADUS,NMS,Medical Care Facilities
+ADV,ADV,NMS,Advertising Agencies
+ADVB,ADVB,,
+AEAQ,AEAQ,NGM,Shell Companies
+AEBI,AEBI,NMS,Farm & Heavy Construction Machinery
+AEC,AEC,NCM,Uranium
+AEE,AEE,NYQ,Utilities - Regulated Electric
+AEG,AEG,NYQ,Insurance - Diversified
+AEHL,AEHL,,
+AEHR,AEHR,NCM,Semiconductor Equipment & Materials
+AEI,AEI,,
+AEIS,AEIS,NMS,Electrical Equipment & Parts
+AEM,AEM,NYQ,Gold
+AEMD,AEMD,,
+AENT,AENT,NCM,Entertainment
+AEO,AEO,NYQ,Apparel Retail
+AEON,AEON,,
+AEP,AEP,NMS,Utilities - Regulated Electric
+AER,AER,NYQ,Rental & Leasing Services
+AERT,AERT,,
+AES,AES,NYQ,Utilities - Diversified
+AESI,AESI,NYQ,Oil & Gas Equipment & Services
+AEVA,AEVA,NMS,Software - Infrastructure
+AEXA,AEXA,NYQ,Shell Companies
+AEYE,AEYE,NCM,Software - Application
+AFBI,AFBI,NCM,Banks - Regional
+AFCG,AFCG,NGM,Asset Management
+AFG,AFG,NYQ,Insurance - Property & Casualty
+AFGB,AFGB,NYQ,
+AFGC,AFGC,NYQ,
+AFGD,AFGD,NYQ,
+AFGE,AFGE,NYQ,
+AFJK,AFJK,NGM,Shell Companies
+AFL,AFL,NYQ,Insurance - Life
+AFRI,AFRI,NCM,Farm Products
+AFRM,AFRM,NMS,Credit Services
+AFYA,AFYA,NMS,Education & Training Services
+AG,AG,NYQ,Silver
+AGBK,AGBK,NYQ,Banks - Regional
+AGCC,AGCC,NCM,Beverages - Wineries & Distilleries
+AGCO,AGCO,NYQ,Farm & Heavy Construction Machinery
+AGEN,AGEN,NCM,Biotechnology
+AGI,AGI,NYQ,Gold
+AGIG,AGIG,,
+AGIO,AGIO,NMS,Biotechnology
+AGL,AGL,NYQ,Medical Care Facilities
+AGM,AGM,NYQ,Credit Services
+AGM-A,AGM-A,NYQ,Credit Services
+AGMB,AGMB,NMS,Biotechnology
+AGMH,AGMH,,
+AGNC,AGNC,NMS,REIT - Mortgage
+AGNT,AGNT,NGM,Real Estate Services
+AGO,AGO,NYQ,Insurance - Specialty
+AGPU,AGPU,NCM,Software - Infrastructure
+AGRO,AGRO,NYQ,Farm Products
+AGRZ,AGRZ,,
+AGX,AGX,NYQ,Engineering & Construction
+AGYS,AGYS,NMS,Software - Application
+AHCO,AHCO,NCM,Medical Devices
+AHMA,AHMA,NCM,Travel Services
+AHR,AHR,NYQ,REIT - Healthcare Facilities
+AHRT,AHRT,NYQ,REIT - Diversified
+AHT,AHT,,
+AI,AI,NYQ,Software - Infrastructure
+AIAI,AIAI,NGM,Conglomerates
+AIB,AIB,ASE,Software - Application
+AIBZ,AIBZ,NCM,Software - Infrastructure
+AIDX,AIDX,,
+AIFA,AIFA,,
+AIFC,AIFC,NCM,Software - Infrastructure
+AIFF,AIFF,,
+AIFU,AIFU,NMS,Insurance Brokers
+AIG,AIG,NYQ,Insurance - Diversified
+AIHS,AIHS,,
+AII,AII,NYQ,Insurance - Property & Casualty
+AIIA,AIIA,NYQ,Shell Companies
+AIIO,AIIO,NCM,Auto Manufacturers
+AIIR,AIIR,NCM,Tobacco
+AIM,AIM,,
+AIMD,AIMD,,
+AIN,AIN,NYQ,Textile Manufacturing
+AIOS,AIOS,,
+AIOT,AIOT,NGM,Software - Infrastructure
+AIP,AIP,NGM,Semiconductors
+AIR,AIR,NYQ,Aerospace & Defense
+AIRE,AIRE,,
+AIRG,AIRG,NCM,Communication Equipment
+AIRI,AIRI,,
+AIRJ,AIRJ,NCM,Building Products & Equipment
+AIRO,AIRO,NGM,Aerospace & Defense
+AIRS,AIRS,NGM,Medical Care Facilities
+AIRT,AIRT,NCM,Conglomerates
+AISP,AISP,NGM,Software - Infrastructure
+AIT,AIT,NYQ,Industrial Distribution
+AIV,AIV,NYQ,REIT - Residential
+AIXC,AIXC,,
+AIZ,AIZ,NYQ,Insurance - Property & Casualty
+AJG,AJG,NYQ,Insurance Brokers
+AKA,AKA,NYQ,Apparel Retail
+AKAM,AKAM,NMS,Software - Infrastructure
+AKAN,AKAN,,
+AKBA,AKBA,NCM,Drug Manufacturers - Specialty & Generic
+AKO-A,AKO-A,NYQ,Beverages - Non-Alcoholic
+AKO-B,AKO-B,NYQ,Beverages - Non-Alcoholic
+AKR,AKR,NYQ,REIT - Retail
+AKTS,AKTS,NMS,Biotechnology
+ALAB,ALAB,NMS,Semiconductors
+ALB,ALB,NYQ,Specialty Chemicals
+ALBT,ALBT,,
+ALC,ALC,NYQ,Medical Instruments & Supplies
+ALCO,ALCO,NMS,Farm Products
+ALDF,ALDF,NGM,Shell Companies
+ALDX,ALDX,NCM,Biotechnology
+ALEC,ALEC,NMS,Biotechnology
+ALF,ALF,NGM,Shell Companies
+ALG,ALG,NYQ,Farm & Heavy Construction Machinery
+ALGM,ALGM,NMS,Semiconductors
+ALGN,ALGN,NMS,Medical Instruments & Supplies
+ALGS,ALGS,,
+ALGT,ALGT,NMS,Airlines
+ALH,ALH,NYQ,"Furnishings, Fixtures & Appliances"
+ALHC,ALHC,NMS,Healthcare Plans
+ALIS,ALIS,NGM,Shell Companies
+ALIT,ALIT,NYQ,Software - Application
+ALK,ALK,NYQ,Airlines
+ALKS,ALKS,NMS,Drug Manufacturers - Specialty & Generic
+ALKT,ALKT,NMS,Software - Application
+ALL,ALL,NYQ,Insurance - Property & Casualty
+ALLE,ALLE,NYQ,Security & Protection Services
+ALLO,ALLO,NMS,Biotechnology
+ALLR,ALLR,,
+ALLT,ALLT,NMS,Software - Infrastructure
+ALLY,ALLY,NYQ,Credit Services
+ALM,ALM,NCM,Other Industrial Metals & Mining
+ALMR,ALMR,NMS,Medical Devices
+ALMS,ALMS,NMS,Biotechnology
+ALMU,ALMU,NCM,Semiconductors
+ALNT,ALNT,NGM,Electronic Components
+ALNY,ALNY,NMS,Biotechnology
+ALOT,ALOT,NGM,Computer Hardware
+ALOV,ALOV,NGM,Shell Companies
+ALOY,ALOY,NCM,Other Industrial Metals & Mining
+ALP,ALP,,
+ALPS,ALPS,NGM,
+ALRM,ALRM,NMS,Software - Application
+ALRS,ALRS,NCM,Banks - Regional
+ALSN,ALSN,NYQ,Auto Parts
+ALT,ALT,NGM,Biotechnology
+ALTG,ALTG,NYQ,Rental & Leasing Services
+ALTI,ALTI,NCM,Asset Management
+ALTO,ALTO,NCM,Specialty Chemicals
+ALUB,ALUB,NYQ,Shell Companies
+ALV,ALV,NYQ,Auto Parts
+ALVO,ALVO,NGM,Drug Manufacturers - Specialty & Generic
+ALX,ALX,NYQ,REIT - Retail
+ALXO,ALXO,NMS,Biotechnology
+ALZN,ALZN,,
+AM,AM,NYQ,Oil & Gas Midstream
+AMAL,AMAL,NGM,Banks - Regional
+AMAN,AMAN,NCM,Shell Companies
+AMAT,AMAT,NMS,Semiconductor Equipment & Materials
+AMBA,AMBA,NMS,Semiconductor Equipment & Materials
+AMBO,AMBO,,
+AMBP,AMBP,NYQ,Packaging & Containers
+AMBQ,AMBQ,NYQ,Semiconductors
+AMC,AMC,NYQ,Entertainment
+AMCI,AMCI,NCM,Computer Hardware
+AMCR,AMCR,NYQ,Packaging & Containers
+AMCX,AMCX,NMS,Entertainment
+AMD,AMD,NMS,Semiconductors
+AME,AME,NYQ,Specialty Industrial Machinery
+AMG,AMG,NYQ,Asset Management
+AMGN,AMGN,NMS,Drug Manufacturers - General
+AMH,AMH,NYQ,REIT - Residential
+AMIX,AMIX,,
+AMKR,AMKR,NMS,Semiconductor Equipment & Materials
+AMLX,AMLX,NMS,Drug Manufacturers - Specialty & Generic
+AMN,AMN,NYQ,Medical Care Facilities
+AMOD,AMOD,,
+AMP,AMP,NYQ,Asset Management
+AMPG,AMPG,NCM,Communication Equipment
+AMPH,AMPH,NMS,Drug Manufacturers - Specialty & Generic
+AMPL,AMPL,NCM,Software - Application
+AMPX,AMPX,NYQ,Electrical Equipment & Parts
+AMPY,AMPY,NYQ,Oil & Gas E&P
+AMR,AMR,NYQ,Coking Coal
+AMRC,AMRC,NYQ,Engineering & Construction
+AMRX,AMRX,NMS,Drug Manufacturers - Specialty & Generic
+AMRZ,AMRZ,NYQ,Building Materials
+AMS,AMS,,
+AMSC,AMSC,NMS,Specialty Industrial Machinery
+AMSF,AMSF,NMS,Insurance - Specialty
+AMSS,AMSS,,
+AMST,AMST,,
+AMT,AMT,NYQ,REIT - Specialty
+AMTB,AMTB,NYQ,Banks - Regional
+AMTM,AMTM,NYQ,Specialty Business Services
+AMTX,AMTX,NGM,Specialty Chemicals
+AMWL,AMWL,NYQ,Health Information Services
+AMZE,AMZE,,
+AMZN,AMZN,NMS,Internet Retail
+AN,AN,NYQ,Auto & Truck Dealerships
+ANAB,ANAB,NMS,Biotechnology
+ANDE,ANDE,NMS,Food Distribution
+ANDG,ANDG,NYQ,Personal Services
+ANET,ANET,NYQ,Computer Hardware
+ANF,ANF,NYQ,Apparel Retail
+ANGH,ANGH,NCM,Entertainment
+ANGI,ANGI,NMS,Internet Content & Information
+ANGO,ANGO,NMS,Medical Instruments & Supplies
+ANGX,ANGX,NYQ,Entertainment
+ANIK,ANIK,NMS,Drug Manufacturers - Specialty & Generic
+ANIP,ANIP,NGM,Drug Manufacturers - Specialty & Generic
+ANIX,ANIX,NCM,Biotechnology
+ANNA,ANNA,NCM,Oil & Gas E&P
+ANNX,ANNX,NMS,Biotechnology
+ANPA,ANPA,NCM,Specialty Business Services
+ANRO,ANRO,NYQ,Biotechnology
+ANSC,ANSC,NGM,Shell Companies
+ANTA,ANTA,NGM,Credit Services
+ANTX,ANTX,NMS,Biotechnology
+ANVS,ANVS,NYQ,Biotechnology
+ANY,ANY,,
+AOMR,AOMR,NYQ,REIT - Mortgage
+AON,AON,NYQ,Insurance Brokers
+AORT,AORT,NYQ,Medical Devices
+AOS,AOS,NYQ,Specialty Industrial Machinery
+AOSL,AOSL,NMS,Semiconductors
+AOUT,AOUT,NMS,Leisure
+AP,AP,NYQ,Metal Fabrication
+APA,APA,NMS,Oil & Gas E&P
+APAC,APAC,NCM,Shell Companies
+APAM,APAM,NYQ,Asset Management
+APC,APC,NCM,Oil & Gas Refining & Marketing
+APD,APD,NYQ,Specialty Chemicals
+APEI,APEI,NMS,Education & Training Services
+APG,APG,NYQ,Engineering & Construction
+APGE,APGE,NGM,Biotechnology
+APH,APH,NYQ,Electronic Components
+API,API,NMS,Software - Application
+APLD,APLD,NMS,Information Technology Services
+APLE,APLE,NYQ,REIT - Hotel & Motel
+APLM,APLM,,
+APM,APM,,
+APO,APO,NYQ,Asset Management
+APOG,APOG,NMS,Building Products & Equipment
+APP,APP,NMS,Advertising Agencies
+APPF,APPF,NGM,Software - Application
+APPN,APPN,NGM,Software - Infrastructure
+APPS,APPS,NCM,Software - Application
+APRE,APRE,,
+APT,APT,ASE,Building Products & Equipment
+APTV,APTV,NYQ,Auto Parts
+APUR,APUR,NCM,Shell Companies
+APUS,APUS,,
+APVO,APVO,,
+APWC,APWC,NCM,Electrical Equipment & Parts
+APXT,APXT,NGM,Shell Companies
+APYX,APYX,NMS,Medical Devices
+AQB,AQB,,
+AQMS,AQMS,,
+AQN,AQN,NYQ,Utilities - Diversified
+AQST,AQST,NGM,Drug Manufacturers - Specialty & Generic
+AR,AR,NYQ,Oil & Gas E&P
+ARAI,ARAI,,
+ARAY,ARAY,,
+ARBB,ARBB,,
+ARBE,ARBE,NCM,Scientific & Technical Instruments
+ARCB,ARCB,NMS,Trucking
+ARCI,ARCI,NGM,Shell Companies
+ARCL,ARCL,NGM,Shell Companies
+ARCO,ARCO,NYQ,Restaurants
+ARCT,ARCT,NGM,Biotechnology
+ARDT,ARDT,NYQ,Medical Care Facilities
+ARDX,ARDX,NGM,Biotechnology
+ARE,ARE,NYQ,REIT - Office
+AREC,AREC,NCM,Coking Coal
+AREN,AREN,,
+ARES,ARES,NYQ,Asset Management
+ARHS,ARHS,NMS,Specialty Retail
+ARI,ARI,NYQ,REIT - Mortgage
+ARIS,ARIS,NYQ,Gold
+ARKO,ARKO,NCM,Specialty Retail
+ARKR,ARKR,,
+ARL,ARL,NYQ,Real Estate Services
+ARLO,ARLO,NYQ,Building Products & Equipment
+ARMK,ARMK,NYQ,Specialty Business Services
+ARMP,ARMP,ASE,Biotechnology
+AROC,AROC,NYQ,Oil & Gas Equipment & Services
+AROW,AROW,NMS,Banks - Regional
+ARQ,ARQ,NGM,Pollution & Treatment Controls
+ARQQ,ARQQ,NCM,Software - Infrastructure
+ARQT,ARQT,NMS,Biotechnology
+ARR,ARR,NYQ,REIT - Mortgage
+ARRY,ARRY,NGM,Solar
+ARTC,ARTC,NGM,
+ARTL,ARTL,,
+ARTNA,ARTNA,NMS,Utilities - Regulated Water
+ARTV,ARTV,NGM,Biotechnology
+ARTW,ARTW,,
+ARVN,ARVN,NMS,Biotechnology
+ARW,ARW,NYQ,Electronics & Computer Distribution
+ARWR,ARWR,NMS,Biotechnology
+ARX,ARX,NYQ,Insurance Brokers
+ARXS,ARXS,NMS,Aerospace & Defense
+AS,AS,NYQ,Leisure
+ASA,ASA,NYQ,Asset Management
+ASAN,ASAN,NYQ,Software - Application
+ASB,ASB,NYQ,Banks - Regional
+ASBP,ASBP,,
+ASC,ASC,NYQ,Marine Shipping
+ASH,ASH,NYQ,Specialty Chemicals
+ASIC,ASIC,NYQ,Insurance - Property & Casualty
+ASIX,ASIX,NYQ,Chemicals
+ASLE,ASLE,NCM,Airports & Air Services
+ASM,ASM,ASE,Other Precious Metals & Mining
+ASMB,ASMB,NMS,Biotechnology
+ASML,ASML,NMS,Semiconductor Equipment & Materials
+ASND,ASND,NMS,Biotechnology
+ASO,ASO,NMS,Specialty Retail
+ASPC,ASPC,,
+ASPI,ASPI,NCM,Chemicals
+ASPN,ASPN,NYQ,Building Products & Equipment
+ASPS,ASPS,NMS,Real Estate Services
+ASR,ASR,NYQ,Airports & Air Services
+ASRV,ASRV,NGM,Banks - Regional
+ASST,ASST,NGM,Asset Management
+ASTC,ASTC,,
+ASTE,ASTE,NMS,Farm & Heavy Construction Machinery
+ASTH,ASTH,NCM,Medical Care Facilities
+ASTI,ASTI,NCM,Solar
+ASTL,ASTL,NGM,Steel
+ASTS,ASTS,NMS,Communication Equipment
+ASUR,ASUR,NCM,Software - Application
+ASYS,ASYS,NMS,Semiconductor Equipment & Materials
+ATAI,ATAI,NGM,Biotechnology
+ATCH,ATCH,,
+ATCX,ATCX,,
+ATEC,ATEC,NMS,Medical Devices
+ATEN,ATEN,NYQ,Software - Infrastructure
+ATER,ATER,,
+ATEX,ATEX,NCM,Telecom Services
+ATGL,ATGL,NCM,Software - Infrastructure
+ATHR,ATHR,,
+ATHS,ATHS,NYQ,
+ATI,ATI,NYQ,Metal Fabrication
+ATII,ATII,NGM,Shell Companies
+ATKR,ATKR,NYQ,Electrical Equipment & Parts
+ATLC,ATLC,NMS,Credit Services
+ATLN,ATLN,,
+ATLO,ATLO,NCM,Banks - Regional
+ATLX,ATLX,NCM,Other Industrial Metals & Mining
+ATMU,ATMU,NYQ,Auto Parts
+ATNI,ATNI,NMS,Telecom Services
+ATNM,ATNM,,
+ATO,ATO,NYQ,Utilities - Regulated Gas
+ATOM,ATOM,NCM,Semiconductor Equipment & Materials
+ATOS,ATOS,,
+ATPC,ATPC,,
+ATR,ATR,NYQ,Medical Instruments & Supplies
+ATRA,ATRA,NMS,Biotechnology
+ATRC,ATRC,NGM,Medical Instruments & Supplies
+ATRO,ATRO,NMS,Aerospace & Defense
+ATS,ATS,NYQ,Specialty Industrial Machinery
+ATXG,ATXG,,
+ATYR,ATYR,,
+AU,AU,NYQ,Gold
+AUB,AUB,NYQ,Banks - Regional
+AUBN,AUBN,NGM,Banks - Regional
+AUC,AUC,NCM,Capital Markets
+AUDC,AUDC,NMS,Communication Equipment
+AUGO,AUGO,NMS,Gold
+AUID,AUID,,
+AUNA,AUNA,NYQ,Medical Care Facilities
+AUPH,AUPH,NGM,Biotechnology
+AUR,AUR,NMS,Auto Parts
+AURA,AURA,NGM,Biotechnology
+AURE,AURE,NCM,Capital Markets
+AUST,AUST,,
+AUUD,AUUD,,
+AVA,AVA,NYQ,Utilities - Diversified
+AVAH,AVAH,NMS,Medical Care Facilities
+AVAT,AVAT,,
+AVAV,AVAV,NMS,Aerospace & Defense
+AVB,AVB,NYQ,REIT - Residential
+AVBC,AVBC,NYQ,Banks - Regional
+AVBH,AVBH,NMS,Banks - Regional
+AVBP,AVBP,NGM,Biotechnology
+AVD,AVD,NYQ,Agricultural Inputs
+AVEX,AVEX,NYQ,Aerospace & Defense
+AVGO,AVGO,NMS,Semiconductors
+AVIR,AVIR,NMS,Biotechnology
+AVLN,AVLN,NMS,Biotechnology
+AVNS,AVNS,NYQ,Medical Devices
+AVNT,AVNT,NYQ,Specialty Chemicals
+AVNW,AVNW,NMS,Communication Equipment
+AVO,AVO,NMS,Food Distribution
+AVPT,AVPT,NMS,Software - Infrastructure
+AVR,AVR,NGM,Medical Instruments & Supplies
+AVT,AVT,NMS,Electronics & Computer Distribution
+AVTR,AVTR,NYQ,Medical Instruments & Supplies
+AVTX,AVTX,NCM,Biotechnology
+AVX,AVX,,
+AVXL,AVXL,NMS,Biotechnology
+AVY,AVY,NYQ,Packaging & Containers
+AWI,AWI,NYQ,Building Products & Equipment
+AWK,AWK,NYQ,Utilities - Regulated Water
+AWR,AWR,NYQ,Utilities - Regulated Water
+AWRE,AWRE,,
+AWX,AWX,,
+AX,AX,NYQ,Banks - Regional
+AXG,AXG,NCM,Capital Markets
+AXGN,AXGN,NCM,Medical Devices
+AXIL,AXIL,,
+AXIN,AXIN,NGM,Shell Companies
+AXON,AXON,NMS,Aerospace & Defense
+AXP,AXP,NYQ,Credit Services
+AXR,AXR,NYQ,Real Estate - Development
+AXS,AXS,NYQ,Insurance - Specialty
+AXSM,AXSM,NGM,Biotechnology
+AXTA,AXTA,NYQ,Specialty Chemicals
+AXTI,AXTI,NMS,Semiconductor Equipment & Materials
+AYA,AYA,NMS,Silver
+AYI,AYI,NYQ,Electrical Equipment & Parts
+AYTU,AYTU,,
+AZ,AZ,NCM,Software - Application
+AZI,AZI,,
+AZN,AZN,NYQ,Drug Manufacturers - General
+AZO,AZO,NYQ,Auto Parts
+AZTA,AZTA,NMS,Medical Instruments & Supplies
+AZTR,AZTR,,
+AZZ,AZZ,NYQ,Specialty Business Services
+B,B,NYQ,Gold
+BA,BA,NYQ,Aerospace & Defense
+BAC,BAC,NYQ,Banks - Diversified
+BACC,BACC,NGM,Shell Companies
+BAER,BAER,NGM,Security & Protection Services
+BAFN,BAFN,,
+BAH,BAH,NYQ,Consulting Services
+BAK,BAK,NYQ,Chemicals
+BALL,BALL,NYQ,Packaging & Containers
+BALY,BALY,NYQ,Resorts & Casinos
+BAM,BAM,NYQ,Asset Management
+BANC,BANC,NYQ,Banks - Regional
+BAND,BAND,NMS,Software - Infrastructure
+BANF,BANF,NMS,Banks - Regional
+BANL,BANL,,
+BANR,BANR,NMS,Banks - Regional
+BAOS,BAOS,,
+BAP,BAP,NYQ,Banks - Regional
+BAR,BAR,PCX,
+BARK,BARK,NYQ,Specialty Retail
+BATL,BATL,,
+BATRA,BATRA,NMS,Entertainment
+BATRK,BATRK,NMS,Entertainment
+BAX,BAX,NYQ,Medical Instruments & Supplies
+BAYA,BAYA,,
+BB,BB,NYQ,Software - Infrastructure
+BBAI,BBAI,NYQ,Information Technology Services
+BBAR,BBAR,NYQ,Banks - Regional
+BBBY,BBBY,NYQ,
+BBCP,BBCP,NCM,Engineering & Construction
+BBCQ,BBCQ,NGM,Shell Companies
+BBDC,BBDC,NYQ,Asset Management
+BBGI,BBGI,,
+BBIO,BBIO,NMS,Biotechnology
+BBLG,BBLG,,
+BBNX,BBNX,NGM,Medical Devices
+BBOT,BBOT,NGM,Biotechnology
+BBSI,BBSI,NMS,Staffing & Employment Services
+BBT,BBT,NYQ,Banks - Regional
+BBUC,BBUC,NYQ,Conglomerates
+BBVA,BBVA,NYQ,Banks - Diversified
+BBW,BBW,NYQ,Specialty Retail
+BBWI,BBWI,NYQ,Specialty Retail
+BBY,BBY,NYQ,Specialty Retail
+BC,BC,NYQ,Recreational Vehicles
+BCAB,BCAB,,
+BCAL,BCAL,NCM,Banks - Regional
+BCAR,BCAR,NGM,Shell Companies
+BCAT,BCAT,NYQ,Asset Management
+BCAX,BCAX,NGM,Biotechnology
+BCBP,BCBP,NGM,Banks - Regional
+BCC,BCC,NYQ,Lumber & Wood Production
+BCDA,BCDA,,
+BCE,BCE,NYQ,Telecom Services
+BCG,BCG,,
+BCH,BCH,NYQ,Banks - Regional
+BCHT,BCHT,ASE,Pollution & Treatment Controls
+BCML,BCML,NMS,Banks - Regional
+BCO,BCO,NYQ,Security & Protection Services
+BCPC,BCPC,NMS,Specialty Chemicals
+BCRX,BCRX,NMS,Drug Manufacturers - Specialty & Generic
+BCS,BCS,NYQ,Banks - Diversified
+BCSF,BCSF,NYQ,Asset Management
+BCSS,BCSS,NYQ,Shell Companies
+BCTX,BCTX,,
+BCX,BCX,NYQ,Asset Management
+BDC,BDC,NYQ,Communication Equipment
+BDCI,BDCI,NGM,Shell Companies
+BDJ,BDJ,NYQ,Asset Management
+BDL,BDL,ASE,Restaurants
+BDMD,BDMD,,
+BDN,BDN,NYQ,REIT - Office
+BDSX,BDSX,NGM,Diagnostics & Research
+BDTX,BDTX,NMS,Biotechnology
+BDX,BDX,NYQ,Medical Instruments & Supplies
+BE,BE,NYQ,Electrical Equipment & Parts
+BEAG,BEAG,NGM,Shell Companies
+BEAM,BEAM,NMS,Biotechnology
+BEAT,BEAT,,
+BEBE,BEBE,NYQ,Shell Companies
+BEEM,BEEM,,
+BEEP,BEEP,NGM,Infrastructure Operations
+BELFA,BELFA,NMS,Electronic Components
+BELFB,BELFB,NMS,Electronic Components
+BEN,BEN,NYQ,Asset Management
+BENF,BENF,,
+BEPC,BEPC,NYQ,Utilities - Renewable
+BESS,BESS,,
+BETA,BETA,NYQ,Aerospace & Defense
+BETR,BETR,NGM,Mortgage Finance
+BF-A,BF-A,NYQ,Beverages - Wineries & Distilleries
+BF-B,BF-B,NYQ,Beverages - Wineries & Distilleries
+BFAM,BFAM,NYQ,Personal Services
+BFC,BFC,NCM,Banks - Regional
+BFH,BFH,NYQ,Credit Services
+BFLY,BFLY,NYQ,Medical Devices
+BFRG,BFRG,,
+BFRI,BFRI,,
+BFS,BFS,NYQ,REIT - Retail
+BFST,BFST,NMS,Banks - Regional
+BG,BG,NYQ,Farm Products
+BGC,BGC,NMS,Capital Markets
+BGDE,BGDE,NCM,Capital Markets
+BGI,BGI,,
+BGIN,BGIN,NGM,Computer Hardware
+BGL,BGL,,
+BGLC,BGLC,,
+BGM,BGM,NCM,Drug Manufacturers - Specialty & Generic
+BGMS,BGMS,,
+BGR,BGR,NYQ,Asset Management
+BGS,BGS,NYQ,Packaged Foods
+BGSF,BGSF,NYQ,Staffing & Employment Services
+BGSI,BGSI,NYQ,Auto & Truck Dealerships
+BGT,BGT,NYQ,Asset Management
+BGY,BGY,NYQ,Asset Management
+BH,BH,NYQ,Restaurants
+BH-A,BH-A,NYQ,Restaurants
+BHAV,BHAV,NGM,Shell Companies
+BHB,BHB,ASE,Banks - Regional
+BHC,BHC,NYQ,Drug Manufacturers - Specialty & Generic
+BHE,BHE,NYQ,Electronic Components
+BHF,BHF,NMS,Insurance - Life
+BHFAL,BHFAL,NMS,
+BHM,BHM,,
+BHR,BHR,NYQ,REIT - Hotel & Motel
+BHRB,BHRB,NCM,Banks - Regional
+BHST,BHST,NGM,Packaged Foods
+BHVN,BHVN,NYQ,Biotechnology
+BIAF,BIAF,,
+BIIB,BIIB,NMS,Drug Manufacturers - General
+BIII,BIII,NYQ,Shell Companies
+BILL,BILL,NYQ,Software - Application
+BIO,BIO,NYQ,Medical Devices
+BIO-B,BIO-B,NYQ,Medical Devices
+BIOA,BIOA,NMS,Drug Manufacturers - Specialty & Generic
+BIOX,BIOX,,
+BIPC,BIPC,NYQ,Utilities - Regulated Gas
+BIRD,BIRD,NMS,Apparel Retail
+BIRK,BIRK,NYQ,Footwear & Accessories
+BIT,BIT,NYQ,Asset Management
+BIVI,BIVI,,
+BIXI,BIXI,NGM,Shell Companies
+BIYA,BIYA,,
+BJ,BJ,NYQ,Discount Stores
+BJDX,BJDX,,
+BJRI,BJRI,NMS,Restaurants
+BKD,BKD,NYQ,Medical Care Facilities
+BKE,BKE,NYQ,Apparel Retail
+BKH,BKH,NYQ,Utilities - Regulated Gas
+BKHA,BKHA,NGM,Shell Companies
+BKKT,BKKT,NYQ,Software - Infrastructure
+BKNG,BKNG,NMS,Travel Services
+BKR,BKR,NMS,Oil & Gas Equipment & Services
+BKSY,BKSY,NYQ,Specialty Business Services
+BKT,BKT,NYQ,Asset Management
+BKTI,BKTI,ASE,Communication Equipment
+BKU,BKU,NYQ,Banks - Regional
+BKV,BKV,NYQ,Oil & Gas E&P
+BL,BL,NMS,Software - Application
+BLBD,BLBD,NGM,Farm & Heavy Construction Machinery
+BLCO,BLCO,NYQ,Medical Instruments & Supplies
+BLD,BLD,NYQ,Engineering & Construction
+BLDP,BLDP,NGM,Electrical Equipment & Parts
+BLDR,BLDR,NYQ,Building Products & Equipment
+BLFS,BLFS,NCM,Medical Instruments & Supplies
+BLIN,BLIN,,
+BLIV,BLIV,,
+BLK,BLK,NYQ,Asset Management
+BLKB,BLKB,NMS,Software - Application
+BLLN,BLLN,NMS,Diagnostics & Research
+BLMN,BLMN,NMS,Restaurants
+BLND,BLND,NYQ,Software - Application
+BLNE,BLNE,,
+BLNK,BLNK,NCM,Engineering & Construction
+BLRK,BLRK,NGM,Shell Companies
+BLSH,BLSH,NYQ,Software - Infrastructure
+BLUW,BLUW,NGM,Shell Companies
+BLW,BLW,NYQ,Asset Management
+BLX,BLX,NYQ,Banks - Regional
+BLZE,BLZE,NGM,Software - Infrastructure
+BLZR,BLZR,NGM,Shell Companies
+BMA,BMA,NYQ,Banks - Regional
+BMBL,BMBL,NMS,Internet Content & Information
+BME,BME,NYQ,Asset Management
+BMEA,BMEA,NMS,Biotechnology
+BMEZ,BMEZ,NYQ,Asset Management
+BMGL,BMGL,,
+BMHL,BMHL,NCM,Capital Markets
+BMI,BMI,NYQ,Scientific & Technical Instruments
+BMM,BMM,NCM,Other Industrial Metals & Mining
+BMN,BMN,NYQ,Asset Management
+BMNR,BMNR,NYQ,Capital Markets
+BMO,BMO,NYQ,Banks - Diversified
+BMR,BMR,,
+BMRA,BMRA,,
+BMRC,BMRC,NMS,Banks - Regional
+BMRN,BMRN,NMS,Biotechnology
+BMY,BMY,NYQ,Drug Manufacturers - General
+BN,BN,NYQ,Asset Management
+BNAI,BNAI,NCM,Software - Infrastructure
+BNBX,BNBX,,
+BNC,BNC,NCM,Farm & Heavy Construction Machinery
+BNED,BNED,NYQ,Specialty Retail
+BNGO,BNGO,,
+BNKK,BNKK,,
+BNL,BNL,NYQ,REIT - Diversified
+BNRG,BNRG,,
+BNS,BNS,NYQ,Banks - Diversified
+BNT,BNT,NYQ,Insurance - Diversified
+BNTC,BNTC,NCM,Biotechnology
+BNY,BNY,NYQ,Banks - Diversified
+BNZI,BNZI,,
+BOBS,BOBS,NYQ,Specialty Retail
+BOC,BOC,NYQ,Conglomerates
+BODI,BODI,NCM,Internet Content & Information
+BOE,BOE,NYQ,Asset Management
+BOF,BOF,NCM,Packaged Foods
+BOH,BOH,NYQ,Banks - Regional
+BOKF,BOKF,NMS,Banks - Regional
+BOLD,BOLD,,
+BOLT,BOLT,,
+BON,BON,,
+BOOM,BOOM,NMS,Conglomerates
+BOOT,BOOT,NYQ,Apparel Retail
+BORR,BORR,NYQ,Oil & Gas Drilling
+BOSC,BOSC,,
+BOT,BOT,NGM,Asset Management
+BOTJ,BOTJ,NCM,Banks - Regional
+BOW,BOW,NYQ,Insurance - Property & Casualty
+BOX,BOX,NYQ,Software - Infrastructure
+BOXL,BOXL,,
+BP,BP,NYQ,Oil & Gas Integrated
+BPAC,BPAC,NCM,
+BPOP,BPOP,NMS,Banks - Regional
+BPRN,BPRN,NMS,Banks - Regional
+BQ,BQ,,
+BR,BR,NYQ,Information Technology Services
+BRAG,BRAG,,
+BRAI,BRAI,NGM,Computer Hardware
+BRBI,BRBI,NCM,Capital Markets
+BRBR,BRBR,NYQ,Packaged Foods
+BRBS,BRBS,ASE,Banks - Regional
+BRC,BRC,NYQ,Security & Protection Services
+BRCB,BRCB,NGM,Restaurants
+BRCC,BRCC,NYQ,Packaged Foods
+BREZ,BREZ,NGM,
+BRFH,BRFH,,
+BRIA,BRIA,,
+BRID,BRID,NGM,Packaged Foods
+BRK-A,BRK-A,NYQ,Insurance - Diversified
+BRK-B,BRK-B,NYQ,Insurance - Diversified
+BRKR,BRKR,NMS,Medical Devices
+BRLS,BRLS,,
+BRLT,BRLT,NGM,Luxury Goods
+BRN,BRN,,
+BRO,BRO,NYQ,Insurance Brokers
+BROS,BROS,NYQ,Restaurants
+BRR,BRR,NGM,Capital Markets
+BRSL,BRSL,NYQ,Gambling
+BRSP,BRSP,NYQ,REIT - Mortgage
+BRT,BRT,NYQ,REIT - Residential
+BRTX,BRTX,,
+BRUN,BRUN,NGM,Software - Infrastructure
+BRX,BRX,NYQ,REIT - Retail
+BRZE,BRZE,NMS,Software - Application
+BSAA,BSAA,NCM,Shell Companies
+BSAC,BSAC,NYQ,Banks - Regional
+BSBK,BSBK,NCM,Banks - Regional
+BSET,BSET,NMS,"Furnishings, Fixtures & Appliances"
+BSIN,BSIN,NCM,Oil & Gas E&P
+BSRR,BSRR,NMS,Banks - Regional
+BST,BST,NYQ,Asset Management
+BSTZ,BSTZ,NYQ,Asset Management
+BSVN,BSVN,NMS,Banks - Regional
+BSX,BSX,NYQ,Medical Devices
+BSY,BSY,NMS,Software - Application
+BTAI,BTAI,,
+BTBD,BTBD,,
+BTBT,BTBT,NCM,Capital Markets
+BTCS,BTCS,NCM,Capital Markets
+BTCT,BTCT,,
+BTDR,BTDR,NCM,Software - Application
+BTE,BTE,NYQ,Oil & Gas E&P
+BTG,BTG,ASE,Gold
+BTGO,BTGO,NYQ,Capital Markets
+BTI,BTI,NYQ,Tobacco
+BTMD,BTMD,NGM,Medical Care Facilities
+BTOC,BTOC,,
+BTOG,BTOG,,
+BTQ,BTQ,NGM,Software - Infrastructure
+BTSG,BTSG,NMS,Health Information Services
+BTT,BTT,NYQ,Asset Management
+BTTC,BTTC,,
+BTU,BTU,NYQ,Thermal Coal
+BTX,BTX,NYQ,Asset Management
+BTZ,BTZ,NYQ,Asset Management
+BUD,BUD,NYQ,Beverages - Brewers
+BUDA,BUDA,ASE,Beverages - Non-Alcoholic
+BUI,BUI,NYQ,Asset Management
+BULL,BULL,NCM,Software - Application
+BUR,BUR,NYQ,Asset Management
+BURL,BURL,NYQ,Apparel Retail
+BURU,BURU,,
+BUSE,BUSE,NMS,Banks - Regional
+BUUU,BUUU,NCM,Specialty Business Services
+BV,BV,NYQ,Specialty Business Services
+BVC,BVC,NCM,Software - Application
+BVFL,BVFL,NCM,Banks - Regional
+BVN,BVN,NYQ,Other Precious Metals & Mining
+BVS,BVS,NMS,Medical Devices
+BW,BW,NYQ,Specialty Industrial Machinery
+BWA,BWA,NYQ,Auto Parts
+BWB,BWB,NCM,Banks - Regional
+BWEN,BWEN,NCM,Specialty Industrial Machinery
+BWFG,BWFG,NGM,Banks - Regional
+BWIN,BWIN,NMS,Insurance Brokers
+BWIV,BWIV,NYQ,Shell Companies
+BWLP,BWLP,NYQ,Oil & Gas Midstream
+BWMN,BWMN,NGM,Engineering & Construction
+BWMX,BWMX,NYQ,Specialty Retail
+BWXT,BWXT,NYQ,Aerospace & Defense
+BX,BX,NYQ,Asset Management
+BXC,BXC,NYQ,Industrial Distribution
+BXDC,BXDC,NYQ,REIT - Specialty
+BXMT,BXMT,NYQ,REIT - Mortgage
+BXP,BXP,NYQ,REIT - Office
+BY,BY,NYQ,Banks - Regional
+BYAH,BYAH,,
+BYD,BYD,NYQ,Resorts & Casinos
+BYFC,BYFC,NCM,Banks - Regional
+BYND,BYND,NMS,Packaged Foods
+BYRN,BYRN,NCM,Aerospace & Defense
+BYSI,BYSI,NCM,Biotechnology
+BZ,BZ,NMS,Internet Content & Information
+BZAI,BZAI,NGM,Software - Application
+BZFD,BZFD,NCM,Internet Content & Information
+BZH,BZH,NYQ,Residential Construction
+C,C,NYQ,Banks - Diversified
+CAAP,CAAP,NYQ,Airports & Air Services
+CAAS,CAAS,NCM,Auto Parts
+CABA,CABA,NMS,Biotechnology
+CABO,CABO,NYQ,Telecom Services
+CABR,CABR,,
+CAC,CAC,NMS,Banks - Regional
+CACC,CACC,NMS,Credit Services
+CACI,CACI,NYQ,Information Technology Services
+CADL,CADL,NGM,Biotechnology
+CAE,CAE,NYQ,Aerospace & Defense
+CAES,CAES,NGM,Shell Companies
+CAG,CAG,NYQ,Packaged Foods
+CAH,CAH,NYQ,Medical Distribution
+CAI,CAI,NMS,Biotechnology
+CAKE,CAKE,NMS,Restaurants
+CAL,CAL,NYQ,Apparel Retail
+CALC,CALC,,
+CALM,CALM,NMS,Farm Products
+CALX,CALX,NYQ,Software - Infrastructure
+CALY,CALY,NYQ,Leisure
+CAMP,CAMP,NGM,Biotechnology
+CAMT,CAMT,NGM,Semiconductor Equipment & Materials
+CANG,CANG,NYQ,Capital Markets
+CAPN,CAPN,NGM,Shell Companies
+CAPR,CAPR,NMS,Biotechnology
+CAPS,CAPS,,
+CAQ,CAQ,NGM,Shell Companies
+CAR,CAR,NMS,Rental & Leasing Services
+CARE,CARE,NMS,Banks - Regional
+CARG,CARG,NMS,Auto & Truck Dealerships
+CARL,CARL,NMS,Health Information Services
+CARR,CARR,NYQ,Building Products & Equipment
+CARS,CARS,NYQ,Internet Content & Information
+CART,CART,NMS,Internet Retail
+CASH,CASH,NMS,Banks - Regional
+CASS,CASS,NMS,Specialty Business Services
+CAST,CAST,NGM,Broadcasting
+CASY,CASY,NMS,Specialty Retail
+CAT,CAT,NYQ,Farm & Heavy Construction Machinery
+CATO,CATO,NYQ,Apparel Retail
+CATX,CATX,ASE,Medical Devices
+CATY,CATY,NMS,Banks - Regional
+CAVA,CAVA,NYQ,Restaurants
+CB,CB,NYQ,Insurance - Property & Casualty
+CBAN,CBAN,NYQ,Banks - Regional
+CBAT,CBAT,NCM,Electrical Equipment & Parts
+CBC,CBC,NMS,Banks - Regional
+CBFV,CBFV,NGM,Banks - Regional
+CBIO,CBIO,NCM,Biotechnology
+CBK,CBK,NCM,Banks - Regional
+CBL,CBL,NYQ,REIT - Retail
+CBLL,CBLL,NMS,Medical Devices
+CBNA,CBNA,NYQ,Banks - Regional
+CBNK,CBNK,NMS,Banks - Regional
+CBOE,CBOE,BTS,Financial Data & Stock Exchanges
+CBRE,CBRE,NYQ,Real Estate Services
+CBRL,CBRL,NMS,Restaurants
+CBRS,CBRS,NMS,Semiconductors
+CBSH,CBSH,NMS,Banks - Regional
+CBT,CBT,NYQ,Specialty Chemicals
+CBU,CBU,NYQ,Banks - Regional
+CBUS,CBUS,NCM,Biotechnology
+CBZ,CBZ,NYQ,Specialty Business Services
+CC,CC,NYQ,Specialty Chemicals
+CCAP,CCAP,NGM,Asset Management
+CCAQ,CCAQ,NGM,Shell Companies
+CCB,CCB,NMS,Banks - Regional
+CCBG,CCBG,NMS,Banks - Regional
+CCC,CCC,NMS,Software - Application
+CCCC,CCCC,NMS,Biotechnology
+CCEC,CCEC,NMS,Marine Shipping
+CCEL,CCEL,,
+CCEP,CCEP,NMS,Beverages - Non-Alcoholic
+CCG,CCG,,
+CCHH,CCHH,,
+CCI,CCI,NYQ,REIT - Specialty
+CCII,CCII,NGM,Shell Companies
+CCIX,CCIX,NGM,Shell Companies
+CCJ,CCJ,NYQ,Uranium
+CCK,CCK,NYQ,Packaging & Containers
+CCL,CCL,NYQ,Travel Services
+CCLD,CCLD,NGM,Health Information Services
+CCNE,CCNE,NMS,Banks - Regional
+CCO,CCO,NYQ,Advertising Agencies
+CCOI,CCOI,NMS,Telecom Services
+CCRN,CCRN,NMS,Medical Care Facilities
+CCS,CCS,NYQ,Real Estate - Development
+CCSI,CCSI,NMS,Software - Infrastructure
+CCTG,CCTG,,
+CCU,CCU,NYQ,Beverages - Brewers
+CCXI,CCXI,NGM,Shell Companies
+CCZ,CCZ,NYQ,
+CD,CD,NGM,Capital Markets
+CDE,CDE,NYQ,Gold
+CDIO,CDIO,,
+CDLX,CDLX,,
+CDNA,CDNA,NGM,Diagnostics & Research
+CDNL,CDNL,NMS,Engineering & Construction
+CDNS,CDNS,NMS,Software - Application
+CDP,CDP,NYQ,REIT - Office
+CDRE,CDRE,NYQ,Aerospace & Defense
+CDRO,CDRO,NCM,Gambling
+CDT,CDT,,
+CDTG,CDTG,NCM,Waste Management
+CDW,CDW,NMS,Information Technology Services
+CDXS,CDXS,NMS,Biotechnology
+CDZI,CDZI,NGM,Utilities - Regulated Water
+CE,CE,NYQ,Chemicals
+CECO,CECO,NMS,Pollution & Treatment Controls
+CEG,CEG,NMS,Utilities - Independent Power Producers
+CELC,CELC,NCM,Biotechnology
+CELH,CELH,NCM,Beverages - Non-Alcoholic
+CELU,CELU,,
+CELZ,CELZ,,
+CENN,CENN,,
+CENT,CENT,NMS,Packaged Foods
+CENTA,CENTA,NMS,Packaged Foods
+CENX,CENX,NMS,Aluminum
+CEPF,CEPF,NGM,Shell Companies
+CEPO,CEPO,NGM,Shell Companies
+CEPS,CEPS,NGM,Shell Companies
+CEPT,CEPT,NGM,Shell Companies
+CEPV,CEPV,NGM,Shell Companies
+CERS,CERS,NGM,Medical Devices
+CERT,CERT,NMS,Health Information Services
+CET,CET,ASE,Asset Management
+CETX,CETX,,
+CETY,CETY,,
+CEV,CEV,ASE,Asset Management
+CEVA,CEVA,NMS,Semiconductors
+CF,CF,NYQ,Agricultural Inputs
+CFBK,CFBK,NCM,Banks - Regional
+CFFI,CFFI,NMS,Banks - Regional
+CFFN,CFFN,NMS,Banks - Regional
+CFG,CFG,NYQ,Banks - Regional
+CFR,CFR,NYQ,Banks - Regional
+CG,CG,NMS,Asset Management
+CGAU,CGAU,NYQ,Gold
+CGC,CGC,NMS,Drug Manufacturers - Specialty & Generic
+CGEM,CGEM,NMS,Biotechnology
+CGEN,CGEN,NCM,Biotechnology
+CGNT,CGNT,NMS,Software - Infrastructure
+CGNX,CGNX,NMS,Scientific & Technical Instruments
+CGON,CGON,NMS,Biotechnology
+CGTL,CGTL,,
+CGTX,CGTX,NCM,Biotechnology
+CHAI,CHAI,,
+CHAR,CHAR,NGM,Shell Companies
+CHCI,CHCI,NCM,Real Estate Services
+CHCO,CHCO,NMS,Banks - Regional
+CHCT,CHCT,NYQ,REIT - Healthcare Facilities
+CHD,CHD,NYQ,Household & Personal Products
+CHDN,CHDN,NMS,Gambling
+CHE,CHE,NYQ,Medical Care Facilities
+CHEC,CHEC,NGM,Shell Companies
+CHEF,CHEF,NMS,Food Distribution
+CHGG,CHGG,NYQ,Education & Training Services
+CHH,CHH,NYQ,Lodging
+CHKP,CHKP,NMS,Software - Infrastructure
+CHMG,CHMG,NMS,Banks - Regional
+CHMI,CHMI,NYQ,REIT - Mortgage
+CHNR,CHNR,,
+CHOW,CHOW,,
+CHPG,CHPG,NGM,Shell Companies
+CHPT,CHPT,NYQ,Specialty Retail
+CHR,CHR,,
+CHRD,CHRD,NMS,Oil & Gas E&P
+CHRN,CHRN,NCM,Information Technology Services
+CHRS,CHRS,NGM,Biotechnology
+CHRW,CHRW,NMS,Integrated Freight & Logistics
+CHSN,CHSN,,
+CHT,CHT,NYQ,Telecom Services
+CHTR,CHTR,NMS,Telecom Services
+CHWY,CHWY,NYQ,Internet Retail
+CHYM,CHYM,NMS,Software - Application
+CI,CI,NYQ,Healthcare Plans
+CIA,CIA,NYQ,Insurance - Life
+CIEN,CIEN,NYQ,Communication Equipment
+CIFR,CIFR,NMS,Information Technology Services
+CIGI,CIGI,NMS,Real Estate Services
+CIIT,CIIT,,
+CIM,CIM,NYQ,REIT - Mortgage
+CINF,CINF,NMS,Insurance - Property & Casualty
+CING,CING,NCM,Biotechnology
+CINT,CINT,NYQ,Software - Infrastructure
+CION,CION,NYQ,Asset Management
+CISO,CISO,,
+CISS,CISS,,
+CITR,CITR,ASE,
+CIVB,CIVB,NCM,Banks - Regional
+CIX,CIX,ASE,Security & Protection Services
+CJMB,CJMB,,
+CKX,CKX,,
+CL,CL,NYQ,Household & Personal Products
+CLAR,CLAR,NMS,Leisure
+CLB,CLB,NYQ,Oil & Gas Equipment & Services
+CLBK,CLBK,NMS,Banks - Regional
+CLBR,CLBR,NYQ,Shell Companies
+CLBT,CLBT,NMS,Software - Infrastructure
+CLDI,CLDI,,
+CLDT,CLDT,NYQ,REIT - Hotel & Motel
+CLDX,CLDX,NCM,Biotechnology
+CLF,CLF,NYQ,Steel
+CLFD,CLFD,NGM,Communication Equipment
+CLGN,CLGN,,
+CLH,CLH,NYQ,Waste Management
+CLIK,CLIK,,
+CLIR,CLIR,,
+CLMB,CLMB,NGM,Electronics & Computer Distribution
+CLMT,CLMT,NMS,Specialty Chemicals
+CLNE,CLNE,NMS,Oil & Gas Refining & Marketing
+CLNN,CLNN,NCM,Packaged Foods
+CLOV,CLOV,NMS,Healthcare Plans
+CLPR,CLPR,NYQ,REIT - Residential
+CLPS,CLPS,,
+CLPT,CLPT,NCM,Medical Devices
+CLRB,CLRB,,
+CLRO,CLRO,,
+CLS,CLS,NYQ,Electronic Components
+CLSK,CLSK,NCM,Capital Markets
+CLST,CLST,NCM,Banks - Regional
+CLVT,CLVT,NYQ,Information Technology Services
+CLW,CLW,NYQ,Paper & Paper Products
+CLWT,CLWT,,
+CLX,CLX,NYQ,Household & Personal Products
+CLYM,CLYM,NGM,Biotechnology
+CM,CM,NYQ,Banks - Diversified
+CMBT,CMBT,NYQ,Oil & Gas Midstream
+CMC,CMC,NYQ,Metal Fabrication
+CMCL,CMCL,ASE,Gold
+CMCO,CMCO,NMS,Farm & Heavy Construction Machinery
+CMCSA,CMCSA,NMS,Telecom Services
+CMCT,CMCT,,
+CMDB,CMDB,NYQ,Marine Shipping
+CME,CME,NMS,Financial Data & Stock Exchanges
+CMG,CMG,NYQ,Restaurants
+CMI,CMI,NYQ,Specialty Industrial Machinery
+CMII,CMII,NGM,Shell Companies
+CMND,CMND,,
+CMP,CMP,NYQ,Other Industrial Metals & Mining
+CMPR,CMPR,NMS,Specialty Business Services
+CMPS,CMPS,NMS,Medical Care Facilities
+CMPX,CMPX,NCM,Biotechnology
+CMRC,CMRC,NGM,Software - Application
+CMRE,CMRE,NYQ,Marine Shipping
+CMS,CMS,NYQ,Utilities - Regulated Electric
+CMT,CMT,ASE,Specialty Chemicals
+CMTG,CMTG,NYQ,REIT - Mortgage
+CMTL,CMTL,NMS,Communication Equipment
+CMTV,CMTV,NCM,Banks - Regional
+CNA,CNA,NYQ,Insurance - Property & Casualty
+CNC,CNC,NYQ,Healthcare Plans
+CNCK,CNCK,NGM,Capital Markets
+CNDT,CNDT,NMS,Information Technology Services
+CNET,CNET,,
+CNEY,CNEY,,
+CNH,CNH,NYQ,Farm & Heavy Construction Machinery
+CNI,CNI,NYQ,Railroads
+CNK,CNK,NYQ,Entertainment
+CNL,CNL,ASE,Gold
+CNM,CNM,NYQ,Industrial Distribution
+CNMD,CNMD,NYQ,Medical Devices
+CNNE,CNNE,NYQ,Restaurants
+CNO,CNO,NYQ,Insurance - Life
+CNOB,CNOB,NMS,Banks - Regional
+CNP,CNP,NYQ,Utilities - Regulated Electric
+CNQ,CNQ,NYQ,Oil & Gas E&P
+CNR,CNR,NYQ,Thermal Coal
+CNS,CNS,NYQ,Asset Management
+CNSP,CNSP,,
+CNTB,CNTB,NGM,Biotechnology
+CNTN,CNTN,NCM,Biotechnology
+CNTX,CNTX,NCM,Biotechnology
+CNTY,CNTY,,
+CNVS,CNVS,NCM,Entertainment
+CNX,CNX,NYQ,Oil & Gas E&P
+CNXC,CNXC,NMS,Information Technology Services
+CNXN,CNXN,NMS,Electronics & Computer Distribution
+CNXU,CNXU,NCM,Biotechnology
+COAG,COAG,NMS,Biotechnology
+COCH,COCH,,
+COCO,COCO,NMS,Beverages - Non-Alcoholic
+COCP,COCP,,
+CODA,CODA,NCM,Aerospace & Defense
+CODI,CODI,NYQ,Conglomerates
+CODX,CODX,,
+COF,COF,NYQ,Credit Services
+COFS,COFS,NCM,Banks - Regional
+COGT,COGT,NMS,Biotechnology
+COHN,COHN,,
+COHR,COHR,NYQ,Scientific & Technical Instruments
+COHU,COHU,NMS,Semiconductor Equipment & Materials
+COIN,COIN,NMS,Financial Data & Stock Exchanges
+COKE,COKE,NMS,Beverages - Non-Alcoholic
+COLA,COLA,,
+COLB,COLB,NMS,Banks - Regional
+COLD,COLD,NYQ,REIT - Industrial
+COLL,COLL,NMS,Drug Manufacturers - Specialty & Generic
+COLM,COLM,NMS,Apparel Manufacturing
+COMP,COMP,NYQ,Real Estate Services
+CON,CON,NYQ,Medical Care Facilities
+COO,COO,NMS,Medical Instruments & Supplies
+COOK,COOK,NYQ,"Furnishings, Fixtures & Appliances"
+COOT,COOT,,
+COP,COP,NYQ,Oil & Gas E&P
+COPL,COPL,NYQ,Shell Companies
+COR,COR,NYQ,Medical Distribution
+CORT,CORT,NCM,Biotechnology
+CORZ,CORZ,NMS,Software - Infrastructure
+COSM,COSM,,
+COSO,COSO,NYQ,Banks - Regional
+COST,COST,NMS,Discount Stores
+COTY,COTY,NYQ,Household & Personal Products
+COUR,COUR,NYQ,Education & Training Services
+COYA,COYA,NCM,Biotechnology
+CP,CP,NYQ,Railroads
+CPA,CPA,NYQ,Airlines
+CPAY,CPAY,NYQ,Software - Infrastructure
+CPB,CPB,NMS,Packaged Foods
+CPBI,CPBI,NCM,Banks - Regional
+CPF,CPF,NYQ,Banks - Regional
+CPHC,CPHC,NGM,Resorts & Casinos
+CPHI,CPHI,,
+CPIX,CPIX,NMS,Drug Manufacturers - Specialty & Generic
+CPK,CPK,NYQ,Utilities - Regulated Gas
+CPNG,CPNG,NYQ,Internet Retail
+CPOP,CPOP,,
+CPRI,CPRI,NYQ,Luxury Goods
+CPRT,CPRT,NMS,Specialty Business Services
+CPRX,CPRX,NCM,Biotechnology
+CPS,CPS,NYQ,Auto Parts
+CPSH,CPSH,NCM,Electronic Components
+CPSS,CPSS,NGM,Credit Services
+CPT,CPT,NYQ,REIT - Residential
+CR,CR,NYQ,Specialty Industrial Machinery
+CRAC,CRAC,NGM,Shell Companies
+CRAI,CRAI,NMS,Consulting Services
+CRAN,CRAN,NGM,Shell Companies
+CRAQ,CRAQ,NGM,Shell Companies
+CRBG,CRBG,NYQ,Asset Management
+CRBP,CRBP,NCM,Biotechnology
+CRBU,CRBU,NMS,Biotechnology
+CRC,CRC,NYQ,Oil & Gas E&P
+CRCL,CRCL,NYQ,Capital Markets
+CRCT,CRCT,NMS,Computer Hardware
+CRD-A,CRD-A,NYQ,Insurance Brokers
+CRD-B,CRD-B,NYQ,Insurance Brokers
+CRDF,CRDF,NCM,Biotechnology
+CRDL,CRDL,NCM,Drug Manufacturers - Specialty & Generic
+CRDO,CRDO,NMS,Semiconductors
+CRE,CRE,,
+CREG,CREG,,
+CREX,CREX,,
+CRGO,CRGO,NCM,Integrated Freight & Logistics
+CRGY,CRGY,NYQ,Oil & Gas E&P
+CRH,CRH,NYQ,Building Materials
+CRI,CRI,NYQ,Apparel Retail
+CRIS,CRIS,,
+CRK,CRK,NYQ,Oil & Gas E&P
+CRL,CRL,NYQ,Diagnostics & Research
+CRM,CRM,NYQ,Software - Application
+CRMD,CRMD,NGM,Biotechnology
+CRML,CRML,NGM,Other Industrial Metals & Mining
+CRMT,CRMT,,
+CRNC,CRNC,NMS,Software - Application
+CRNT,CRNT,NMS,Communication Equipment
+CRNX,CRNX,NMS,Biotechnology
+CRON,CRON,NGM,Drug Manufacturers - Specialty & Generic
+CROX,CROX,NMS,Footwear & Accessories
+CRS,CRS,NYQ,Metal Fabrication
+CRSP,CRSP,NGM,Biotechnology
+CRSR,CRSR,NMS,Computer Hardware
+CRT,CRT,NYQ,Oil & Gas E&P
+CRUS,CRUS,NMS,Semiconductors
+CRVL,CRVL,NMS,Insurance Brokers
+CRVO,CRVO,,
+CRVS,CRVS,NGM,Biotechnology
+CRWD,CRWD,NMS,Software - Infrastructure
+CRWS,CRWS,,
+CRWV,CRWV,NMS,Software - Infrastructure
+CSAI,CSAI,,
+CSAN,CSAN,NYQ,Oil & Gas Refining & Marketing
+CSBR,CSBR,NCM,Biotechnology
+CSCO,CSCO,NMS,Communication Equipment
+CSGP,CSGP,NMS,Real Estate Services
+CSHR,CSHR,NMS,Capital Markets
+CSIQ,CSIQ,NMS,Solar
+CSL,CSL,NYQ,Building Products & Equipment
+CSPI,CSPI,NGM,Information Technology Services
+CSR,CSR,NYQ,REIT - Residential
+CSTE,CSTE,NMS,Building Products & Equipment
+CSTL,CSTL,NGM,Diagnostics & Research
+CSTM,CSTM,NYQ,Aluminum
+CSV,CSV,NYQ,Personal Services
+CSW,CSW,NYQ,Specialty Industrial Machinery
+CSWC,CSWC,NMS,Asset Management
+CSX,CSX,NMS,Railroads
+CTAA,CTAA,NGM,Shell Companies
+CTAS,CTAS,NMS,Specialty Business Services
+CTBI,CTBI,NMS,Banks - Regional
+CTEV,CTEV,NYQ,Health Information Services
+CTGO,CTGO,ASE,Gold
+CTKB,CTKB,NMS,Medical Devices
+CTM,CTM,ASE,Information Technology Services
+CTMX,CTMX,NMS,Biotechnology
+CTNM,CTNM,NMS,Biotechnology
+CTNT,CTNT,,
+CTO,CTO,NYQ,REIT - Diversified
+CTOR,CTOR,NCM,Drug Manufacturers - Specialty & Generic
+CTOS,CTOS,NYQ,Rental & Leasing Services
+CTRE,CTRE,NYQ,REIT - Healthcare Facilities
+CTRI,CTRI,NYQ,Utilities - Regulated Gas
+CTRM,CTRM,,
+CTRN,CTRN,NMS,Apparel Retail
+CTS,CTS,NYQ,Electronic Components
+CTSH,CTSH,NMS,Information Technology Services
+CTSO,CTSO,,
+CTVA,CTVA,NYQ,Agricultural Inputs
+CTW,CTW,NCM,Electronic Gaming & Multimedia
+CTXR,CTXR,,
+CUB,CUB,NGM,Shell Companies
+CUBE,CUBE,NYQ,REIT - Industrial
+CUBI,CUBI,NYQ,Banks - Regional
+CUE,CUE,NCM,Biotechnology
+CULP,CULP,,
+CUPR,CUPR,,
+CURB,CURB,NYQ,REIT - Retail
+CURI,CURI,NCM,Broadcasting
+CURR,CURR,NGM,Software - Application
+CURV,CURV,NYQ,Apparel Retail
+CURX,CURX,,
+CUZ,CUZ,NYQ,REIT - Office
+CV,CV,NCM,Medical Devices
+CVBF,CVBF,NMS,Banks - Regional
+CVCO,CVCO,NMS,Residential Construction
+CVE,CVE,NYQ,Oil & Gas Integrated
+CVEO,CVEO,NYQ,Lodging
+CVGI,CVGI,NMS,Auto Parts
+CVI,CVI,NYQ,Oil & Gas Refining & Marketing
+CVKD,CVKD,,
+CVLG,CVLG,NYQ,Trucking
+CVLT,CVLT,NMS,Software - Application
+CVM,CVM,,
+CVNA,CVNA,NYQ,Auto & Truck Dealerships
+CVR,CVR,,
+CVRX,CVRX,NMS,Medical Devices
+CVS,CVS,NYQ,Healthcare Plans
+CVSA,CVSA,NYQ,Education & Training Services
+CVU,CVU,ASE,Aerospace & Defense
+CVV,CVV,NCM,Specialty Industrial Machinery
+CVX,CVX,NYQ,Oil & Gas Integrated
+CW,CW,NYQ,Aerospace & Defense
+CWAN,CWAN,NYQ,Software - Application
+CWBC,CWBC,NCM,Banks - Regional
+CWCO,CWCO,NMS,Utilities - Regulated Water
+CWD,CWD,,
+CWEN,CWEN,NYQ,Utilities - Renewable
+CWH,CWH,NYQ,Auto & Truck Dealerships
+CWK,CWK,NYQ,Real Estate Services
+CWST,CWST,NMS,Waste Management
+CWT,CWT,NYQ,Utilities - Regulated Water
+CX,CX,NYQ,Building Materials
+CXAI,CXAI,,
+CXDO,CXDO,NCM,Telecom Services
+CXII,CXII,NGM,Shell Companies
+CXM,CXM,NYQ,Software - Application
+CXT,CXT,NYQ,Specialty Industrial Machinery
+CXW,CXW,NYQ,Security & Protection Services
+CYAB,CYAB,,
+CYCN,CYCN,,
+CYCU,CYCU,,
+CYD,CYD,NYQ,Auto Manufacturers
+CYH,CYH,NYQ,Medical Care Facilities
+CYN,CYN,,
+CYPH,CYPH,NCM,Asset Management
+CYRX,CYRX,NCM,Integrated Freight & Logistics
+CYTK,CYTK,NMS,Biotechnology
+CZFS,CZFS,NCM,Banks - Regional
+CZNC,CZNC,NCM,Banks - Regional
+CZR,CZR,NMS,Resorts & Casinos
+CZWI,CZWI,NGM,Banks - Regional
+D,D,NYQ,Utilities - Regulated Electric
+DAAQ,DAAQ,NGM,Shell Companies
+DAC,DAC,NYQ,Marine Shipping
+DAIC,DAIC,NGM,Information Technology Services
+DAIO,DAIO,,
+DAKT,DAKT,NMS,Electronic Components
+DAL,DAL,NYQ,Airlines
+DAN,DAN,NYQ,Auto Parts
+DAR,DAR,NYQ,Packaged Foods
+DARE,DARE,,
+DASH,DASH,NMS,Internet Retail
+DAVE,DAVE,NGM,Software - Application
+DB,DB,NYQ,Banks - Regional
+DBCA,DBCA,NGM,Shell Companies
+DBD,DBD,NYQ,Software - Application
+DBGI,DBGI,,
+DBI,DBI,NYQ,Footwear & Accessories
+DBRG,DBRG,NYQ,Asset Management
+DBX,DBX,NMS,Software - Infrastructure
+DC,DC,ASE,Gold
+DCBO,DCBO,NMS,Software - Application
+DCGO,DCGO,NCM,Medical Care Facilities
+DCH,DCH,NYQ,Auto Parts
+DCI,DCI,NYQ,Specialty Industrial Machinery
+DCO,DCO,NYQ,Aerospace & Defense
+DCOM,DCOM,NYQ,Banks - Regional
+DCOY,DCOY,,
+DCTH,DCTH,NCM,Medical Devices
+DCX,DCX,,
+DD,DD,NYQ,Specialty Chemicals
+DDC,DDC,,
+DDD,DDD,NYQ,Computer Hardware
+DDI,DDI,NMS,Electronic Gaming & Multimedia
+DDOG,DDOG,NMS,Software - Application
+DDS,DDS,NYQ,Department Stores
+DDT,DDT,NYQ,
+DE,DE,NYQ,Farm & Heavy Construction Machinery
+DEA,DEA,NYQ,REIT - Office
+DEC,DEC,NYQ,Oil & Gas Integrated
+DECK,DECK,NYQ,Footwear & Accessories
+DEFT,DEFT,NCM,Capital Markets
+DEI,DEI,NYQ,REIT - Office
+DELL,DELL,NYQ,Computer Hardware
+DEO,DEO,NYQ,Beverages - Wineries & Distilleries
+DERM,DERM,NCM,Drug Manufacturers - Specialty & Generic
+DETX,DETX,,
+DEVS,DEVS,,
+DFDV,DFDV,NCM,Asset Management
+DFH,DFH,NYQ,Residential Construction
+DFIN,DFIN,NYQ,Software - Application
+DFLI,DFLI,,
+DFNS,DFNS,,
+DFSC,DFSC,,
+DFTX,DFTX,NMS,Biotechnology
+DG,DG,NYQ,Discount Stores
+DGICA,DGICA,NMS,Insurance - Property & Casualty
+DGICB,DGICB,NMS,Insurance - Property & Casualty
+DGII,DGII,NMS,Communication Equipment
+DGNX,DGNX,,
+DGX,DGX,NYQ,Diagnostics & Research
+DGXX,DGXX,NCM,Utilities - Independent Power Producers
+DH,DH,NMS,Health Information Services
+DHC,DHC,NMS,REIT - Healthcare Facilities
+DHI,DHI,NYQ,Residential Construction
+DHR,DHR,NYQ,Diagnostics & Research
+DHT,DHT,NYQ,Oil & Gas Midstream
+DHX,DHX,NYQ,Software - Application
+DIBS,DIBS,NGM,Internet Content & Information
+DIN,DIN,NYQ,Restaurants
+DINO,DINO,NYQ,Oil & Gas Refining & Marketing
+DIOD,DIOD,NMS,Semiconductors
+DIS,DIS,NYQ,Entertainment
+DIT,DIT,ASE,Food Distribution
+DJCO,DJCO,NCM,Software - Application
+DJT,DJT,NGM,Internet Content & Information
+DK,DK,NYQ,Oil & Gas Refining & Marketing
+DKI,DKI,,
+DKNG,DKNG,NMS,Gambling
+DKS,DKS,NYQ,Specialty Retail
+DLB,DLB,NYQ,Specialty Business Services
+DLHC,DLHC,NCM,Specialty Business Services
+DLO,DLO,NMS,Software - Infrastructure
+DLPN,DLPN,,
+DLR,DLR,NYQ,REIT - Specialty
+DLTH,DLTH,NMS,Apparel Retail
+DLTR,DLTR,NMS,Discount Stores
+DLX,DLX,NYQ,Conglomerates
+DLXY,DLXY,,
+DMAA,DMAA,NGM,Shell Companies
+DMAC,DMAC,NCM,Biotechnology
+DMII,DMII,NGM,Shell Companies
+DMRA,DMRA,NCM,Biotechnology
+DMRC,DMRC,NMS,Software - Application
+DNA,DNA,NYQ,Biotechnology
+DNLI,DNLI,NMS,Biotechnology
+DNMX,DNMX,NGM,Shell Companies
+DNN,DNN,ASE,Uranium
+DNOW,DNOW,NYQ,Industrial Distribution
+DNTH,DNTH,NCM,Biotechnology
+DNUT,DNUT,NMS,Grocery Stores
+DOC,DOC,NYQ,REIT - Healthcare Facilities
+DOCN,DOCN,NYQ,Software - Infrastructure
+DOCS,DOCS,NYQ,Health Information Services
+DOCU,DOCU,NMS,Software - Application
+DOGZ,DOGZ,,
+DOLE,DOLE,NYQ,Farm Products
+DOMH,DOMH,NCM,Capital Markets
+DOMO,DOMO,NGM,Software - Application
+DOO,DOO,NMS,Recreational Vehicles
+DORM,DORM,NMS,Auto Parts
+DOUG,DOUG,NYQ,Real Estate Services
+DOV,DOV,NYQ,Specialty Industrial Machinery
+DOW,DOW,NYQ,Chemicals
+DOX,DOX,NMS,Software - Infrastructure
+DPRO,DPRO,NCM,Computer Hardware
+DPZ,DPZ,NMS,Restaurants
+DRCT,DRCT,,
+DRDB,DRDB,NGM,Shell Companies
+DRH,DRH,NMS,REIT - Hotel & Motel
+DRI,DRI,NYQ,Restaurants
+DRIO,DRIO,NCM,Health Information Services
+DRMA,DRMA,,
+DRS,DRS,NMS,Aerospace & Defense
+DRTS,DRTS,NCM,Biotechnology
+DRUG,DRUG,NCM,Biotechnology
+DRVN,DRVN,NMS,Auto & Truck Dealerships
+DSAC,DSAC,NGM,Shell Companies
+DSGN,DSGN,NMS,Biotechnology
+DSGR,DSGR,NMS,Industrial Distribution
+DSGX,DSGX,NMS,Software - Application
+DSP,DSP,NMS,Software - Application
+DSS,DSS,,
+DSWL,DSWL,NGM,Electronic Components
+DSX,DSX,NYQ,Marine Shipping
+DSY,DSY,,
+DT,DT,NYQ,Software - Application
+DTB,DTB,NYQ,
+DTCX,DTCX,NCM,Financial Data & Stock Exchanges
+DTE,DTE,NYQ,Utilities - Regulated Electric
+DTG,DTG,NYQ,
+DTI,DTI,NCM,Oil & Gas Equipment & Services
+DTIL,DTIL,NCM,Biotechnology
+DTK,DTK,NYQ,
+DTM,DTM,NYQ,Oil & Gas Midstream
+DTSQ,DTSQ,,
+DTSS,DTSS,,
+DTST,DTST,,
+DTW,DTW,NYQ,
+DUK,DUK,NYQ,Utilities - Regulated Electric
+DUKB,DUKB,NYQ,
+DUKR,DUKR,,
+DUO,DUO,,
+DUOL,DUOL,NMS,Software - Application
+DUOT,DUOT,NCM,Software - Application
+DV,DV,NYQ,Advertising Agencies
+DVA,DVA,NYQ,Medical Care Facilities
+DVLT,DVLT,NCM,Software - Infrastructure
+DVN,DVN,NYQ,Oil & Gas E&P
+DWSN,DWSN,NMS,Oil & Gas Equipment & Services
+DWTX,DWTX,NCM,Biotechnology
+DX,DX,NYQ,REIT - Mortgage
+DXC,DXC,NYQ,Information Technology Services
+DXCM,DXCM,NMS,Medical Devices
+DXLG,DXLG,,
+DXPE,DXPE,NMS,Industrial Distribution
+DXST,DXST,,
+DXYZ,DXYZ,NYQ,Asset Management
+DY,DY,NYQ,Engineering & Construction
+DYAI,DYAI,,
+DYN,DYN,NMS,Biotechnology
+DYNC,DYNC,NGM,Shell Companies
+DYOR,DYOR,NGM,Shell Companies
+E,E,NYQ,Oil & Gas Integrated
+EA,EA,NMS,Electronic Gaming & Multimedia
+EAF,EAF,NYQ,Electrical Equipment & Parts
+EARN,EARN,NYQ,Asset Management
+EAT,EAT,NYQ,Restaurants
+EBAY,EBAY,NMS,Internet Retail
+EBC,EBC,NMS,Banks - Regional
+EBF,EBF,NYQ,Business Equipment & Supplies
+EBMT,EBMT,NGM,Banks - Regional
+EBON,EBON,,
+EBS,EBS,NYQ,Drug Manufacturers - Specialty & Generic
+ECAT,ECAT,NYQ,Asset Management
+ECBK,ECBK,NCM,Banks - Regional
+ECC,ECC,NYQ,Asset Management
+ECG,ECG,NYQ,Engineering & Construction
+ECL,ECL,NYQ,Specialty Chemicals
+ECO,ECO,NYQ,Marine Shipping
+ECOR,ECOR,NCM,Medical Devices
+ECPG,ECPG,NMS,Credit Services
+ECVT,ECVT,NYQ,Specialty Chemicals
+ECX,ECX,NGM,Auto Parts
+ED,ED,NYQ,Utilities - Regulated Electric
+EDBL,EDBL,,
+EDHL,EDHL,,
+EDIT,EDIT,NMS,Biotechnology
+EDRY,EDRY,NCM,Marine Shipping
+EDSA,EDSA,NCM,Biotechnology
+EDTK,EDTK,,
+EDU,EDU,NYQ,Education & Training Services
+EDUC,EDUC,,
+EE,EE,NYQ,Oil & Gas Midstream
+EEFT,EEFT,NMS,Software - Infrastructure
+EEIQ,EEIQ,,
+EEX,EEX,NYQ,Advertising Agencies
+EFC,EFC,NYQ,REIT - Mortgage
+EFOI,EFOI,,
+EFOR,EFOR,NYQ,Information Technology Services
+EFSC,EFSC,NMS,Banks - Regional
+EFSI,EFSI,NCM,Banks - Regional
+EFT,EFT,NYQ,Asset Management
+EFTY,EFTY,NCM,Consulting Services
+EFX,EFX,NYQ,Consulting Services
+EFXT,EFXT,NYQ,Oil & Gas Equipment & Services
+EG,EG,NYQ,Insurance - Reinsurance
+EGAN,EGAN,NCM,Software - Application
+EGBN,EGBN,NCM,Banks - Regional
+EGG,EGG,ASE,Consulting Services
+EGHA,EGHA,NGM,Shell Companies
+EGHT,EGHT,NMS,Software - Application
+EGO,EGO,NYQ,Gold
+EGP,EGP,NYQ,REIT - Industrial
+EGY,EGY,NYQ,Oil & Gas E&P
+EH,EH,NGM,Aerospace & Defense
+EHC,EHC,NYQ,Medical Care Facilities
+EHGO,EHGO,,
+EHLD,EHLD,,
+EHTH,EHTH,NMS,Insurance Brokers
+EIC,EIC,NYQ,Asset Management
+EIG,EIG,NYQ,Insurance - Specialty
+EIKN,EIKN,NMS,Biotechnology
+EIX,EIX,NYQ,Utilities - Regulated Electric
+EJH,EJH,,
+EL,EL,NYQ,Household & Personal Products
+ELA,ELA,ASE,Luxury Goods
+ELAB,ELAB,,
+ELAN,ELAN,NYQ,Drug Manufacturers - Specialty & Generic
+ELBM,ELBM,NCM,Other Industrial Metals & Mining
+ELDN,ELDN,NCM,Biotechnology
+ELE,ELE,NCM,Other Precious Metals & Mining
+ELF,ELF,NYQ,Household & Personal Products
+ELLO,ELLO,ASE,Utilities - Renewable
+ELMD,ELMD,ASE,Medical Devices
+ELME,ELME,NYQ,REIT - Residential
+ELMT,ELMT,NCM,Aerospace & Defense
+ELOG,ELOG,,
+ELOX,ELOX,,
+ELPW,ELPW,,
+ELS,ELS,NYQ,REIT - Residential
+ELSE,ELSE,,
+ELTK,ELTK,NCM,Electronic Components
+ELTX,ELTX,NCM,Biotechnology
+ELUT,ELUT,,
+ELV,ELV,NYQ,Healthcare Plans
+ELVA,ELVA,NCM,Electrical Equipment & Parts
+ELVN,ELVN,NMS,Biotechnology
+ELVR,ELVR,NCM,Other Industrial Metals & Mining
+ELWT,ELWT,,
+EMA,EMA,NYQ,Utilities - Regulated Electric
+EMAT,EMAT,NGM,Other Industrial Metals & Mining
+EMBC,EMBC,NMS,Medical Instruments & Supplies
+EMBJ,EMBJ,NYQ,Aerospace & Defense
+EME,EME,NYQ,Engineering & Construction
+EMIS,EMIS,NGM,Shell Companies
+EML,EML,NGM,Tools & Accessories
+EMN,EMN,NYQ,Specialty Chemicals
+EMPD,EMPD,NMS,Auto Manufacturers
+EMPG,EMPG,NCM,Medical Distribution
+EMR,EMR,NYQ,Specialty Industrial Machinery
+ENB,ENB,NYQ,Oil & Gas Midstream
+ENGN,ENGN,NCM,Biotechnology
+ENGS,ENGS,NCM,Waste Management
+ENHA,ENHA,NYQ,Packaged Foods
+ENLT,ENLT,NMS,Utilities - Renewable
+ENLV,ENLV,NCM,Biotechnology
+ENOV,ENOV,NYQ,Medical Devices
+ENPH,ENPH,NGM,Solar
+ENR,ENR,NYQ,Electrical Equipment & Parts
+ENS,ENS,NYQ,Electrical Equipment & Parts
+ENSC,ENSC,,
+ENSG,ENSG,NMS,Medical Care Facilities
+ENTA,ENTA,NMS,Biotechnology
+ENTG,ENTG,NMS,Semiconductor Equipment & Materials
+ENTX,ENTX,NCM,Biotechnology
+ENVA,ENVA,NYQ,Credit Services
+ENVB,ENVB,,
+ENVX,ENVX,NMS,Electrical Equipment & Parts
+EOG,EOG,NYQ,Oil & Gas E&P
+EOLS,EOLS,NGM,Drug Manufacturers - Specialty & Generic
+EONR,EONR,,
+EOSE,EOSE,NCM,Electrical Equipment & Parts
+EOT,EOT,NYQ,Asset Management
+EP,EP,ASE,Oil & Gas E&P
+EPAC,EPAC,NYQ,Specialty Industrial Machinery
+EPAM,EPAM,NYQ,Information Technology Services
+EPC,EPC,NYQ,Household & Personal Products
+EPD,EPD,NYQ,Oil & Gas Midstream
+EPM,EPM,ASE,Oil & Gas E&P
+EPOW,EPOW,,
+EPR,EPR,NYQ,REIT - Specialty
+EPRT,EPRT,NYQ,REIT - Retail
+EPRX,EPRX,NCM,Biotechnology
+EPSM,EPSM,,
+EPSN,EPSN,NGM,Oil & Gas E&P
+EQ,EQ,NCM,Biotechnology
+EQBK,EQBK,NYQ,Banks - Regional
+EQH,EQH,NYQ,Asset Management
+EQIX,EQIX,NMS,REIT - Specialty
+EQNR,EQNR,NYQ,Oil & Gas Integrated
+EQPT,EQPT,NMS,Rental & Leasing Services
+EQR,EQR,NYQ,REIT - Residential
+EQS,EQS,,
+EQT,EQT,NYQ,Oil & Gas E&P
+EQX,EQX,ASE,Gold
+ERAS,ERAS,NMS,Biotechnology
+ERIE,ERIE,NMS,Insurance Brokers
+ERII,ERII,NMS,Pollution & Treatment Controls
+ERNA,ERNA,,
+ERO,ERO,NYQ,Copper
+EROC,EROC,NYQ,Specialty Industrial Machinery
+EROK,EROK,NYQ,Oil & Gas Equipment & Services
+ES,ES,NYQ,Utilities - Regulated Electric
+ESAB,ESAB,NYQ,Metal Fabrication
+ESCA,ESCA,NGM,Leisure
+ESE,ESE,NYQ,Scientific & Technical Instruments
+ESEA,ESEA,NCM,Marine Shipping
+ESI,ESI,NYQ,Specialty Chemicals
+ESLA,ESLA,,
+ESLT,ESLT,NMS,Aerospace & Defense
+ESNT,ESNT,NYQ,Insurance - Specialty
+ESOA,ESOA,NCM,Engineering & Construction
+ESP,ESP,ASE,Electrical Equipment & Parts
+ESPR,ESPR,NGM,Drug Manufacturers - Specialty & Generic
+ESQ,ESQ,NCM,Banks - Regional
+ESRT,ESRT,NYQ,REIT - Diversified
+ESS,ESS,NYQ,REIT - Residential
+ESTA,ESTA,NCM,Medical Devices
+ESTC,ESTC,NYQ,Software - Application
+ETD,ETD,NYQ,"Furnishings, Fixtures & Appliances"
+ETN,ETN,NYQ,Specialty Industrial Machinery
+ETO,ETO,NYQ,Asset Management
+ETON,ETON,NGM,Drug Manufacturers - Specialty & Generic
+ETOR,ETOR,NMS,Capital Markets
+ETR,ETR,NYQ,Utilities - Regulated Electric
+ETS,ETS,,
+ETSS,ETSS,NYQ,Shell Companies
+ETSY,ETSY,NYQ,Internet Retail
+ETX,ETX,NYQ,Asset Management
+EU,EU,NCM,Uranium
+EUDA,EUDA,,
+EURK,EURK,NCM,Shell Companies
+EVAC,EVAC,NYQ,Shell Companies
+EVC,EVC,NYQ,Advertising Agencies
+EVCM,EVCM,NMS,Software - Application
+EVER,EVER,NGM,Internet Content & Information
+EVEX,EVEX,NYQ,Aerospace & Defense
+EVF,EVF,NYQ,Asset Management
+EVGN,EVGN,,
+EVGO,EVGO,NMS,Specialty Retail
+EVH,EVH,NYQ,Health Information Services
+EVI,EVI,ASE,Industrial Distribution
+EVLV,EVLV,NCM,Security & Protection Services
+EVMN,EVMN,NYQ,Biotechnology
+EVN,EVN,NYQ,Asset Management
+EVOX,EVOX,NGM,Shell Companies
+EVR,EVR,NYQ,Capital Markets
+EVRG,EVRG,NMS,Utilities - Regulated Electric
+EVTC,EVTC,NYQ,Software - Infrastructure
+EVTL,EVTL,NYQ,Aerospace & Defense
+EVTV,EVTV,,
+EW,EW,NYQ,Medical Devices
+EWBC,EWBC,NMS,Banks - Regional
+EWTX,EWTX,NMS,Biotechnology
+EXC,EXC,NMS,Utilities - Regulated Electric
+EXE,EXE,NMS,Oil & Gas E&P
+EXEL,EXEL,NMS,Biotechnology
+EXFY,EXFY,NMS,Software - Application
+EXK,EXK,NYQ,Silver
+EXLS,EXLS,NMS,Information Technology Services
+EXOD,EXOD,ASE,Software - Infrastructure
+EXOZ,EXOZ,NCM,Biotechnology
+EXP,EXP,NYQ,Building Materials
+EXPD,EXPD,NYQ,Integrated Freight & Logistics
+EXPE,EXPE,NMS,Travel Services
+EXPO,EXPO,NMS,Engineering & Construction
+EXR,EXR,NYQ,REIT - Industrial
+EXTR,EXTR,NMS,Communication Equipment
+EXYN,EXYN,NCM,Software - Infrastructure
+EYE,EYE,NMS,Specialty Retail
+EYPT,EYPT,NGM,Biotechnology
+EZGO,EZGO,,
+EZPW,EZPW,NMS,Credit Services
+EZRA,EZRA,,
+F,F,NYQ,Auto Manufacturers
+FA,FA,NMS,Specialty Business Services
+FABC,FABC,,
+FAC,FAC,NCM,Electrical Equipment & Parts
+FACT,FACT,NGM,
+FAF,FAF,NYQ,Insurance - Specialty
+FAMI,FAMI,,
+FANG,FANG,NMS,Oil & Gas E&P
+FAST,FAST,NMS,Industrial Distribution
+FATE,FATE,NGM,Biotechnology
+FATN,FATN,NCM,Software - Infrastructure
+FBGL,FBGL,,
+FBIN,FBIN,NYQ,Building Products & Equipment
+FBIO,FBIO,NCM,Biotechnology
+FBIZ,FBIZ,NMS,Banks - Regional
+FBK,FBK,NYQ,Banks - Regional
+FBLA,FBLA,NCM,Banks - Regional
+FBLG,FBLG,,
+FBNC,FBNC,NMS,Banks - Regional
+FBP,FBP,NYQ,Banks - Regional
+FBRT,FBRT,NYQ,REIT - Mortgage
+FBRX,FBRX,NCM,Biotechnology
+FBYD,FBYD,NGM,Conglomerates
+FC,FC,NYQ,Education & Training Services
+FCAP,FCAP,NCM,Banks - Regional
+FCBC,FCBC,NMS,Banks - Regional
+FCBM,FCBM,NYQ,Banks - Regional
+FCCO,FCCO,NCM,Banks - Regional
+FCEL,FCEL,NGM,Electrical Equipment & Parts
+FCF,FCF,NYQ,Banks - Regional
+FCFS,FCFS,NMS,Credit Services
+FCHL,FCHL,,
+FCN,FCN,NYQ,Consulting Services
+FCNCA,FCNCA,NMS,Banks - Regional
+FCPT,FCPT,NYQ,REIT - Retail
+FCRS,FCRS,NYQ,Shell Companies
+FCUV,FCUV,,
+FCX,FCX,NYQ,Copper
+FDBC,FDBC,NGM,Banks - Regional
+FDMT,FDMT,NMS,Biotechnology
+FDP,FDP,NYQ,Farm Products
+FDS,FDS,NYQ,Financial Data & Stock Exchanges
+FDSB,FDSB,NCM,Banks - Regional
+FDX,FDX,NYQ,Integrated Freight & Logistics
+FDXF,FDXF,NYQ,Integrated Freight & Logistics
+FE,FE,NYQ,Utilities - Regulated Electric
+FEAM,FEAM,NMS,Specialty Chemicals
+FEBO,FEBO,,
+FEED,FEED,,
+FEIM,FEIM,NGM,Communication Equipment
+FELE,FELE,NMS,Specialty Industrial Machinery
+FEMY,FEMY,,
+FENC,FENC,NCM,Biotechnology
+FER,FER,NMS,Engineering & Construction
+FERA,FERA,NGM,Shell Companies
+FERG,FERG,NYQ,Industrial Distribution
+FET,FET,NYQ,Oil & Gas Equipment & Services
+FF,FF,NYQ,Specialty Chemicals
+FFAI,FFAI,NCM,Auto Manufacturers
+FFBC,FFBC,NMS,Banks - Regional
+FFIN,FFIN,NMS,Banks - Regional
+FFIV,FFIV,NMS,Software - Infrastructure
+FG,FG,NYQ,Insurance - Life
+FGBI,FGBI,NGM,Banks - Regional
+FGI,FGI,,
+FGII,FGII,NGM,Shell Companies
+FGL,FGL,,
+FGMC,FGMC,NGM,Shell Companies
+FGNX,FGNX,,
+FHB,FHB,NMS,Banks - Regional
+FHI,FHI,NYQ,Asset Management
+FHN,FHN,NYQ,Banks - Regional
+FHTX,FHTX,NGM,Biotechnology
+FIBK,FIBK,NMS,Banks - Regional
+FICO,FICO,NYQ,Software - Application
+FIEE,FIEE,,
+FIG,FIG,NYQ,Software - Application
+FIGR,FIGR,NMS,Capital Markets
+FIGS,FIGS,NYQ,Apparel Manufacturing
+FIGX,FIGX,NGM,Shell Companies
+FINS,FINS,NYQ,Asset Management
+FINW,FINW,NGM,Banks - Regional
+FIP,FIP,NMS,Conglomerates
+FIS,FIS,NYQ,Information Technology Services
+FISI,FISI,NMS,Banks - Regional
+FISN,FISN,NGM,Specialty Industrial Machinery
+FISV,FISV,NMS,
+FITB,FITB,NYQ,Banks - Regional
+FIVE,FIVE,NMS,Specialty Retail
+FIVN,FIVN,NGM,Software - Infrastructure
+FIX,FIX,NYQ,Engineering & Construction
+FIZZ,FIZZ,NMS,Beverages - Non-Alcoholic
+FJET,FJET,ASE,Aerospace & Defense
+FKWL,FKWL,,
+FLD,FLD,,
+FLEX,FLEX,NMS,Electronic Components
+FLG,FLG,NYQ,Banks - Regional
+FLGT,FLGT,NGM,Diagnostics & Research
+FLL,FLL,NCM,Resorts & Casinos
+FLNA,FLNA,NCM,Biotechnology
+FLNC,FLNC,NMS,Utilities - Renewable
+FLNG,FLNG,NYQ,Oil & Gas Midstream
+FLNT,FLNT,NCM,Advertising Agencies
+FLO,FLO,NYQ,Packaged Foods
+FLOC,FLOC,NYQ,Oil & Gas Equipment & Services
+FLR,FLR,NYQ,Engineering & Construction
+FLS,FLS,NYQ,Specialty Industrial Machinery
+FLUT,FLUT,NYQ,Gambling
+FLUX,FLUX,,
+FLWS,FLWS,NMS,Specialty Retail
+FLXS,FLXS,NMS,"Furnishings, Fixtures & Appliances"
+FLY,FLY,NGM,Aerospace & Defense
+FLYE,FLYE,,
+FLYW,FLYW,NMS,Software - Infrastructure
+FLYX,FLYX,ASE,Airlines
+FLZH,FLZH,,
+FMAC,FMAC,NGM,Shell Companies
+FMAO,FMAO,NCM,Banks - Regional
+FMBH,FMBH,NGM,Banks - Regional
+FMC,FMC,NYQ,Agricultural Inputs
+FMFC,FMFC,,
+FMNB,FMNB,NCM,Banks - Regional
+FMST,FMST,,
+FMX,FMX,NYQ,Beverages - Brewers
+FN,FN,NYQ,Electronic Components
+FNB,FNB,NYQ,Banks - Regional
+FND,FND,NYQ,Home Improvement Retail
+FNF,FNF,NYQ,Insurance - Specialty
+FNGR,FNGR,,
+FNKO,FNKO,NMS,Leisure
+FNLC,FNLC,NMS,Banks - Regional
+FNRN,FNRN,NCM,Banks - Regional
+FNUC,FNUC,NCM,Other Industrial Metals & Mining
+FNV,FNV,NYQ,Gold
+FNWB,FNWB,NGM,Banks - Regional
+FNWD,FNWD,NCM,Banks - Regional
+FOA,FOA,NYQ,Credit Services
+FOFO,FOFO,,
+FOR,FOR,NYQ,Real Estate - Development
+FORM,FORM,NMS,Semiconductor Equipment & Materials
+FORR,FORR,NMS,Consulting Services
+FOSL,FOSL,NMS,Footwear & Accessories
+FOUR,FOUR,NYQ,Software - Infrastructure
+FOX,FOX,NMS,Entertainment
+FOXA,FOXA,NMS,Entertainment
+FOXF,FOXF,NMS,Auto Parts
+FOXX,FOXX,,
+FPH,FPH,NYQ,Real Estate - Development
+FPI,FPI,NYQ,REIT - Specialty
+FPS,FPS,NYQ,Electrical Equipment & Parts
+FR,FR,NYQ,REIT - Industrial
+FRAF,FRAF,NCM,Banks - Regional
+FRBA,FRBA,NGM,Banks - Regional
+FRBT,FRBT,NMS,Banks - Diversified
+FRD,FRD,NMS,Steel
+FRGT,FRGT,,
+FRHC,FRHC,NCM,Financial Conglomerates
+FRME,FRME,NMS,Banks - Regional
+FRMI,FRMI,NMS,REIT - Specialty
+FRMM,FRMM,NCM,Software - Application
+FRO,FRO,NYQ,Oil & Gas Midstream
+FROG,FROG,NMS,Software - Application
+FRPH,FRPH,NMS,Real Estate Services
+FRPT,FRPT,NGM,Packaged Foods
+FRSH,FRSH,NMS,Software - Application
+FRST,FRST,NGM,Banks - Regional
+FRT,FRT,NYQ,REIT - Retail
+FRTT,FRTT,NCM,Internet Retail
+FRVO,FRVO,NMS,Utilities - Renewable
+FSBC,FSBC,NMS,Banks - Regional
+FSBW,FSBW,NCM,Banks - Regional
+FSCO,FSCO,NYQ,Asset Management
+FSEA,FSEA,NCM,Banks - Regional
+FSHP,FSHP,NGM,Shell Companies
+FSI,FSI,ASE,Specialty Chemicals
+FSK,FSK,NYQ,Asset Management
+FSLR,FSLR,NMS,Solar
+FSLY,FSLY,NMS,Software - Application
+FSM,FSM,NYQ,Gold
+FSP,FSP,ASE,REIT - Office
+FSS,FSS,NYQ,Farm & Heavy Construction Machinery
+FSTR,FSTR,NMS,Railroads
+FSUN,FSUN,NMS,Banks - Regional
+FSV,FSV,NMS,Real Estate Services
+FT,FT,NYQ,Asset Management
+FTAI,FTAI,NMS,Aerospace & Defense
+FTCI,FTCI,NCM,Solar
+FTDR,FTDR,NMS,Personal Services
+FTEK,FTEK,,
+FTF,FTF,ASE,Asset Management
+FTFT,FTFT,,
+FTH,FTH,NCM,Biotechnology
+FTHM,FTHM,,
+FTI,FTI,NYQ,Oil & Gas Equipment & Services
+FTK,FTK,NYQ,Oil & Gas Equipment & Services
+FTLF,FTLF,NCM,Packaged Foods
+FTNT,FTNT,NMS,Software - Infrastructure
+FTRE,FTRE,NMS,Biotechnology
+FTRK,FTRK,,
+FTS,FTS,NYQ,Utilities - Regulated Electric
+FTV,FTV,NYQ,Scientific & Technical Instruments
+FTW,FTW,NYQ,Oil & Gas E&P
+FUBO,FUBO,NYQ,Broadcasting
+FUFU,FUFU,NCM,Capital Markets
+FUL,FUL,NYQ,Specialty Chemicals
+FULC,FULC,NGM,Biotechnology
+FULT,FULT,NMS,Banks - Regional
+FUN,FUN,NYQ,Leisure
+FUNC,FUNC,NMS,Banks - Regional
+FURY,FURY,ASE,Other Industrial Metals & Mining
+FUSB,FUSB,NCM,Banks - Regional
+FUSE,FUSE,,
+FVAV,FVAV,NGM,Shell Companies
+FVCB,FVCB,NCM,Banks - Regional
+FVN,FVN,NCM,Shell Companies
+FVR,FVR,NYQ,REIT - Diversified
+FVRR,FVRR,NYQ,Internet Content & Information
+FWDI,FWDI,NCM,Footwear & Accessories
+FWONA,FWONA,NMS,Entertainment
+FWONK,FWONK,NMS,Entertainment
+FWRD,FWRD,NMS,Integrated Freight & Logistics
+FWRG,FWRG,NMS,Restaurants
+FXNC,FXNC,NCM,Banks - Regional
+G,G,NYQ,Information Technology Services
+GAB,GAB,NYQ,Asset Management
+GABC,GABC,NMS,Banks - Regional
+GAIA,GAIA,NGM,Entertainment
+GAIN,GAIN,NMS,Asset Management
+GALT,GALT,NCM,Biotechnology
+GAM,GAM,NYQ,Asset Management
+GAMB,GAMB,NGM,Gambling
+GAME,GAME,,
+GANX,GANX,NGM,Biotechnology
+GAP,GAP,NYQ,Apparel Retail
+GASS,GASS,NMS,Marine Shipping
+GATX,GATX,NYQ,Rental & Leasing Services
+GAU,GAU,ASE,Gold
+GAUZ,GAUZ,,
+GBCI,GBCI,NYQ,Banks - Regional
+GBFH,GBFH,NCM,Banks - Regional
+GBLI,GBLI,NMS,Insurance - Property & Casualty
+GBR,GBR,,
+GBTG,GBTG,NYQ,Travel Services
+GBX,GBX,NYQ,Railroads
+GCBC,GCBC,NCM,Banks - Regional
+GCDT,GCDT,,
+GCL,GCL,NMS,Electronic Gaming & Multimedia
+GCMG,GCMG,NGM,Asset Management
+GCO,GCO,NYQ,Apparel Retail
+GCT,GCT,NGM,Software - Infrastructure
+GCTK,GCTK,,
+GCTS,GCTS,NYQ,Semiconductors
+GD,GD,NYQ,Aerospace & Defense
+GDC,GDC,,
+GDDY,GDDY,NYQ,Software - Infrastructure
+GDEV,GDEV,NGM,Electronic Gaming & Multimedia
+GDHG,GDHG,,
+GDOT,GDOT,NYQ,Credit Services
+GDRX,GDRX,NMS,Health Information Services
+GDTC,GDTC,,
+GDV,GDV,NYQ,Asset Management
+GDYN,GDYN,NCM,Information Technology Services
+GE,GE,NYQ,Aerospace & Defense
+GEF,GEF,NYQ,Packaging & Containers
+GEF-B,GEF-B,NYQ,Packaging & Containers
+GEG,GEG,NMS,Asset Management
+GEHC,GEHC,NMS,Medical Devices
+GELS,GELS,,
+GEMI,GEMI,NMS,Capital Markets
+GEN,GEN,NMS,Software - Infrastructure
+GENB,GENB,NMS,Biotechnology
+GENC,GENC,ASE,Farm & Heavy Construction Machinery
+GENI,GENI,NYQ,Internet Content & Information
+GENK,GENK,NGM,Restaurants
+GEO,GEO,NYQ,Security & Protection Services
+GEOS,GEOS,NMS,Oil & Gas Equipment & Services
+GERN,GERN,NMS,Biotechnology
+GETY,GETY,NYQ,Internet Content & Information
+GEV,GEV,NYQ,Specialty Industrial Machinery
+GEVO,GEVO,NCM,Specialty Chemicals
+GFAI,GFAI,,
+GFF,GFF,NYQ,Building Products & Equipment
+GFL,GFL,NYQ,Waste Management
+GFR,GFR,NYQ,Oil & Gas E&P
+GFS,GFS,NMS,Semiconductors
+GGB,GGB,NYQ,Steel
+GGG,GGG,NYQ,Specialty Industrial Machinery
+GGN,GGN,ASE,Asset Management
+GGR,GGR,NCM,Auto Manufacturers
+GGRP,GGRP,,
+GGT,GGT,NYQ,Asset Management
+GGZ,GGZ,NYQ,Asset Management
+GH,GH,NMS,Diagnostics & Research
+GHC,GHC,NYQ,Education & Training Services
+GHM,GHM,NYQ,Specialty Industrial Machinery
+GHRS,GHRS,NGM,Biotechnology
+GIB,GIB,NYQ,Information Technology Services
+GIBO,GIBO,NCM,Internet Content & Information
+GIC,GIC,NYQ,Industrial Distribution
+GIFT,GIFT,,
+GIGM,GIGM,,
+GIII,GIII,NMS,Apparel Manufacturing
+GIL,GIL,NYQ,Apparel Manufacturing
+GILD,GILD,NMS,Drug Manufacturers - General
+GILT,GILT,NMS,Communication Equipment
+GIPR,GIPR,,
+GIS,GIS,NYQ,Packaged Foods
+GITS,GITS,,
+GIW,GIW,NGM,Shell Companies
+GIX,GIX,NGM,Shell Companies
+GJH,GJH,NYQ,
+GJO,GJO,NYQ,
+GJP,GJP,NYQ,
+GJR,GJR,NYQ,
+GJS,GJS,NYQ,
+GJT,GJT,NYQ,
+GKOS,GKOS,NYQ,Medical Devices
+GL,GL,NYQ,Insurance - Life
+GLBE,GLBE,NMS,Internet Retail
+GLBS,GLBS,NCM,Marine Shipping
+GLDG,GLDG,ASE,Gold
+GLE,GLE,,
+GLED,GLED,NYQ,Shell Companies
+GLIBA,GLIBA,NMS,Telecom Services
+GLIBK,GLIBK,NMS,Telecom Services
+GLMD,GLMD,,
+GLND,GLND,NGM,Oil & Gas E&P
+GLNG,GLNG,NMS,Oil & Gas Midstream
+GLOB,GLOB,NYQ,Information Technology Services
+GLOO,GLOO,NMS,Software - Application
+GLPI,GLPI,NMS,REIT - Specialty
+GLRE,GLRE,NMS,Insurance - Reinsurance
+GLSI,GLSI,NCM,Biotechnology
+GLU,GLU,ASE,Asset Management
+GLUE,GLUE,NMS,Biotechnology
+GLW,GLW,NYQ,Electronic Components
+GLXG,GLXG,,
+GLXY,GLXY,NMS,Capital Markets
+GM,GM,NYQ,Auto Manufacturers
+GME,GME,NYQ,Specialty Retail
+GMED,GMED,NYQ,Medical Devices
+GMEX,GMEX,,
+GMHS,GMHS,NCM,Electronic Gaming & Multimedia
+GMM,GMM,,
+GMRS,GMRS,NYQ,Medical Care Facilities
+GMTL,GMTL,ASE,Other Precious Metals & Mining
+GNE,GNE,NYQ,Utilities - Regulated Electric
+GNK,GNK,NYQ,Marine Shipping
+GNL,GNL,NYQ,REIT - Diversified
+GNLN,GNLN,,
+GNLX,GNLX,NCM,Biotechnology
+GNPX,GNPX,,
+GNRC,GNRC,NYQ,Specialty Industrial Machinery
+GNS,GNS,,
+GNSS,GNSS,NCM,Scientific & Technical Instruments
+GNT,GNT,NYQ,Asset Management
+GNTX,GNTX,NMS,Auto Parts
+GNW,GNW,NYQ,Insurance - Life
+GO,GO,NMS,Grocery Stores
+GOAI,GOAI,NCM,Software - Infrastructure
+GOGO,GOGO,NMS,Telecom Services
+GOLD,GOLD,NYQ,Capital Markets
+GOLF,GOLF,NYQ,Leisure
+GOOD,GOOD,NMS,REIT - Diversified
+GOOG,GOOG,NMS,Internet Content & Information
+GOOGL,GOOGL,NMS,Internet Content & Information
+GOOS,GOOS,NYQ,Apparel Manufacturing
+GORO,GORO,ASE,Other Precious Metals & Mining
+GOSS,GOSS,NMS,Biotechnology
+GOVX,GOVX,,
+GP,GP,,
+GPAC,GPAC,NGM,Shell Companies
+GPAT,GPAT,NGM,Shell Companies
+GPC,GPC,NYQ,Auto Parts
+GPGI,GPGI,NYQ,Metal Fabrication
+GPI,GPI,NYQ,Auto & Truck Dealerships
+GPK,GPK,NYQ,Packaging & Containers
+GPMT,GPMT,NYQ,REIT - Mortgage
+GPN,GPN,NYQ,Specialty Business Services
+GPOR,GPOR,NYQ,Oil & Gas E&P
+GPRE,GPRE,NMS,Chemicals
+GPRK,GPRK,NYQ,Oil & Gas E&P
+GPRO,GPRO,NMS,Consumer Electronics
+GPUS,GPUS,ASE,Aerospace & Defense
+GRAB,GRAB,NMS,Software - Application
+GRAF,GRAF,ASE,Shell Companies
+GRAL,GRAL,NMS,Diagnostics & Research
+GRAN,GRAN,,
+GRBK,GRBK,NYQ,Residential Construction
+GRC,GRC,NYQ,Specialty Industrial Machinery
+GRCE,GRCE,,
+GRDN,GRDN,NYQ,Medical Care Facilities
+GRDX,GRDX,,
+GREE,GREE,,
+GRI,GRI,,
+GRML,GRML,,
+GRMN,GRMN,NYQ,Scientific & Technical Instruments
+GRND,GRND,NYQ,Software - Application
+GRNQ,GRNQ,,
+GRNT,GRNT,NYQ,Oil & Gas E&P
+GRO,GRO,ASE,Other Industrial Metals & Mining
+GROV,GROV,NYQ,Household & Personal Products
+GROW,GROW,,
+GROY,GROY,ASE,Gold
+GRPN,GRPN,NMS,Internet Content & Information
+GRRR,GRRR,NCM,Software - Infrastructure
+GRWG,GRWG,NCM,Specialty Retail
+GRX,GRX,NYQ,Asset Management
+GS,GS,NYQ,Capital Markets
+GSAT,GSAT,NMS,Telecom Services
+GSBC,GSBC,NMS,Banks - Regional
+GSBD,GSBD,NYQ,Asset Management
+GSHD,GSHD,NMS,Insurance Brokers
+GSHR,GSHR,NGM,Shell Companies
+GSIT,GSIT,NMS,Semiconductors
+GSIW,GSIW,,
+GSL,GSL,NYQ,Marine Shipping
+GSM,GSM,NCM,Other Industrial Metals & Mining
+GSRF,GSRF,NGM,Shell Companies
+GSUN,GSUN,,
+GT,GT,NMS,Auto Parts
+GTBP,GTBP,,
+GTE,GTE,ASE,Oil & Gas E&P
+GTEC,GTEC,,
+GTEN,GTEN,NGM,Shell Companies
+GTERA,GTERA,NGM,Shell Companies
+GTES,GTES,NYQ,Specialty Industrial Machinery
+GTIM,GTIM,,
+GTLB,GTLB,NMS,Software - Infrastructure
+GTLS,GTLS,NYQ,Specialty Industrial Machinery
+GTM,GTM,NMS,Software - Application
+GTN,GTN,NYQ,Broadcasting
+GTN-A,GTN-A,NYQ,Broadcasting
+GTX,GTX,NMS,Auto Parts
+GTY,GTY,NYQ,REIT - Retail
+GURE,GURE,,
+GUT,GUT,NYQ,Asset Management
+GUTS,GUTS,NGM,Biotechnology
+GV,GV,,
+GVA,GVA,NYQ,Engineering & Construction
+GVH,GVH,,
+GWAV,GWAV,,
+GWH,GWH,,
+GWRE,GWRE,NYQ,Software - Application
+GWRS,GWRS,NGM,Utilities - Regulated Water
+GWW,GWW,NYQ,Industrial Distribution
+GXAI,GXAI,,
+GXO,GXO,NYQ,Integrated Freight & Logistics
+GYRE,GYRE,NCM,Biotechnology
+GYRO,GYRO,,
+H,H,NYQ,Lodging
+HACQ,HACQ,NGM,Shell Companies
+HAE,HAE,NYQ,Medical Devices
+HAFC,HAFC,NMS,Banks - Regional
+HAFN,HAFN,NYQ,Marine Shipping
+HAIN,HAIN,NMS,Packaged Foods
+HAL,HAL,NYQ,Oil & Gas Equipment & Services
+HALO,HALO,NMS,Biotechnology
+HAO,HAO,,
+HAS,HAS,NMS,Leisure
+HASI,HASI,NYQ,Asset Management
+HAVA,HAVA,NGM,Shell Companies
+HAWK,HAWK,NYQ,Aerospace & Defense
+HAYW,HAYW,NYQ,Electrical Equipment & Parts
+HBAN,HBAN,NMS,Banks - Regional
+HBB,HBB,NYQ,"Furnishings, Fixtures & Appliances"
+HBCP,HBCP,NMS,Banks - Regional
+HBIO,HBIO,,
+HBM,HBM,NYQ,Copper
+HBNB,HBNB,NCM,Real Estate Services
+HBNC,HBNC,NMS,Banks - Regional
+HBT,HBT,NMS,Banks - Regional
+HCA,HCA,NYQ,Medical Care Facilities
+HCAC,HCAC,NGM,Shell Companies
+HCAI,HCAI,,
+HCAT,HCAT,NMS,Health Information Services
+HCC,HCC,NYQ,Coking Coal
+HCHL,HCHL,NCM,Restaurants
+HCI,HCI,NYQ,Insurance - Property & Casualty
+HCIC,HCIC,NGM,Shell Companies
+HCKT,HCKT,NMS,Information Technology Services
+HCMA,HCMA,NGM,Shell Companies
+HCSG,HCSG,NMS,Medical Care Facilities
+HCTI,HCTI,,
+HCWB,HCWB,,
+HCWC,HCWC,,
+HD,HD,NYQ,Home Improvement Retail
+HDB,HDB,NYQ,Banks - Regional
+HDRN,HDRN,NCM,Specialty Industrial Machinery
+HDSN,HDSN,NCM,Specialty Chemicals
+HE,HE,NYQ,Utilities - Regulated Electric
+HEI,HEI,NYQ,Aerospace & Defense
+HEI-A,HEI-A,NYQ,Aerospace & Defense
+HELE,HELE,NMS,Household & Personal Products
+HELP,HELP,NGM,Biotechnology
+HESM,HESM,NYQ,Oil & Gas Midstream
+HFBL,HFBL,NCM,Banks - Regional
+HFFG,HFFG,NCM,Food Distribution
+HFWA,HFWA,NMS,Banks - Regional
+HG,HG,NYQ,Insurance - Reinsurance
+HGBL,HGBL,,
+HGTY,HGTY,NYQ,Insurance - Property & Casualty
+HGV,HGV,NYQ,Resorts & Casinos
+HHH,HHH,NYQ,Real Estate - Development
+HHS,HHS,,
+HIFS,HIFS,NGM,Banks - Regional
+HIG,HIG,NYQ,Insurance - Diversified
+HIHO,HIHO,,
+HII,HII,NYQ,Aerospace & Defense
+HIMS,HIMS,NYQ,Drug Manufacturers - Specialty & Generic
+HIND,HIND,,
+HIPO,HIPO,NYQ,Insurance - Property & Casualty
+HIT,HIT,NCM,Software - Application
+HITI,HITI,NCM,Pharmaceutical Retailers
+HIVE,HIVE,NCM,Capital Markets
+HIW,HIW,NYQ,REIT - Office
+HKIT,HKIT,,
+HKPD,HKPD,,
+HL,HL,NYQ,Other Precious Metals & Mining
+HLF,HLF,NYQ,Packaged Foods
+HLI,HLI,NYQ,Capital Markets
+HLIO,HLIO,NYQ,Specialty Industrial Machinery
+HLIT,HLIT,NMS,Communication Equipment
+HLLY,HLLY,NYQ,Auto Parts
+HLMN,HLMN,NGM,Tools & Accessories
+HLNE,HLNE,NMS,Asset Management
+HLP,HLP,,
+HLT,HLT,NYQ,Lodging
+HLX,HLX,NYQ,Oil & Gas Equipment & Services
+HLXC,HLXC,NGM,Shell Companies
+HMC,HMC,NYQ,Auto Manufacturers
+HMH,HMH,NMS,Oil & Gas Equipment & Services
+HMN,HMN,NYQ,Insurance - Property & Casualty
+HMR,HMR,NCM,Marine Shipping
+HMY,HMY,NYQ,Gold
+HNGE,HNGE,NYQ,Health Information Services
+HNI,HNI,NYQ,"Furnishings, Fixtures & Appliances"
+HNNA,HNNA,NGM,Asset Management
+HNRG,HNRG,NCM,Utilities - Independent Power Producers
+HNST,HNST,NMS,Household & Personal Products
+HNVR,HNVR,NMS,Banks - Regional
+HOFT,HOFT,NMS,"Furnishings, Fixtures & Appliances"
+HOG,HOG,NYQ,Recreational Vehicles
+HOLO,HOLO,,
+HOMB,HOMB,NYQ,Banks - Regional
+HON,HON,NMS,Conglomerates
+HONAV,HONAV,NMS,Aerospace & Defense
+HONIV,HONIV,NMS,
+HOOD,HOOD,NMS,Capital Markets
+HOPE,HOPE,NMS,Banks - Regional
+HOUR,HOUR,NCM,Internet Retail
+HOV,HOV,NYQ,Residential Construction
+HOVR,HOVR,NCM,Aerospace & Defense
+HOWL,HOWL,,
+HP,HP,NYQ,Oil & Gas Drilling
+HPAI,HPAI,,
+HPE,HPE,NYQ,Communication Equipment
+HPK,HPK,NGM,Oil & Gas E&P
+HPP,HPP,NYQ,REIT - Office
+HPQ,HPQ,NYQ,Computer Hardware
+HQ,HQ,NCM,Software - Infrastructure
+HQH,HQH,NYQ,Asset Management
+HQI,HQI,NCM,Staffing & Employment Services
+HQL,HQL,NYQ,Asset Management
+HQY,HQY,NMS,Health Information Services
+HR,HR,NYQ,REIT - Healthcare Facilities
+HRB,HRB,NYQ,Personal Services
+HRI,HRI,NYQ,Rental & Leasing Services
+HRL,HRL,NYQ,Packaged Foods
+HRMY,HRMY,NGM,Biotechnology
+HROW,HROW,NGM,Drug Manufacturers - Specialty & Generic
+HRTG,HRTG,NYQ,Insurance - Property & Casualty
+HRTX,HRTX,NCM,Biotechnology
+HRZN,HRZN,NMS,Asset Management
+HSBC,HSBC,NYQ,Banks - Diversified
+HSCS,HSCS,,
+HSDT,HSDT,NCM,Asset Management
+HSHP,HSHP,NYQ,Marine Shipping
+HSIC,HSIC,NMS,Medical Distribution
+HSLV,HSLV,ASE,Silver
+HST,HST,NMS,REIT - Hotel & Motel
+HSTM,HSTM,NMS,Health Information Services
+HSY,HSY,NYQ,Confectioners
+HTB,HTB,NYQ,Banks - Regional
+HTCO,HTCO,,
+HTCR,HTCR,,
+HTFL,HTFL,NMS,Health Information Services
+HTGC,HTGC,NYQ,Asset Management
+HTH,HTH,NYQ,Financial Conglomerates
+HTLD,HTLD,NMS,Trucking
+HTLM,HTLM,NCM,Specialty Retail
+HTO,HTO,NMS,Utilities - Regulated Water
+HTOO,HTOO,,
+HTZ,HTZ,NMS,Rental & Leasing Services
+HUBB,HUBB,NYQ,Electrical Equipment & Parts
+HUBC,HUBC,,
+HUBG,HUBG,NMS,Integrated Freight & Logistics
+HUBS,HUBS,NYQ,Software - Application
+HUDI,HUDI,,
+HUHU,HUHU,NCM,Specialty Industrial Machinery
+HUM,HUM,NYQ,Healthcare Plans
+HUMA,HUMA,NMS,Biotechnology
+HUN,HUN,NYQ,Chemicals
+HURA,HURA,NCM,Biotechnology
+HURC,HURC,NMS,Specialty Industrial Machinery
+HURN,HURN,NMS,Consulting Services
+HUT,HUT,NMS,Capital Markets
+HVII,HVII,NGM,Shell Companies
+HVMC,HVMC,NGM,Shell Companies
+HVT,HVT,NYQ,Home Improvement Retail
+HVT-A,HVT-A,NYQ,Home Improvement Retail
+HWBK,HWBK,NMS,Banks - Regional
+HWC,HWC,NMS,Banks - Regional
+HWH,HWH,,
+HWKN,HWKN,NMS,Specialty Chemicals
+HWM,HWM,NYQ,Aerospace & Defense
+HXHX,HXHX,,
+HXL,HXL,NYQ,Aerospace & Defense
+HY,HY,NYQ,Farm & Heavy Construction Machinery
+HYFM,HYFM,,
+HYFT,HYFT,NCM,Biotechnology
+HYLN,HYLN,ASE,Auto Parts
+HYMC,HYMC,NCM,Gold
+HYNE,HYNE,NCM,Banks - Regional
+HYPD,HYPD,NCM,Biotechnology
+HYPR,HYPR,NGM,Medical Devices
+HZO,HZO,NYQ,Specialty Retail
+IACO,IACO,NGM,Shell Companies
+IACQ,IACQ,NGM,Shell Companies
+IAG,IAG,NYQ,Gold
+IART,IART,NMS,Medical Devices
+IAUX,IAUX,ASE,Gold
+IBAC,IBAC,NCM,Shell Companies
+IBCP,IBCP,NMS,Banks - Regional
+IBEX,IBEX,NGM,Information Technology Services
+IBG,IBG,,
+IBIO,IBIO,NCM,Biotechnology
+IBKR,IBKR,NMS,Capital Markets
+IBM,IBM,NYQ,Information Technology Services
+IBN,IBN,NYQ,Banks - Regional
+IBO,IBO,ASE,Biotechnology
+IBOC,IBOC,NMS,Banks - Regional
+IBP,IBP,NYQ,Residential Construction
+IBRX,IBRX,NMS,Biotechnology
+IBTA,IBTA,NYQ,Software - Application
+ICCC,ICCC,NCM,Biotechnology
+ICCM,ICCM,,
+ICE,ICE,NYQ,Financial Data & Stock Exchanges
+ICFI,ICFI,NMS,Consulting Services
+ICHR,ICHR,NMS,Semiconductor Equipment & Materials
+ICL,ICL,NYQ,Agricultural Inputs
+ICLR,ICLR,NMS,Diagnostics & Research
+ICMB,ICMB,,
+ICON,ICON,,
+ICU,ICU,,
+ICUI,ICUI,NMS,Medical Instruments & Supplies
+IDA,IDA,NYQ,Utilities - Regulated Electric
+IDAI,IDAI,,
+IDCC,IDCC,NMS,Software - Application
+IDN,IDN,NGM,Software - Application
+IDR,IDR,ASE,Gold
+IDT,IDT,NYQ,Telecom Services
+IDXX,IDXX,NMS,Diagnostics & Research
+IDYA,IDYA,NMS,Biotechnology
+IE,IE,ASE,Copper
+IEAG,IEAG,NGM,Shell Companies
+IESC,IESC,NGM,Engineering & Construction
+IEX,IEX,NYQ,Specialty Industrial Machinery
+IFBD,IFBD,,
+IFF,IFF,NYQ,Specialty Chemicals
+IFRX,IFRX,NMS,Biotechnology
+IFS,IFS,NYQ,Banks - Regional
+IGAC,IGAC,NGM,Shell Companies
+IGC,IGC,,
+IGI,IGI,NYQ,Asset Management
+IGIC,IGIC,NCM,Insurance - Diversified
+IHRT,IHRT,NMS,Broadcasting
+IHS,IHS,NYQ,Real Estate Services
+IHT,IHT,,
+III,III,NGM,Information Technology Services
+IIIN,IIIN,NYQ,Metal Fabrication
+IIIV,IIIV,NMS,Software - Infrastructure
+IIM,IIM,NYQ,Asset Management
+IIPR,IIPR,NYQ,REIT - Industrial
+IKT,IKT,NCM,Biotechnology
+ILAG,ILAG,,
+ILLR,ILLR,,
+ILLU,ILLU,NGM,Shell Companies
+ILMN,ILMN,NMS,Diagnostics & Research
+ILPT,ILPT,NMS,REIT - Industrial
+IMA,IMA,NCM,Biotechnology
+IMAX,IMAX,NYQ,Entertainment
+IMCC,IMCC,,
+IMDX,IMDX,NCM,Diagnostics & Research
+IMKTA,IMKTA,NMS,Grocery Stores
+IMMR,IMMR,NMS,Software - Application
+IMMX,IMMX,NCM,Biotechnology
+IMNM,IMNM,NCM,Biotechnology
+IMNN,IMNN,,
+IMO,IMO,ASE,Oil & Gas Integrated
+IMPP,IMPP,NCM,Oil & Gas Midstream
+IMRX,IMRX,NGM,Biotechnology
+IMSR,IMSR,NMS,Utilities - Regulated Electric
+IMTE,IMTE,,
+IMTX,IMTX,NCM,Biotechnology
+IMUX,IMUX,NCM,Biotechnology
+IMVT,IMVT,NMS,Biotechnology
+IMXI,IMXI,NCM,Software - Infrastructure
+INAB,INAB,,
+INAC,INAC,NGM,Shell Companies
+INBK,INBK,NMS,Banks - Regional
+INBS,INBS,,
+INBX,INBX,NMS,Biotechnology
+INCR,INCR,NGM,Drug Manufacturers - Specialty & Generic
+INCY,INCY,NMS,Biotechnology
+INDB,INDB,NMS,Banks - Regional
+INDI,INDI,NCM,Semiconductors
+INDO,INDO,,
+INDP,INDP,NCM,Biotechnology
+INDV,INDV,NMS,Drug Manufacturers - Specialty & Generic
+INEO,INEO,,
+INFQ,INFQ,NYQ,Software - Infrastructure
+INFU,INFU,ASE,Medical Devices
+ING,ING,NYQ,Banks - Diversified
+INGM,INGM,NYQ,Information Technology Services
+INGN,INGN,NMS,Medical Devices
+INGR,INGR,NYQ,Packaged Foods
+INHD,INHD,NCM,Steel
+INIO,INIO,NMS,Specialty Industrial Machinery
+INKT,INKT,NCM,Biotechnology
+INLF,INLF,,
+INLX,INLX,,
+INM,INM,,
+INMB,INMB,,
+INMD,INMD,NMS,Medical Devices
+INN,INN,NYQ,REIT - Hotel & Motel
+INNV,INNV,NMS,Medical Care Facilities
+INO,INO,NCM,Biotechnology
+INOD,INOD,NGM,Information Technology Services
+INR,INR,NYQ,Oil & Gas E&P
+INSE,INSE,NCM,Gambling
+INSG,INSG,NMS,Communication Equipment
+INSM,INSM,NMS,Biotechnology
+INSP,INSP,NYQ,Medical Devices
+INSW,INSW,NYQ,Oil & Gas Midstream
+INTA,INTA,NMS,Software - Application
+INTC,INTC,NMS,Semiconductors
+INTG,INTG,NCM,Lodging
+INTJ,INTJ,,
+INTR,INTR,NMS,Banks - Regional
+INTS,INTS,,
+INTT,INTT,ASE,Semiconductor Equipment & Materials
+INTU,INTU,NMS,Software - Application
+INTZ,INTZ,,
+INUV,INUV,,
+INV,INV,NGM,Asset Management
+INVA,INVA,NMS,Biotechnology
+INVE,INVE,NCM,Building Products & Equipment
+INVH,INVH,NYQ,REIT - Residential
+INVX,INVX,NYQ,Oil & Gas Equipment & Services
+INVZ,INVZ,NCM,Auto Parts
+IONQ,IONQ,NYQ,Computer Hardware
+IONS,IONS,NMS,Biotechnology
+IOR,IOR,ASE,Mortgage Finance
+IOSP,IOSP,NMS,Specialty Chemicals
+IOT,IOT,NYQ,Software - Infrastructure
+IOTR,IOTR,,
+IOVA,IOVA,NGM,Biotechnology
+IP,IP,NYQ,Packaging & Containers
+IPAR,IPAR,NMS,Household & Personal Products
+IPCX,IPCX,NGM,Shell Companies
+IPDN,IPDN,,
+IPEX,IPEX,NGM,Shell Companies
+IPFX,IPFX,NGM,Shell Companies
+IPGP,IPGP,NMS,Semiconductor Equipment & Materials
+IPI,IPI,NYQ,Agricultural Inputs
+IPM,IPM,,
+IPSC,IPSC,NCM,Biotechnology
+IPST,IPST,,
+IPW,IPW,,
+IPWR,IPWR,NCM,Semiconductors
+IQI,IQI,NYQ,Asset Management
+IQST,IQST,,
+IQV,IQV,NYQ,Diagnostics & Research
+IR,IR,NYQ,Specialty Industrial Machinery
+IRAB,IRAB,NYQ,Shell Companies
+IRD,IRD,NCM,Biotechnology
+IRDM,IRDM,NMS,Telecom Services
+IREN,IREN,NMS,Capital Markets
+IRHO,IRHO,NGM,Shell Companies
+IRIX,IRIX,,
+IRM,IRM,NYQ,REIT - Specialty
+IRMD,IRMD,NGM,Medical Devices
+IRON,IRON,NGM,Biotechnology
+IRT,IRT,NYQ,REIT - Residential
+IRTC,IRTC,NMS,Medical Devices
+IRWD,IRWD,NMS,Drug Manufacturers - Specialty & Generic
+ISBA,ISBA,NCM,Banks - Regional
+ISOU,ISOU,ASE,Uranium
+ISPC,ISPC,,
+ISPR,ISPR,NCM,Tobacco
+ISRG,ISRG,NMS,Medical Instruments & Supplies
+ISSC,ISSC,NMS,Aerospace & Defense
+ISTR,ISTR,NGM,Banks - Regional
+IT,IT,NYQ,Information Technology Services
+ITGR,ITGR,NYQ,Medical Devices
+ITHA,ITHA,NGM,Shell Companies
+ITIC,ITIC,NMS,Insurance - Specialty
+ITOC,ITOC,,
+ITP,ITP,,
+ITRG,ITRG,ASE,Other Precious Metals & Mining
+ITRI,ITRI,NMS,Scientific & Technical Instruments
+ITRN,ITRN,NMS,Scientific & Technical Instruments
+ITT,ITT,NYQ,Specialty Industrial Machinery
+ITW,ITW,NYQ,Specialty Industrial Machinery
+IVA,IVA,NGM,Biotechnology
+IVDA,IVDA,,
+IVF,IVF,,
+IVR,IVR,NYQ,REIT - Mortgage
+IVT,IVT,NYQ,REIT - Retail
+IVVD,IVVD,NGM,Biotechnology
+IVZ,IVZ,NYQ,Asset Management
+IXHL,IXHL,,
+IZEA,IZEA,NCM,Internet Content & Information
+IZM,IZM,,
+J,J,NYQ,Engineering & Construction
+JACK,JACK,NMS,Restaurants
+JACS,JACS,NYQ,Shell Companies
+JAGU,JAGU,,
+JAGX,JAGX,,
+JAKK,JAKK,NMS,Leisure
+JAN,JAN,NYQ,REIT - Residential
+JANX,JANX,NGM,Biotechnology
+JATT,JATT,NGM,Shell Companies
+JAZZ,JAZZ,NMS,Biotechnology
+JBDI,JBDI,,
+JBGS,JBGS,NYQ,REIT - Diversified
+JBHT,JBHT,NMS,Integrated Freight & Logistics
+JBI,JBI,NYQ,Building Products & Equipment
+JBIO,JBIO,NCM,Biotechnology
+JBK,JBK,NYQ,
+JBL,JBL,NYQ,Electronic Components
+JBLU,JBLU,NMS,Airlines
+JBS,JBS,NYQ,Packaged Foods
+JBSS,JBSS,NMS,Packaged Foods
+JBTM,JBTM,NYQ,Specialty Industrial Machinery
+JCAP,JCAP,NMS,Credit Services
+JCI,JCI,NYQ,Building Products & Equipment
+JCSE,JCSE,,
+JCTC,JCTC,,
+JDZG,JDZG,NCM,Education & Training Services
+JEF,JEF,NYQ,Capital Markets
+JELD,JELD,NYQ,Building Products & Equipment
+JEM,JEM,,
+JENA,JENA,NYQ,Shell Companies
+JFB,JFB,NCM,Real Estate - Development
+JHG,JHG,NYQ,Asset Management
+JHI,JHI,NYQ,Asset Management
+JHS,JHS,NYQ,Asset Management
+JHX,JHX,NYQ,Building Materials
+JILL,JILL,NYQ,Apparel Retail
+JJSF,JJSF,NMS,Packaged Foods
+JKHY,JKHY,NMS,Information Technology Services
+JL,JL,,
+JLHL,JLHL,NCM,Building Products & Equipment
+JLL,JLL,NYQ,Real Estate Services
+JMSB,JMSB,NCM,Banks - Regional
+JNJ,JNJ,NYQ,Drug Manufacturers - General
+JOB,JOB,,
+JOBY,JOBY,NYQ,Airports & Air Services
+JOE,JOE,NYQ,Real Estate - Diversified
+JOUT,JOUT,NMS,Leisure
+JPM,JPM,NYQ,Banks - Diversified
+JRSH,JRSH,NCM,Apparel Manufacturing
+JRVR,JRVR,NMS,Insurance - Specialty
+JSPR,JSPR,,
+JTAI,JTAI,,
+JUNS,JUNS,,
+JVA,JVA,,
+JWEL,JWEL,,
+JXG,JXG,NCM,Apparel Manufacturing
+JXN,JXN,NYQ,Insurance - Life
+JYD,JYD,,
+JYNT,JYNT,NCM,Medical Care Facilities
+JZXN,JZXN,,
+KAI,KAI,NYQ,Specialty Industrial Machinery
+KALA,KALA,NCM,Biotechnology
+KALU,KALU,NMS,Aluminum
+KAPA,KAPA,,
+KARD,KARD,NGM,Biotechnology
+KARO,KARO,NCM,Software - Application
+KAZR,KAZR,NCM,Engineering & Construction
+KB,KB,NYQ,Banks - Regional
+KBDC,KBDC,NYQ,Asset Management
+KBH,KBH,NYQ,Residential Construction
+KBON,KBON,NGM,Shell Companies
+KBR,KBR,NYQ,Engineering & Construction
+KBSX,KBSX,NGM,Leisure
+KCHV,KCHV,NGM,Shell Companies
+KD,KD,NYQ,Information Technology Services
+KDK,KDK,NGM,Software - Infrastructure
+KDP,KDP,NMS,Beverages - Non-Alcoholic
+KE,KE,NMS,Electrical Equipment & Parts
+KEEL,KEEL,NGM,Information Technology Services
+KELYA,KELYA,NMS,Staffing & Employment Services
+KELYB,KELYB,NMS,Staffing & Employment Services
+KEN,KEN,NYQ,Utilities - Independent Power Producers
+KEP,KEP,NYQ,Utilities - Regulated Electric
+KEQU,KEQU,NGM,"Furnishings, Fixtures & Appliances"
+KEX,KEX,NYQ,Marine Shipping
+KEY,KEY,NYQ,Banks - Regional
+KEYS,KEYS,NYQ,Scientific & Technical Instruments
+KFFB,KFFB,,
+KFII,KFII,NGM,Shell Companies
+KFRC,KFRC,NYQ,Staffing & Employment Services
+KFY,KFY,NYQ,Staffing & Employment Services
+KG,KG,NCM,Insurance - Reinsurance
+KGC,KGC,NYQ,Gold
+KGEI,KGEI,NCM,Oil & Gas E&P
+KGS,KGS,NYQ,Oil & Gas Equipment & Services
+KHC,KHC,NMS,Packaged Foods
+KIDS,KIDS,NGM,Medical Devices
+KIDZ,KIDZ,,
+KIM,KIM,NYQ,REIT - Retail
+KINS,KINS,NCM,Insurance - Property & Casualty
+KITT,KITT,,
+KKR,KKR,NYQ,Asset Management
+KLAC,KLAC,NMS,Semiconductor Equipment & Materials
+KLAR,KLAR,NYQ,Credit Services
+KLC,KLC,NYQ,Education & Training Services
+KLIC,KLIC,NMS,Semiconductor Equipment & Materials
+KLRA,KLRA,NMS,Biotechnology
+KLRS,KLRS,NGM,Biotechnology
+KLTR,KLTR,NMS,Software - Application
+KLXE,KLXE,,
+KMB,KMB,NMS,Household & Personal Products
+KMDA,KMDA,NMS,Drug Manufacturers - Specialty & Generic
+KMI,KMI,NYQ,Oil & Gas Midstream
+KMPB,KMPB,NYQ,
+KMPR,KMPR,NYQ,Insurance - Property & Casualty
+KMRK,KMRK,,
+KMT,KMT,NYQ,Tools & Accessories
+KMTS,KMTS,NMS,Medical Instruments & Supplies
+KMX,KMX,NYQ,Auto & Truck Dealerships
+KN,KN,NYQ,Electronic Components
+KNDI,KNDI,NMS,Recreational Vehicles
+KNF,KNF,NYQ,Building Materials
+KNRX,KNRX,,
+KNSA,KNSA,NMS,Drug Manufacturers - Specialty & Generic
+KNSL,KNSL,NYQ,Insurance - Property & Casualty
+KNTK,KNTK,NYQ,Oil & Gas Midstream
+KNX,KNX,NYQ,Trucking
+KO,KO,NYQ,Beverages - Non-Alcoholic
+KOD,KOD,NGM,Biotechnology
+KODK,KODK,NYQ,Specialty Business Services
+KOP,KOP,NYQ,Specialty Chemicals
+KOPN,KOPN,NCM,Electronic Components
+KORE,KORE,NYQ,Telecom Services
+KOS,KOS,NYQ,Oil & Gas E&P
+KOSS,KOSS,,
+KOYN,KOYN,NGM,Shell Companies
+KPET,KPET,NYQ,Shell Companies
+KPLT,KPLT,,
+KPRX,KPRX,,
+KPTI,KPTI,NMS,Biotechnology
+KR,KR,NYQ,Grocery Stores
+KRAQ,KRAQ,NGM,Shell Companies
+KRC,KRC,NYQ,REIT - Office
+KREF,KREF,NYQ,REIT - Mortgage
+KRG,KRG,NYQ,REIT - Retail
+KRMD,KRMD,NCM,Medical Instruments & Supplies
+KRMN,KRMN,NYQ,Aerospace & Defense
+KRNT,KRNT,NMS,Specialty Industrial Machinery
+KRNY,KRNY,NMS,Banks - Regional
+KRO,KRO,NYQ,Specialty Chemicals
+KROS,KROS,NGM,Biotechnology
+KRRO,KRRO,NCM,Biotechnology
+KRSP,KRSP,NYQ,Shell Companies
+KRT,KRT,NMS,Packaging & Containers
+KRUS,KRUS,NGM,Restaurants
+KRYS,KRYS,NMS,Biotechnology
+KSCP,KSCP,,
+KSPI,KSPI,NMS,Software - Infrastructure
+KSS,KSS,NYQ,Department Stores
+KT,KT,NYQ,Telecom Services
+KTB,KTB,NYQ,Apparel Manufacturing
+KTCC,KTCC,,
+KTF,KTF,NYQ,Asset Management
+KTN,KTN,NYQ,
+KTOS,KTOS,NMS,Aerospace & Defense
+KTTA,KTTA,,
+KTWO,KTWO,NGM,Shell Companies
+KULR,KULR,ASE,Electronic Components
+KURA,KURA,NMS,Biotechnology
+KUST,KUST,,
+KVAC,KVAC,NGM,Shell Companies
+KVHI,KVHI,NMS,Telecom Services
+KVUE,KVUE,NYQ,Household & Personal Products
+KVYO,KVYO,NYQ,Software - Application
+KWM,KWM,,
+KWR,KWR,NYQ,Specialty Chemicals
+KWY,KWY,NYQ,Asset Management
+KXIN,KXIN,,
+KYIV,KYIV,NMS,Telecom Services
+KYMR,KYMR,NGM,Biotechnology
+KYNB,KYNB,,
+KYTX,KYTX,NMS,Biotechnology
+L,L,NYQ,Insurance - Property & Casualty
+LAB,LAB,NMS,Medical Devices
+LABT,LABT,,
+LAC,LAC,NYQ,Other Industrial Metals & Mining
+LAD,LAD,NYQ,Auto & Truck Dealerships
+LADR,LADR,NYQ,REIT - Mortgage
+LAES,LAES,NMS,Semiconductors
+LAFA,LAFA,NGM,Shell Companies
+LAKE,LAKE,NGM,Apparel Manufacturing
+LAMR,LAMR,NMS,REIT - Specialty
+LAND,LAND,NGM,REIT - Specialty
+LANV,LANV,NYQ,Luxury Goods
+LAR,LAR,NYQ,Other Industrial Metals & Mining
+LARK,LARK,NGM,Banks - Regional
+LASE,LASE,NCM,Specialty Industrial Machinery
+LASR,LASR,NMS,Semiconductors
+LATA,LATA,NGM,Shell Companies
+LAUR,LAUR,NMS,Education & Training Services
+LAW,LAW,NYQ,Software - Application
+LAWR,LAWR,NCM,Consulting Services
+LAZ,LAZ,NYQ,Capital Markets
+LB,LB,NYQ,Oil & Gas Equipment & Services
+LBGJ,LBGJ,,
+LBRDA,LBRDA,NMS,Telecom Services
+LBRDK,LBRDK,NMS,Telecom Services
+LBRT,LBRT,NYQ,Oil & Gas Equipment & Services
+LBRX,LBRX,NGM,Biotechnology
+LBTYA,LBTYA,NMS,Telecom Services
+LBTYB,LBTYB,NMS,Telecom Services
+LBTYK,LBTYK,NMS,Telecom Services
+LC,LC,NYQ,Banks - Regional
+LCCC,LCCC,NGM,Shell Companies
+LCFY,LCFY,,
+LCID,LCID,NMS,Auto Manufacturers
+LCII,LCII,NYQ,Recreational Vehicles
+LCLN,LCLN,NYQ,Capital Markets
+LCNB,LCNB,NCM,Banks - Regional
+LCTX,LCTX,ASE,Biotechnology
+LCUT,LCUT,NMS,"Furnishings, Fixtures & Appliances"
+LDI,LDI,NYQ,Mortgage Finance
+LDOS,LDOS,NYQ,Information Technology Services
+LE,LE,NCM,Apparel Retail
+LEA,LEA,NYQ,Auto Parts
+LECO,LECO,NMS,Tools & Accessories
+LEDS,LEDS,,
+LEE,LEE,NMS,Publishing
+LEG,LEG,NYQ,"Furnishings, Fixtures & Appliances"
+LEGH,LEGH,NMS,Residential Construction
+LEGO,LEGO,ASE,Shell Companies
+LEN,LEN,NYQ,Residential Construction
+LEN-B,LEN-B,NYQ,Residential Construction
+LENZ,LENZ,NMS,Biotechnology
+LEO,LEO,NYQ,Asset Management
+LESL,LESL,NMS,Specialty Retail
+LEU,LEU,NYQ,Uranium
+LEVI,LEVI,NYQ,Apparel Manufacturing
+LEXX,LEXX,,
+LFAC,LFAC,NGM,Shell Companies
+LFCR,LFCR,NMS,Drug Manufacturers - Specialty & Generic
+LFMD,LFMD,NGM,Health Information Services
+LFST,LFST,NMS,Medical Care Facilities
+LFT,LFT,NYQ,REIT - Mortgage
+LFTO,LFTO,NMS,Advertising Agencies
+LFUS,LFUS,NMS,Electronic Components
+LFVN,LFVN,NCM,Packaged Foods
+LFWD,LFWD,,
+LGCL,LGCL,NCM,Software - Application
+LGCY,LGCY,ASE,Education & Training Services
+LGIH,LGIH,NMS,Residential Construction
+LGL,LGL,,
+LGN,LGN,NMS,Engineering & Construction
+LGND,LGND,NGM,Biotechnology
+LGO,LGO,NMS,Other Industrial Metals & Mining
+LGPS,LGPS,,
+LGVN,LGVN,,
+LH,LH,NYQ,Diagnostics & Research
+LHAI,LHAI,,
+LHSW,LHSW,,
+LHX,LHX,NYQ,Aerospace & Defense
+LICN,LICN,,
+LIDR,LIDR,NCM,Software - Infrastructure
+LIEN,LIEN,NGM,Asset Management
+LIF,LIF,NMS,Software - Application
+LIFE,LIFE,NMS,Insurance Brokers
+LII,LII,NYQ,Building Products & Equipment
+LILA,LILA,NMS,Telecom Services
+LILAK,LILAK,NMS,Telecom Services
+LIMN,LIMN,,
+LIN,LIN,NMS,Specialty Chemicals
+LINC,LINC,NMS,Education & Training Services
+LIND,LIND,NCM,Travel Services
+LINE,LINE,NMS,REIT - Industrial
+LINK,LINK,NCM,Electronic Components
+LION,LION,NYQ,
+LIQT,LIQT,,
+LITE,LITE,NMS,Communication Equipment
+LITS,LITS,,
+LIVE,LIVE,,
+LIVN,LIVN,NMS,Medical Devices
+LIXT,LIXT,NCM,Biotechnology
+LKFN,LKFN,NMS,Banks - Regional
+LKQ,LKQ,NMS,Auto Parts
+LKSP,LKSP,NGM,Shell Companies
+LLY,LLY,NYQ,Drug Manufacturers - General
+LLYVA,LLYVA,NMS,Entertainment
+LLYVK,LLYVK,NMS,Entertainment
+LMAT,LMAT,NGM,Medical Instruments & Supplies
+LMB,LMB,NCM,Building Products & Equipment
+LMFA,LMFA,,
+LMND,LMND,NYQ,Insurance - Property & Casualty
+LMNR,LMNR,NMS,Farm Products
+LMRI,LMRI,NMS,Medical Devices
+LMT,LMT,NYQ,Aerospace & Defense
+LNAI,LNAI,,
+LNC,LNC,NYQ,Insurance - Life
+LND,LND,NYQ,Farm Products
+LNG,LNG,NYQ,Oil & Gas Midstream
+LNKS,LNKS,,
+LNN,LNN,NYQ,Farm & Heavy Construction Machinery
+LNSR,LNSR,NCM,Medical Devices
+LNT,LNT,NMS,Utilities - Regulated Electric
+LNTH,LNTH,NGM,Drug Manufacturers - Specialty & Generic
+LNZA,LNZA,NCM,Waste Management
+LOAN,LOAN,NCM,REIT - Mortgage
+LOAR,LOAR,NYQ,Aerospace & Defense
+LOB,LOB,NYQ,Banks - Regional
+LOBO,LOBO,,
+LOCL,LOCL,,
+LOCO,LOCO,NMS,Restaurants
+LODE,LODE,ASE,Other Precious Metals & Mining
+LOGI,LOGI,NMS,Computer Hardware
+LOKV,LOKV,NGM,Shell Companies
+LOMA,LOMA,NYQ,Building Materials
+LONA,LONA,NCM,Biotechnology
+LOOP,LOOP,,
+LOPE,LOPE,NMS,Education & Training Services
+LOVE,LOVE,NGM,"Furnishings, Fixtures & Appliances"
+LOW,LOW,NYQ,Home Improvement Retail
+LPA,LPA,ASE,Real Estate - Development
+LPAA,LPAA,NGM,Shell Companies
+LPBB,LPBB,NGM,Shell Companies
+LPCN,LPCN,,
+LPCV,LPCV,NGM,Shell Companies
+LPG,LPG,NYQ,Oil & Gas Midstream
+LPL,LPL,NYQ,Consumer Electronics
+LPLA,LPLA,NMS,Capital Markets
+LPRO,LPRO,NGM,Credit Services
+LPSN,LPSN,,
+LPTH,LPTH,NCM,Electronic Components
+LPX,LPX,NYQ,Building Products & Equipment
+LQDA,LQDA,NCM,Drug Manufacturers - Specialty & Generic
+LQDT,LQDT,NMS,Internet Retail
+LRCX,LRCX,NMS,Semiconductor Equipment & Materials
+LRHC,LRHC,,
+LRMR,LRMR,NGM,Biotechnology
+LRN,LRN,NYQ,Education & Training Services
+LSAK,LSAK,NMS,Software - Infrastructure
+LSBK,LSBK,NGM,Banks - Regional
+LSCC,LSCC,NMS,Semiconductors
+LSE,LSE,NCM,Oil & Gas Equipment & Services
+LSF,LSF,ASE,Packaged Foods
+LSH,LSH,,
+LSPD,LSPD,NYQ,Software - Application
+LSTA,LSTA,,
+LSTR,LSTR,NMS,Integrated Freight & Logistics
+LTBR,LTBR,NCM,Electrical Equipment & Parts
+LTC,LTC,NYQ,REIT - Healthcare Facilities
+LTH,LTH,NYQ,Leisure
+LTRN,LTRN,,
+LTRX,LTRX,NCM,Communication Equipment
+LUCD,LUCD,NCM,Medical Devices
+LUCK,LUCK,NYQ,Leisure
+LUCY,LUCY,,
+LUD,LUD,ASE,Steel
+LULU,LULU,NMS,Apparel Retail
+LUMN,LUMN,NYQ,Telecom Services
+LUNG,LUNG,NMS,Medical Devices
+LUNR,LUNR,NGM,Aerospace & Defense
+LUV,LUV,NYQ,Airlines
+LVLU,LVLU,,
+LVO,LVO,NCM,Internet Content & Information
+LVS,LVS,NYQ,Resorts & Casinos
+LVWR,LVWR,NYQ,Auto Manufacturers
+LW,LW,NYQ,Packaged Foods
+LWAC,LWAC,NGM,Shell Companies
+LWAY,LWAY,NGM,Packaged Foods
+LWLG,LWLG,NCM,Specialty Chemicals
+LXEO,LXEO,NGM,Biotechnology
+LXFR,LXFR,NYQ,Specialty Industrial Machinery
+LXP,LXP,NYQ,REIT - Industrial
+LXRX,LXRX,NCM,Biotechnology
+LXU,LXU,NYQ,Chemicals
+LYB,LYB,NYQ,Specialty Chemicals
+LYEL,LYEL,NMS,Biotechnology
+LYFT,LYFT,NMS,Software - Application
+LYTS,LYTS,NMS,Electronic Components
+LYV,LYV,NYQ,Entertainment
+LZ,LZ,NMS,Specialty Business Services
+LZB,LZB,NYQ,"Furnishings, Fixtures & Appliances"
+LZM,LZM,NYQ,Other Industrial Metals & Mining
+LZMH,LZMH,,
+M,M,NYQ,Department Stores
+MA,MA,NYQ,Credit Services
+MAA,MAA,NYQ,REIT - Residential
+MAAS,MAAS,NGM,Asset Management
+MAC,MAC,NYQ,REIT - Retail
+MACI,MACI,NGM,Shell Companies
+MAGH,MAGH,NCM,Engineering & Construction
+MAGN,MAGN,NYQ,Household & Personal Products
+MAIA,MAIA,ASE,Biotechnology
+MAIN,MAIN,NYQ,Asset Management
+MAIR,MAIR,NYQ,Building Products & Equipment
+MAKO,MAKO,NCM,Gold
+MAMA,MAMA,NCM,Packaged Foods
+MAMK,MAMK,NCM,Conglomerates
+MAMO,MAMO,,
+MAN,MAN,NYQ,Staffing & Employment Services
+MANE,MANE,NYQ,Biotechnology
+MANH,MANH,NMS,Software - Application
+MANU,MANU,NYQ,Entertainment
+MAR,MAR,NMS,Lodging
+MARA,MARA,NCM,Capital Markets
+MAS,MAS,NYQ,Building Products & Equipment
+MASK,MASK,,
+MASS,MASS,NGM,Medical Devices
+MAT,MAT,NMS,Leisure
+MATH,MATH,,
+MATV,MATV,NYQ,Specialty Chemicals
+MATW,MATW,NMS,Conglomerates
+MATX,MATX,NYQ,Marine Shipping
+MAX,MAX,NYQ,Internet Content & Information
+MAYS,MAYS,NCM,Real Estate Services
+MAZE,MAZE,NGM,Biotechnology
+MB,MB,NCM,Restaurants
+MBAI,MBAI,,
+MBAV,MBAV,NGM,Shell Companies
+MBBC,MBBC,,
+MBC,MBC,NYQ,"Furnishings, Fixtures & Appliances"
+MBI,MBI,NYQ,Insurance - Specialty
+MBIN,MBIN,NCM,Banks - Regional
+MBIO,MBIO,,
+MBLY,MBLY,NMS,Auto Parts
+MBOT,MBOT,NCM,Medical Instruments & Supplies
+MBRX,MBRX,,
+MBUU,MBUU,NGM,Recreational Vehicles
+MBVI,MBVI,NGM,Shell Companies
+MBWM,MBWM,NMS,Banks - Regional
+MBX,MBX,NMS,Biotechnology
+MC,MC,NYQ,Capital Markets
+MCB,MCB,NYQ,Banks - Regional
+MCBS,MCBS,NMS,Banks - Regional
+MCD,MCD,NYQ,Restaurants
+MCFT,MCFT,NGM,Recreational Vehicles
+MCGA,MCGA,NGM,Shell Companies
+MCHB,MCHB,NMS,Banks - Regional
+MCHP,MCHP,NMS,Semiconductors
+MCHX,MCHX,NMS,Advertising Agencies
+MCI,MCI,NYQ,Asset Management
+MCK,MCK,NYQ,Medical Distribution
+MCO,MCO,NYQ,Financial Data & Stock Exchanges
+MCR,MCR,NYQ,Asset Management
+MCRB,MCRB,NMS,Biotechnology
+MCRI,MCRI,NMS,Resorts & Casinos
+MCRP,MCRP,ASE,Computer Hardware
+MCS,MCS,NYQ,Entertainment
+MCTA,MCTA,NCM,Medical Care Facilities
+MCY,MCY,NYQ,Insurance - Property & Casualty
+MD,MD,NYQ,Medical Care Facilities
+MDA,MDA,NYQ,Aerospace & Defense
+MDAI,MDAI,NCM,Medical Devices
+MDB,MDB,NGM,Software - Infrastructure
+MDBH,MDBH,,
+MDCX,MDCX,,
+MDGL,MDGL,NMS,Biotechnology
+MDIA,MDIA,NCM,Broadcasting
+MDLN,MDLN,NMS,Medical Instruments & Supplies
+MDLZ,MDLZ,NMS,Confectioners
+MDRR,MDRR,,
+MDT,MDT,NYQ,Medical Devices
+MDU,MDU,NYQ,Utilities - Regulated Gas
+MDV,MDV,NYQ,REIT - Industrial
+MDWD,MDWD,NGM,Biotechnology
+MDXG,MDXG,NCM,Biotechnology
+MDXH,MDXH,,
+MEC,MEC,NYQ,Metal Fabrication
+MED,MED,NYQ,Personal Services
+MEDP,MEDP,NMS,Diagnostics & Research
+MEGL,MEGL,,
+MEI,MEI,NYQ,Electronic Components
+MELI,MELI,NMS,Internet Retail
+MENS,MENS,NGM,Biotechnology
+MEOH,MEOH,NMS,Chemicals
+MERC,MERC,NMS,Paper & Paper Products
+MESH,MESH,NGM,Shell Companies
+MET,MET,NYQ,Insurance - Life
+META,META,NMS,Internet Content & Information
+METC,METC,NMS,Coking Coal
+METCB,METCB,NMS,Coking Coal
+MEVO,MEVO,NGM,Shell Companies
+MFA,MFA,NYQ,REIT - Mortgage
+MFC,MFC,NYQ,Insurance - Life
+MFG,MFG,NYQ,Banks - Regional
+MFI,MFI,NCM,Software - Application
+MFIN,MFIN,NMS,Credit Services
+MG,MG,NYQ,Security & Protection Services
+MGA,MGA,NYQ,Auto Parts
+MGEE,MGEE,NMS,Utilities - Regulated Electric
+MGF,MGF,NYQ,Asset Management
+MGIH,MGIH,,
+MGLD,MGLD,,
+MGM,MGM,NYQ,Resorts & Casinos
+MGN,MGN,,
+MGNI,MGNI,NMS,Advertising Agencies
+MGNX,MGNX,NMS,Biotechnology
+MGPI,MGPI,NMS,Beverages - Wineries & Distilleries
+MGRC,MGRC,NMS,Rental & Leasing Services
+MGRT,MGRT,NCM,Information Technology Services
+MGRX,MGRX,,
+MGTX,MGTX,NMS,Biotechnology
+MGX,MGX,,
+MGY,MGY,NYQ,Oil & Gas E&P
+MGYR,MGYR,NGM,Banks - Regional
+MH,MH,NYQ,Education & Training Services
+MHH,MHH,ASE,Staffing & Employment Services
+MHK,MHK,NYQ,"Furnishings, Fixtures & Appliances"
+MHO,MHO,NYQ,Residential Construction
+MI,MI,,
+MIAX,MIAX,NYQ,Capital Markets
+MICC,MICC,NYQ,Packaged Foods
+MIDD,MIDD,NMS,Specialty Industrial Machinery
+MIMI,MIMI,,
+MIN,MIN,NYQ,Asset Management
+MIND,MIND,,
+MINE,MINE,ASE,Gold
+MIR,MIR,NYQ,Specialty Industrial Machinery
+MIRA,MIRA,,
+MIRM,MIRM,NGM,Biotechnology
+MIST,MIST,NMS,Biotechnology
+MITK,MITK,NCM,Software - Application
+MITQ,MITQ,,
+MITT,MITT,NYQ,REIT - Mortgage
+MKC,MKC,NYQ,Packaged Foods
+MKC-V,MKC-V,NYQ,Packaged Foods
+MKDW,MKDW,,
+MKL,MKL,NYQ,Insurance - Property & Casualty
+MKLY,MKLY,NGM,Shell Companies
+MKSI,MKSI,NMS,Scientific & Technical Instruments
+MKTW,MKTW,,
+MKTX,MKTX,NMS,Capital Markets
+MKZR,MKZR,,
+MLAA,MLAA,NGM,
+MLAB,MLAB,NMS,Scientific & Technical Instruments
+MLCI,MLCI,,
+MLEC,MLEC,,
+MLGO,MLGO,NCM,Software - Infrastructure
+MLI,MLI,NYQ,Metal Fabrication
+MLKN,MLKN,NMS,"Furnishings, Fixtures & Appliances"
+MLM,MLM,NYQ,Building Materials
+MLP,MLP,NYQ,Real Estate Services
+MLR,MLR,NYQ,Auto Parts
+MLSS,MLSS,,
+MLTX,MLTX,NCM,Biotechnology
+MLYS,MLYS,NMS,Biotechnology
+MMA,MMA,,
+MMED,MMED,NMS,Medical Instruments & Supplies
+MMI,MMI,NYQ,Real Estate Services
+MMM,MMM,NYQ,Conglomerates
+MMS,MMS,NYQ,Specialty Business Services
+MMSI,MMSI,NMS,Medical Instruments & Supplies
+MMT,MMT,NYQ,Asset Management
+MMTX,MMTX,NGM,Shell Companies
+MMYT,MMYT,NMS,Travel Services
+MNDO,MNDO,,
+MNDR,MNDR,,
+MNDY,MNDY,NMS,Software - Application
+MNKD,MNKD,NGM,Biotechnology
+MNOV,MNOV,NGM,Biotechnology
+MNPR,MNPR,NCM,Biotechnology
+MNRO,MNRO,NMS,Auto Parts
+MNSB,MNSB,NCM,Banks - Regional
+MNST,MNST,NMS,Beverages - Non-Alcoholic
+MNTK,MNTK,NCM,Specialty Chemicals
+MNTN,MNTN,NYQ,Software - Application
+MNTS,MNTS,NCM,Aerospace & Defense
+MNY,MNY,NGM,Internet Content & Information
+MO,MO,NYQ,Tobacco
+MOB,MOB,NCM,Aerospace & Defense
+MOBI,MOBI,NMS,Medical Devices
+MOBX,MOBX,,
+MOD,MOD,NYQ,Auto Parts
+MODD,MODD,,
+MOG-A,MOG-A,NYQ,Aerospace & Defense
+MOG-B,MOG-B,NYQ,Aerospace & Defense
+MOH,MOH,NYQ,Healthcare Plans
+MORN,MORN,NMS,Financial Data & Stock Exchanges
+MOS,MOS,NYQ,Agricultural Inputs
+MOV,MOV,NYQ,Luxury Goods
+MOVE,MOVE,,
+MP,MP,NYQ,Other Industrial Metals & Mining
+MPAA,MPAA,NMS,Auto Parts
+MPB,MPB,NGM,Banks - Regional
+MPC,MPC,NYQ,Oil & Gas Refining & Marketing
+MPLT,MPLT,NMS,Biotechnology
+MPT,MPT,NYQ,REIT - Healthcare Facilities
+MPTI,MPTI,ASE,Electronic Components
+MPU,MPU,,
+MPV,MPV,NYQ,Asset Management
+MPWR,MPWR,NMS,Semiconductors
+MQ,MQ,NMS,Software - Infrastructure
+MRAM,MRAM,NGM,Semiconductors
+MRBK,MRBK,NMS,Banks - Regional
+MRCY,MRCY,NMS,Aerospace & Defense
+MRDN,MRDN,NCM,Gambling
+MRK,MRK,NYQ,Drug Manufacturers - General
+MRKR,MRKR,,
+MRLN,MRLN,NGM,Aerospace & Defense
+MRNA,MRNA,NMS,Biotechnology
+MRNO,MRNO,,
+MRP,MRP,NYQ,REIT - Residential
+MRSH,MRSH,NYQ,Insurance Brokers
+MRT,MRT,ASE,Software - Application
+MRTN,MRTN,NMS,Trucking
+MRVI,MRVI,NMS,Biotechnology
+MRVL,MRVL,NMS,Semiconductors
+MRX,MRX,NMS,Capital Markets
+MS,MS,NYQ,Capital Markets
+MSA,MSA,NYQ,Security & Protection Services
+MSAI,MSAI,,
+MSB,MSB,NYQ,Steel
+MSBI,MSBI,NMS,Banks - Regional
+MSCI,MSCI,NYQ,Financial Data & Stock Exchanges
+MSEX,MSEX,NMS,Utilities - Regulated Water
+MSFT,MSFT,NMS,Software - Infrastructure
+MSGE,MSGE,NYQ,Entertainment
+MSGM,MSGM,,
+MSGS,MSGS,NYQ,Entertainment
+MSGY,MSGY,,
+MSI,MSI,NYQ,Communication Equipment
+MSLE,MSLE,NGM,Biotechnology
+MSM,MSM,NYQ,Industrial Distribution
+MSN,MSN,,
+MSS,MSS,,
+MSTR,MSTR,NMS,Software - Application
+MSW,MSW,,
+MT,MT,NYQ,Steel
+MTA,MTA,ASE,Other Precious Metals & Mining
+MTAL,MTAL,NYQ,Shell Companies
+MTB,MTB,NYQ,Banks - Regional
+MTC,MTC,NCM,Software - Application
+MTCH,MTCH,NMS,Internet Content & Information
+MTD,MTD,NYQ,Diagnostics & Research
+MTDR,MTDR,NYQ,Oil & Gas E&P
+MTEK,MTEK,,
+MTEN,MTEN,,
+MTEX,MTEX,,
+MTG,MTG,NYQ,Insurance - Specialty
+MTH,MTH,NYQ,Residential Construction
+MTN,MTN,NYQ,Resorts & Casinos
+MTNB,MTNB,,
+MTR,MTR,,
+MTRN,MTRN,NYQ,Other Industrial Metals & Mining
+MTRX,MTRX,NMS,Engineering & Construction
+MTSI,MTSI,NMS,Semiconductors
+MTUS,MTUS,NYQ,Steel
+MTVA,MTVA,,
+MTW,MTW,NYQ,Farm & Heavy Construction Machinery
+MTX,MTX,NYQ,Specialty Chemicals
+MTZ,MTZ,NYQ,Engineering & Construction
+MU,MU,NMS,Semiconductors
+MUFG,MUFG,NYQ,Banks - Diversified
+MUR,MUR,NYQ,Oil & Gas E&P
+MUSA,MUSA,NYQ,Specialty Retail
+MUX,MUX,NYQ,Other Precious Metals & Mining
+MUZE,MUZE,NGM,Shell Companies
+MVBF,MVBF,NCM,Banks - Regional
+MVIS,MVIS,NGM,Scientific & Technical Instruments
+MVST,MVST,NCM,Auto Parts
+MWA,MWA,NYQ,Specialty Industrial Machinery
+MWG,MWG,,
+MWH,MWH,NMS,Utilities - Renewable
+MWYN,MWYN,,
+MX,MX,NYQ,Semiconductors
+MXC,MXC,,
+MXCT,MXCT,NMS,Medical Devices
+MXL,MXL,NMS,Semiconductors
+MYE,MYE,NYQ,Packaging & Containers
+MYFW,MYFW,NMS,Banks - Regional
+MYGN,MYGN,NMS,Diagnostics & Research
+MYO,MYO,,
+MYPS,MYPS,NCM,Electronic Gaming & Multimedia
+MYRG,MYRG,NMS,Engineering & Construction
+MYSE,MYSE,,
+MYSZ,MYSZ,,
+MYX,MYX,NGM,Shell Companies
+MZTI,MZTI,NMS,Packaged Foods
+MZYX,MZYX,NYQ,Shell Companies
+NA,NA,,
+NABL,NABL,NYQ,Information Technology Services
+NAGE,NAGE,NCM,Biotechnology
+NAII,NAII,,
+NAK,NAK,ASE,Other Industrial Metals & Mining
+NAKA,NAKA,NGM,Capital Markets
+NAMM,NAMM,NGM,Gold
+NAMS,NAMS,NGM,Biotechnology
+NAT,NAT,NYQ,Oil & Gas Midstream
+NATH,NATH,NMS,Restaurants
+NATL,NATL,NYQ,Software - Application
+NATR,NATR,NCM,Packaged Foods
+NAUT,NAUT,NCM,Biotechnology
+NAVI,NAVI,NMS,Credit Services
+NAVN,NAVN,NMS,Software - Application
+NB,NB,NGM,Other Industrial Metals & Mining
+NBBK,NBBK,NCM,Banks - Regional
+NBHC,NBHC,NYQ,Banks - Regional
+NBIS,NBIS,NMS,Internet Content & Information
+NBIX,NBIX,NMS,Drug Manufacturers - Specialty & Generic
+NBN,NBN,NGM,Banks - Regional
+NBR,NBR,NYQ,Oil & Gas Drilling
+NBRG,NBRG,NCM,Shell Companies
+NBTB,NBTB,NMS,Banks - Regional
+NBTX,NBTX,NMS,Biotechnology
+NC,NC,NYQ,Thermal Coal
+NCDL,NCDL,NYQ,Asset Management
+NCEL,NCEL,,
+NCEW,NCEW,NCM,Integrated Freight & Logistics
+NCI,NCI,,
+NCL,NCL,,
+NCLH,NCLH,NYQ,Travel Services
+NCMI,NCMI,NMS,Advertising Agencies
+NCNO,NCNO,NMS,Software - Application
+NCPL,NCPL,,
+NCRA,NCRA,,
+NCSM,NCSM,NCM,Oil & Gas Equipment & Services
+NCT,NCT,,
+NCTY,NCTY,NCM,Capital Markets
+NDAQ,NDAQ,NMS,Financial Data & Stock Exchanges
+NDLS,NDLS,NMS,Restaurants
+NDRA,NDRA,,
+NDSN,NDSN,NMS,Specialty Industrial Machinery
+NE,NE,NYQ,Oil & Gas Drilling
+NECB,NECB,NCM,Banks - Regional
+NEE,NEE,NYQ,Utilities - Regulated Electric
+NEGG,NEGG,NCM,Internet Retail
+NEM,NEM,NYQ,Gold
+NEO,NEO,NCM,Diagnostics & Research
+NEOG,NEOG,NMS,Medical Devices
+NEON,NEON,,
+NEOV,NEOV,NCM,Electrical Equipment & Parts
+NEPH,NEPH,,
+NERV,NERV,NCM,Biotechnology
+NESR,NESR,NCM,Oil & Gas Equipment & Services
+NET,NET,NYQ,Software - Infrastructure
+NEU,NEU,NYQ,Specialty Chemicals
+NEUP,NEUP,,
+NEWP,NEWP,ASE,Silver
+NEWT,NEWT,NGM,Banks - Regional
+NEXA,NEXA,NYQ,Other Industrial Metals & Mining
+NEXM,NEXM,NCM,Other Industrial Metals & Mining
+NEXN,NEXN,NGM,Advertising Agencies
+NEXR,NEXR,,
+NEXT,NEXT,NCM,Oil & Gas Equipment & Services
+NFBK,NFBK,NMS,Banks - Regional
+NFE,NFE,NMS,Oil & Gas Midstream
+NFG,NFG,NYQ,Oil & Gas Integrated
+NFGC,NFGC,ASE,Gold
+NFLX,NFLX,NMS,Entertainment
+NG,NG,ASE,Gold
+NGEN,NGEN,NCM,Biotechnology
+NGNE,NGNE,NGM,Biotechnology
+NGS,NGS,NYQ,Oil & Gas Equipment & Services
+NGVC,NGVC,NYQ,Grocery Stores
+NGVT,NGVT,NYQ,Specialty Chemicals
+NHC,NHC,ASE,Medical Care Facilities
+NHI,NHI,NYQ,REIT - Healthcare Facilities
+NHIC,NHIC,NGM,
+NHIV,NHIV,NGM,Shell Companies
+NHP,NHP,NGM,REIT - Healthcare Facilities
+NHTC,NHTC,,
+NI,NI,NYQ,Utilities - Regulated Gas
+NIC,NIC,NYQ,Banks - Regional
+NINE,NINE,ASE,Oil & Gas Equipment & Services
+NIQ,NIQ,NYQ,
+NIVF,NIVF,,
+NIXX,NIXX,,
+NJR,NJR,NYQ,Utilities - Regulated Gas
+NKE,NKE,NYQ,Footwear & Accessories
+NKLR,NKLR,NGM,Utilities - Regulated Electric
+NKSH,NKSH,NCM,Banks - Regional
+NKTR,NKTR,NCM,Biotechnology
+NKTX,NKTX,NMS,Biotechnology
+NL,NL,NYQ,Security & Protection Services
+NLOP,NLOP,NYQ,REIT - Office
+NLY,NLY,NYQ,REIT - Mortgage
+NMAX,NMAX,NYQ,Broadcasting
+NMFC,NMFC,NMS,Asset Management
+NMG,NMG,NYQ,Other Industrial Metals & Mining
+NMIH,NMIH,NGM,Insurance - Specialty
+NMP,NMP,NGM,Shell Companies
+NMRA,NMRA,NMS,Biotechnology
+NMRK,NMRK,NMS,Real Estate Services
+NMTC,NMTC,,
+NN,NN,NCM,Software - Infrastructure
+NNBR,NNBR,NMS,Conglomerates
+NNE,NNE,NCM,Specialty Industrial Machinery
+NNI,NNI,NYQ,Credit Services
+NNN,NNN,NYQ,REIT - Retail
+NNNN,NNNN,NGM,Medical Instruments & Supplies
+NNOX,NNOX,NGM,Medical Devices
+NNVC,NNVC,,
+NOA,NOA,NYQ,Oil & Gas Equipment & Services
+NOC,NOC,NYQ,Aerospace & Defense
+NODK,NODK,NCM,Insurance - Property & Casualty
+NOEM,NOEM,NGM,Shell Companies
+NOG,NOG,NYQ,Oil & Gas E&P
+NOMA,NOMA,NCM,Leisure
+NOMD,NOMD,NYQ,Packaged Foods
+NOV,NOV,NYQ,Oil & Gas Equipment & Services
+NOVT,NOVT,NMS,Scientific & Technical Instruments
+NOW,NOW,NYQ,Software - Application
+NP,NP,NYQ,Insurance Brokers
+NPAC,NPAC,NGM,Shell Companies
+NPB,NPB,NYQ,Banks - Regional
+NPCE,NPCE,NGM,Medical Devices
+NPK,NPK,NYQ,Aerospace & Defense
+NPKI,NPKI,NYQ,Building Products & Equipment
+NPO,NPO,NYQ,Specialty Industrial Machinery
+NPT,NPT,NCM,Specialty Retail
+NPWR,NPWR,NYQ,Specialty Industrial Machinery
+NRC,NRC,NMS,Health Information Services
+NRDS,NRDS,NGM,Internet Content & Information
+NRDY,NRDY,NYQ,Software - Application
+NREF,NREF,NYQ,REIT - Mortgage
+NRG,NRG,NYQ,Utilities - Independent Power Producers
+NRGV,NRGV,NYQ,Utilities - Renewable
+NRIM,NRIM,NMS,Banks - Regional
+NRIX,NRIX,NGM,Biotechnology
+NRP,NRP,NYQ,Thermal Coal
+NRSN,NRSN,,
+NRT,NRT,NYQ,Oil & Gas E&P
+NRXP,NRXP,NCM,Biotechnology
+NRXS,NRXS,ASE,Biotechnology
+NSA,NSA,NYQ,REIT - Industrial
+NSC,NSC,NYQ,Railroads
+NSIT,NSIT,NMS,Electronics & Computer Distribution
+NSP,NSP,NYQ,Staffing & Employment Services
+NSPR,NSPR,,
+NSRX,NSRX,,
+NSSC,NSSC,NMS,Security & Protection Services
+NSTS,NSTS,NCM,Banks - Regional
+NSYS,NSYS,,
+NTAP,NTAP,NMS,Software - Infrastructure
+NTB,NTB,NYQ,Banks - Diversified
+NTCL,NTCL,,
+NTCT,NTCT,NMS,Software - Infrastructure
+NTGR,NTGR,NMS,Communication Equipment
+NTHI,NTHI,NGM,Biotechnology
+NTIC,NTIC,NGM,Specialty Chemicals
+NTIP,NTIP,,
+NTLA,NTLA,NGM,Biotechnology
+NTNX,NTNX,NMS,Software - Infrastructure
+NTR,NTR,NYQ,Agricultural Inputs
+NTRA,NTRA,NMS,Diagnostics & Research
+NTRB,NTRB,,
+NTRP,NTRP,,
+NTRS,NTRS,NMS,Asset Management
+NTSK,NTSK,NMS,Software - Infrastructure
+NTST,NTST,NYQ,REIT - Retail
+NTWK,NTWK,,
+NTWO,NTWO,NGM,Shell Companies
+NTZ,NTZ,,
+NU,NU,NYQ,Banks - Regional
+NUAI,NUAI,NGM,Software - Infrastructure
+NUCL,NUCL,NCM,Uranium
+NUE,NUE,NYQ,Steel
+NUS,NUS,NYQ,Household & Personal Products
+NUTR,NUTR,NCM,Travel Services
+NUTX,NUTX,NCM,Medical Care Facilities
+NUVB,NUVB,NYQ,Biotechnology
+NUVL,NUVL,NMS,Biotechnology
+NUWE,NUWE,,
+NVA,NVA,ASE,Other Industrial Metals & Mining
+NVAX,NVAX,NMS,Biotechnology
+NVCR,NVCR,NMS,Medical Devices
+NVCT,NVCT,NCM,Biotechnology
+NVDA,NVDA,NMS,Semiconductors
+NVEC,NVEC,NCM,Semiconductors
+NVGS,NVGS,NYQ,Oil & Gas Midstream
+NVMI,NVMI,NMS,Semiconductor Equipment & Materials
+NVNI,NVNI,,
+NVNO,NVNO,,
+NVO,NVO,NYQ,Drug Manufacturers - General
+NVR,NVR,NYQ,Residential Construction
+NVRI,NVRI,NYQ,Waste Management
+NVS,NVS,NYQ,Drug Manufacturers - General
+NVST,NVST,NYQ,Medical Instruments & Supplies
+NVT,NVT,NYQ,Electrical Equipment & Parts
+NVTS,NVTS,NGM,Semiconductors
+NVVE,NVVE,,
+NVX,NVX,NGM,Electrical Equipment & Parts
+NWAX,NWAX,NYQ,Shell Companies
+NWBI,NWBI,NMS,Banks - Regional
+NWE,NWE,NMS,Utilities - Regulated Electric
+NWFL,NWFL,NGM,Banks - Regional
+NWL,NWL,NMS,Household & Personal Products
+NWN,NWN,NYQ,Utilities - Regulated Gas
+NWPX,NWPX,NMS,Steel
+NWS,NWS,NMS,Entertainment
+NWSA,NWSA,NMS,Entertainment
+NWTG,NWTG,,
+NX,NX,NYQ,Building Products & Equipment
+NXB,NXB,ASE,Auto & Truck Dealerships
+NXDR,NXDR,NYQ,Internet Content & Information
+NXDT,NXDT,NYQ,REIT - Diversified
+NXE,NXE,NYQ,Uranium
+NXGL,NXGL,,
+NXL,NXL,,
+NXP,NXP,NYQ,Asset Management
+NXPI,NXPI,NMS,Semiconductors
+NXPL,NXPL,,
+NXRT,NXRT,NYQ,REIT - Residential
+NXST,NXST,NMS,Broadcasting
+NXT,NXT,NMS,Solar
+NXTC,NXTC,,
+NXTS,NXTS,,
+NXTT,NXTT,NCM,Software - Application
+NXXT,NXXT,NCM,Utilities - Renewable
+NYAX,NYAX,NMS,Software - Infrastructure
+NYC,NYC,,
+NYT,NYT,NYQ,Publishing
+NYXH,NYXH,NGM,Medical Instruments & Supplies
+O,O,NYQ,REIT - Retail
+OABI,OABI,NGM,Biotechnology
+OACC,OACC,NGM,Shell Companies
+OBA,OBA,NGM,Shell Companies
+OBDC,OBDC,NYQ,Asset Management
+OBE,OBE,ASE,Oil & Gas E&P
+OBIO,OBIO,NGM,Biotechnology
+OBK,OBK,NYQ,Banks - Regional
+OBT,OBT,NCM,Banks - Regional
+OC,OC,NYQ,Building Products & Equipment
+OCC,OCC,NGM,Communication Equipment
+OCFC,OCFC,NMS,Banks - Regional
+OCG,OCG,,
+OCGN,OCGN,NCM,Biotechnology
+OCS,OCS,NGM,Biotechnology
+OCTV,OCTV,NMS,Software - Application
+OCUL,OCUL,NGM,Biotechnology
+ODC,ODC,NYQ,Specialty Chemicals
+ODD,ODD,NGM,Household & Personal Products
+ODFL,ODFL,NMS,Trucking
+ODTX,ODTX,NCM,Biotechnology
+ODV,ODV,NYQ,Gold
+ODYS,ODYS,NCM,Scientific & Technical Instruments
+OEC,OEC,NYQ,Specialty Chemicals
+OESX,OESX,,
+OFAL,OFAL,,
+OFG,OFG,NYQ,Banks - Regional
+OFIX,OFIX,NMS,Medical Devices
+OFLX,OFLX,NGM,Specialty Industrial Machinery
+OFRM,OFRM,NYQ,Packaged Foods
+OGC,OGC,NYQ,Gold
+OGE,OGE,NYQ,Utilities - Regulated Electric
+OGEN,OGEN,,
+OGI,OGI,NMS,Drug Manufacturers - Specialty & Generic
+OGN,OGN,NYQ,Drug Manufacturers - General
+OGS,OGS,NYQ,Utilities - Regulated Gas
+OHAC,OHAC,NCM,Shell Companies
+OHI,OHI,NYQ,REIT - Healthcare Facilities
+OI,OI,NYQ,Packaging & Containers
+OIA,OIA,NYQ,Asset Management
+OII,OII,NYQ,Oil & Gas Equipment & Services
+OIM,OIM,NGM,Shell Companies
+OIO,OIO,NCM,Asset Management
+OIS,OIS,NYQ,Oil & Gas Equipment & Services
+OKE,OKE,NYQ,Oil & Gas Midstream
+OKLO,OKLO,NYQ,Utilities - Independent Power Producers
+OKTA,OKTA,NMS,Software - Infrastructure
+OKUR,OKUR,NGM,Biotechnology
+OKYO,OKYO,NCM,Biotechnology
+OLB,OLB,,
+OLED,OLED,NMS,Electronic Components
+OLLI,OLLI,NGM,Discount Stores
+OLMA,OLMA,NMS,Biotechnology
+OLN,OLN,NYQ,Chemicals
+OLOX,OLOX,,
+OLP,OLP,NYQ,REIT - Diversified
+OLPX,OLPX,NMS,Specialty Retail
+OM,OM,NMS,Medical Devices
+OMC,OMC,NYQ,Advertising Agencies
+OMCL,OMCL,NMS,Health Information Services
+OMDA,OMDA,NMS,Health Information Services
+OMER,OMER,NGM,Biotechnology
+OMEX,OMEX,NCM,Other Industrial Metals & Mining
+OMF,OMF,NYQ,Credit Services
+OMH,OMH,,
+OMSE,OMSE,NCM,Oil & Gas Equipment & Services
+ON,ON,NMS,Semiconductors
+ONB,ONB,NMS,Banks - Regional
+ONCH,ONCH,NGM,Shell Companies
+ONCO,ONCO,,
+ONCY,ONCY,NCM,Biotechnology
+ONDS,ONDS,NCM,Communication Equipment
+ONEG,ONEG,,
+ONEW,ONEW,NGM,Specialty Retail
+ONFO,ONFO,,
+ONIT,ONIT,NYQ,Mortgage Finance
+ONL,ONL,NYQ,REIT - Office
+ONMD,ONMD,,
+ONON,ONON,NYQ,Footwear & Accessories
+ONT,ONT,NYQ,Waste Management
+ONTO,ONTO,NYQ,Semiconductor Equipment & Materials
+OOMA,OOMA,NYQ,Software - Application
+OPAD,OPAD,,
+OPAL,OPAL,NCM,Utilities - Regulated Gas
+OPBK,OPBK,NGM,Banks - Regional
+OPCH,OPCH,NMS,Medical Care Facilities
+OPEN,OPEN,NMS,Real Estate Services
+OPFI,OPFI,NYQ,Credit Services
+OPHC,OPHC,ASE,Banks - Regional
+OPK,OPK,NMS,Diagnostics & Research
+OPLN,OPLN,NYQ,Auto & Truck Dealerships
+OPRT,OPRT,NMS,Credit Services
+OPRX,OPRX,NCM,Health Information Services
+OPTH,OPTH,,
+OPTT,OPTT,ASE,Specialty Industrial Machinery
+OPTU,OPTU,NYQ,Telecom Services
+OPTX,OPTX,NCM,Electronic Components
+OPXS,OPXS,NCM,Aerospace & Defense
+OPY,OPY,NYQ,Capital Markets
+OR,OR,NYQ,Gold
+ORA,ORA,NYQ,Utilities - Renewable
+ORBS,ORBS,NCM,Packaging & Containers
+ORC,ORC,NYQ,REIT - Mortgage
+ORCL,ORCL,NYQ,Software - Infrastructure
+ORGN,ORGN,,
+ORGO,ORGO,NCM,Drug Manufacturers - Specialty & Generic
+ORI,ORI,NYQ,Insurance - Property & Casualty
+ORIC,ORIC,NMS,Biotechnology
+ORIO,ORIO,,
+ORIQ,ORIQ,NGM,Shell Companies
+ORIS,ORIS,,
+ORKA,ORKA,NGM,Biotechnology
+ORKT,ORKT,,
+ORLA,ORLA,ASE,Gold
+ORLY,ORLY,NMS,Auto Parts
+ORMP,ORMP,NCM,Biotechnology
+ORN,ORN,NYQ,Engineering & Construction
+ORRF,ORRF,NCM,Banks - Regional
+OSBC,OSBC,NMS,Banks - Regional
+OSCR,OSCR,NYQ,Healthcare Plans
+OSG,OSG,NYQ,Insurance - Specialty
+OSIS,OSIS,NMS,Electronic Components
+OSK,OSK,NYQ,Farm & Heavy Construction Machinery
+OSPN,OSPN,NCM,Software - Infrastructure
+OSRH,OSRH,,
+OSS,OSS,NCM,Computer Hardware
+OST,OST,,
+OSTX,OSTX,ASE,Biotechnology
+OSUR,OSUR,NMS,Medical Instruments & Supplies
+OSW,OSW,NCM,Leisure
+OTEX,OTEX,NMS,Software - Application
+OTF,OTF,NYQ,Asset Management
+OTGA,OTGA,NGM,Shell Companies
+OTIS,OTIS,NYQ,Specialty Industrial Machinery
+OTLK,OTLK,NCM,Biotechnology
+OTTR,OTTR,NMS,Conglomerates
+OUST,OUST,NMS,Electronic Components
+OUT,OUT,NYQ,REIT - Specialty
+OVBC,OVBC,NGM,Banks - Regional
+OVID,OVID,NCM,Biotechnology
+OVLY,OVLY,NCM,Banks - Regional
+OVV,OVV,NYQ,Oil & Gas E&P
+OWL,OWL,NYQ,Asset Management
+OWLS,OWLS,NGM,Software - Infrastructure
+OWLT,OWLT,NYQ,Medical Devices
+OXBR,OXBR,,
+OXM,OXM,NYQ,Apparel Manufacturing
+OXY,OXY,NYQ,Oil & Gas E&P
+OYSE,OYSE,NGM,Shell Companies
+OZK,OZK,NMS,Banks - Regional
+P,P,NYQ,Computer Hardware
+PAAC,PAAC,NGM,Shell Companies
+PAAS,PAAS,NYQ,Gold
+PAC,PAC,NYQ,Airports & Air Services
+PACB,PACB,NMS,Medical Devices
+PACH,PACH,NGM,Shell Companies
+PACK,PACK,NYQ,Packaging & Containers
+PACS,PACS,NYQ,Medical Care Facilities
+PAG,PAG,NYQ,Auto & Truck Dealerships
+PAGP,PAGP,NMS,Oil & Gas Midstream
+PAGS,PAGS,NYQ,Software - Infrastructure
+PAHC,PAHC,NGM,Drug Manufacturers - Specialty & Generic
+PAII,PAII,NYQ,Shell Companies
+PAL,PAL,NMS,Integrated Freight & Logistics
+PALI,PALI,NCM,Biotechnology
+PALO,PALO,NGM,Shell Companies
+PAM,PAM,NYQ,Conglomerates
+PAMT,PAMT,NGM,Trucking
+PANL,PANL,NCM,Marine Shipping
+PANW,PANW,NMS,Software - Infrastructure
+PAPL,PAPL,,
+PAR,PAR,NYQ,Software - Application
+PARK,PARK,NCM,Medical Care Facilities
+PARR,PARR,NYQ,Oil & Gas Refining & Marketing
+PASG,PASG,,
+PASW,PASW,,
+PATH,PATH,NYQ,Software - Infrastructure
+PATK,PATK,NMS,Recreational Vehicles
+PAVM,PAVM,,
+PAVS,PAVS,,
+PAX,PAX,NMS,Asset Management
+PAY,PAY,NYQ,Software - Infrastructure
+PAYC,PAYC,NYQ,Software - Application
+PAYO,PAYO,NGM,Software - Infrastructure
+PAYP,PAYP,NMS,Software - Infrastructure
+PAYS,PAYS,NCM,Software - Infrastructure
+PAYX,PAYX,NMS,Software - Application
+PB,PB,NYQ,Banks - Regional
+PBA,PBA,NYQ,Oil & Gas Midstream
+PBF,PBF,NYQ,Oil & Gas Refining & Marketing
+PBFS,PBFS,NCM,Banks - Regional
+PBH,PBH,NYQ,Drug Manufacturers - Specialty & Generic
+PBHC,PBHC,NCM,Banks - Regional
+PBI,PBI,NYQ,Integrated Freight & Logistics
+PBK,PBK,,
+PBLS,PBLS,NMS,Biotechnology
+PBM,PBM,,
+PBR,PBR,NYQ,Oil & Gas Integrated
+PBT,PBT,NYQ,Oil & Gas Midstream
+PBYI,PBYI,NMS,Biotechnology
+PC,PC,,
+PCAP,PCAP,NGM,Shell Companies
+PCAR,PCAR,NMS,Farm & Heavy Construction Machinery
+PCB,PCB,NMS,Banks - Regional
+PCG,PCG,NYQ,Utilities - Regulated Electric
+PCOR,PCOR,NYQ,Software - Application
+PCRX,PCRX,NMS,Drug Manufacturers - Specialty & Generic
+PCSA,PCSA,,
+PCSC,PCSC,NGM,Shell Companies
+PCT,PCT,NCM,Pollution & Treatment Controls
+PCTY,PCTY,NMS,Software - Application
+PCVX,PCVX,NMS,Biotechnology
+PCYO,PCYO,NCM,Utilities - Regulated Water
+PD,PD,NYQ,Software - Application
+PDCC,PDCC,NYQ,Asset Management
+PDEX,PDEX,NCM,Medical Instruments & Supplies
+PDFS,PDFS,NMS,Software - Application
+PDLB,PDLB,NGM,Banks - Regional
+PDM,PDM,NYQ,REIT - Office
+PDS,PDS,NYQ,Oil & Gas Drilling
+PDSB,PDSB,NCM,Biotechnology
+PDYN,PDYN,NGM,Software - Infrastructure
+PEB,PEB,NYQ,REIT - Hotel & Motel
+PEBK,PEBK,NGM,Banks - Regional
+PEBO,PEBO,NMS,Banks - Regional
+PECE,PECE,NCM,Shell Companies
+PECO,PECO,NMS,REIT - Retail
+PED,PED,ASE,Oil & Gas E&P
+PEG,PEG,NYQ,Utilities - Regulated Electric
+PEGA,PEGA,NMS,Software - Application
+PEN,PEN,NYQ,Medical Devices
+PENG,PENG,NMS,Information Technology Services
+PENN,PENN,NMS,Resorts & Casinos
+PEP,PEP,NMS,Beverages - Non-Alcoholic
+PEPG,PEPG,NMS,Biotechnology
+PERF,PERF,NYQ,Software - Application
+PERI,PERI,NMS,Internet Content & Information
+PESI,PESI,NCM,Waste Management
+PETS,PETS,,
+PETZ,PETZ,,
+PEW,PEW,NYQ,Aerospace & Defense
+PFAI,PFAI,,
+PFE,PFE,NYQ,Drug Manufacturers - General
+PFG,PFG,NMS,Asset Management
+PFGC,PFGC,NYQ,Food Distribution
+PFIS,PFIS,NMS,Banks - Regional
+PFLT,PFLT,NYQ,Asset Management
+PFS,PFS,NYQ,Banks - Regional
+PFSA,PFSA,,
+PFSI,PFSI,NYQ,Mortgage Finance
+PFX,PFX,NGM,Asset Management
+PG,PG,NYQ,Household & Personal Products
+PGAC,PGAC,NGM,Shell Companies
+PGC,PGC,NMS,Banks - Regional
+PGEN,PGEN,NMS,Biotechnology
+PGNY,PGNY,NMS,Healthcare Plans
+PGR,PGR,NYQ,Insurance - Property & Casualty
+PGY,PGY,NCM,Software - Infrastructure
+PH,PH,NYQ,Specialty Industrial Machinery
+PHAR,PHAR,NGM,Biotechnology
+PHAT,PHAT,NMS,Biotechnology
+PHG,PHG,NYQ,Medical Devices
+PHGE,PHGE,,
+PHI,PHI,NYQ,Telecom Services
+PHIN,PHIN,NYQ,Auto Parts
+PHIO,PHIO,,
+PHM,PHM,NYQ,Residential Construction
+PHOE,PHOE,NCM,Engineering & Construction
+PHR,PHR,NYQ,Health Information Services
+PHUN,PHUN,,
+PHVS,PHVS,NMS,Biotechnology
+PI,PI,NMS,Semiconductors
+PICS,PICS,NMS,Software - Infrastructure
+PII,PII,NYQ,Recreational Vehicles
+PIII,PIII,NCM,Medical Care Facilities
+PIM,PIM,NYQ,Asset Management
+PINE,PINE,NYQ,REIT - Retail
+PINS,PINS,NYQ,Internet Content & Information
+PIPR,PIPR,NYQ,Capital Markets
+PJT,PJT,NYQ,Capital Markets
+PK,PK,NYQ,REIT - Hotel & Motel
+PKBK,PKBK,NCM,Banks - Regional
+PKE,PKE,NYQ,Aerospace & Defense
+PKG,PKG,NYQ,Packaging & Containers
+PKOH,PKOH,NMS,Specialty Industrial Machinery
+PL,PL,NYQ,Aerospace & Defense
+PLAB,PLAB,NMS,Semiconductor Equipment & Materials
+PLAG,PLAG,,
+PLAY,PLAY,NMS,Entertainment
+PLBC,PLBC,NCM,Banks - Regional
+PLBL,PLBL,NGM,Department Stores
+PLBY,PLBY,NGM,Leisure
+PLCE,PLCE,NMS,Apparel Manufacturing
+PLD,PLD,NYQ,REIT - Industrial
+PLG,PLG,ASE,Other Precious Metals & Mining
+PLGO,PLGO,NYQ,Insurance - Diversified
+PLMK,PLMK,NGM,Shell Companies
+PLMR,PLMR,NMS,Insurance - Property & Casualty
+PLNT,PLNT,NYQ,Leisure
+PLOW,PLOW,NYQ,Auto Parts
+PLPC,PLPC,NMS,Electrical Equipment & Parts
+PLRX,PLRX,NMS,Biotechnology
+PLRZ,PLRZ,,
+PLSE,PLSE,NCM,Medical Instruments & Supplies
+PLSM,PLSM,,
+PLTK,PLTK,NMS,Electronic Gaming & Multimedia
+PLTR,PLTR,NMS,Software - Infrastructure
+PLTS,PLTS,NCM,Software - Application
+PLUG,PLUG,NCM,Electrical Equipment & Parts
+PLUN,PLUN,NYQ,Shell Companies
+PLUR,PLUR,,
+PLUS,PLUS,NMS,Software - Application
+PLUT,PLUT,,
+PLX,PLX,ASE,Biotechnology
+PLXS,PLXS,NMS,Electronic Components
+PLYX,PLYX,NCM,Biotechnology
+PM,PM,NYQ,Tobacco
+PMAX,PMAX,,
+PMCB,PMCB,,
+PMEC,PMEC,,
+PMI,PMI,,
+PMM,PMM,NYQ,Asset Management
+PMN,PMN,NCM,Biotechnology
+PMO,PMO,NYQ,Asset Management
+PMT,PMT,NYQ,REIT - Mortgage
+PMTR,PMTR,NGM,Shell Companies
+PMTS,PMTS,NGM,Credit Services
+PMVP,PMVP,NMS,Biotechnology
+PN,PN,NCM,Solar
+PNBK,PNBK,NGM,Banks - Regional
+PNC,PNC,NYQ,Banks - Regional
+PNFP,PNFP,NYQ,Banks - Regional
+PNNT,PNNT,NYQ,Asset Management
+PNR,PNR,NYQ,Specialty Industrial Machinery
+PNRG,PNRG,NCM,Oil & Gas E&P
+PNTG,PNTG,NMS,Medical Care Facilities
+PNW,PNW,NYQ,Utilities - Regulated Electric
+POAS,POAS,,
+POCI,POCI,NCM,Medical Instruments & Supplies
+PODC,PODC,NCM,Internet Content & Information
+PODD,PODD,NMS,Medical Devices
+POET,POET,NCM,Semiconductors
+POLA,POLA,,
+POLE,POLE,NGM,Shell Companies
+PONO,PONO,NGM,Shell Companies
+POOL,POOL,NMS,Industrial Distribution
+POR,POR,NYQ,Utilities - Regulated Electric
+POST,POST,NYQ,Packaged Foods
+POWI,POWI,NMS,Semiconductors
+POWL,POWL,NMS,Electrical Equipment & Parts
+POWW,POWW,NCM,Aerospace & Defense
+PPC,PPC,NMS,Packaged Foods
+PPCB,PPCB,,
+PPG,PPG,NYQ,Specialty Chemicals
+PPHC,PPHC,NGM,Consulting Services
+PPIH,PPIH,NGM,Building Products & Equipment
+PPL,PPL,NYQ,Utilities - Regulated Electric
+PPLI,PPLI,NMS,Internet Content & Information
+PPSI,PPSI,NCM,Electrical Equipment & Parts
+PPT,PPT,NYQ,Asset Management
+PPTA,PPTA,NCM,Other Precious Metals & Mining
+PR,PR,NYQ,Oil & Gas E&P
+PRA,PRA,NYQ,Insurance - Property & Casualty
+PRAA,PRAA,NMS,Credit Services
+PRAX,PRAX,NMS,Biotechnology
+PRCH,PRCH,NCM,Insurance - Property & Casualty
+PRCT,PRCT,NGM,Medical Devices
+PRDO,PRDO,NMS,Education & Training Services
+PRE,PRE,NGM,Packaged Foods
+PRFX,PRFX,,
+PRG,PRG,NYQ,Rental & Leasing Services
+PRGO,PRGO,NYQ,Drug Manufacturers - Specialty & Generic
+PRGS,PRGS,NMS,Software - Infrastructure
+PRHI,PRHI,,
+PRI,PRI,NYQ,Insurance - Life
+PRIM,PRIM,NYQ,Engineering & Construction
+PRK,PRK,ASE,Banks - Regional
+PRKS,PRKS,NYQ,Leisure
+PRLB,PRLB,NYQ,Metal Fabrication
+PRLD,PRLD,NMS,Biotechnology
+PRM,PRM,NYQ,Specialty Chemicals
+PRMB,PRMB,NYQ,Beverages - Non-Alcoholic
+PRME,PRME,NGM,Biotechnology
+PROF,PROF,NCM,Medical Devices
+PROK,PROK,NCM,Biotechnology
+PROP,PROP,NCM,Oil & Gas E&P
+PROV,PROV,NMS,Banks - Regional
+PRPL,PRPL,,
+PRPO,PRPO,,
+PRQR,PRQR,NCM,Biotechnology
+PRSO,PRSO,,
+PRSU,PRSU,NYQ,Travel Services
+PRTA,PRTA,NMS,Biotechnology
+PRTH,PRTH,NCM,Software - Infrastructure
+PRTS,PRTS,NCM,Auto Parts
+PRU,PRU,NYQ,Insurance - Life
+PRVA,PRVA,NMS,Health Information Services
+PRZO,PRZO,,
+PS,PS,NYQ,Asset Management
+PSA,PSA,NYQ,REIT - Industrial
+PSBD,PSBD,NYQ,Asset Management
+PSFE,PSFE,NYQ,Software - Infrastructure
+PSHG,PSHG,,
+PSIG,PSIG,NCM,Integrated Freight & Logistics
+PSIX,PSIX,NCM,Specialty Industrial Machinery
+PSKY,PSKY,NMS,Entertainment
+PSMT,PSMT,NMS,Discount Stores
+PSN,PSN,NYQ,Information Technology Services
+PSNL,PSNL,NGM,Diagnostics & Research
+PSNY,PSNY,NGM,Auto Manufacturers
+PSNYW,PSNYW,NGM,Auto Manufacturers
+PSO,PSO,NYQ,Publishing
+PSQH,PSQH,,
+PSTL,PSTL,NYQ,REIT - Office
+PSTV,PSTV,,
+PSUS,PSUS,NYQ,Asset Management
+PSX,PSX,NYQ,Oil & Gas Refining & Marketing
+PTC,PTC,NMS,Software - Application
+PTCT,PTCT,NMS,Biotechnology
+PTEN,PTEN,NMS,Oil & Gas Drilling
+PTGX,PTGX,NGM,Biotechnology
+PTHS,PTHS,ASE,Biotechnology
+PTLE,PTLE,,
+PTLO,PTLO,NMS,Restaurants
+PTN,PTN,,
+PTNM,PTNM,NCM,Household & Personal Products
+PTON,PTON,NMS,Leisure
+PTOR,PTOR,NGM,Shell Companies
+PTRN,PTRN,NMS,Software - Application
+PUBM,PUBM,NGM,Software - Application
+PUK,PUK,NYQ,Insurance - Life
+PULM,PULM,,
+PUMP,PUMP,NYQ,Oil & Gas Equipment & Services
+PURR,PURR,NCM,Capital Markets
+PUSA,PUSA,NCM,Leisure
+PVH,PVH,NYQ,Apparel Manufacturing
+PVLA,PVLA,NGM,Biotechnology
+PW,PW,,
+PWP,PWP,NMS,Capital Markets
+PWR,PWR,NYQ,Engineering & Construction
+PWRL,PWRL,NGM,Asset Management
+PXED,PXED,NYQ,Education & Training Services
+PXLW,PXLW,,
+PXS,PXS,,
+PYPD,PYPD,NCM,Biotechnology
+PYPL,PYPL,NMS,Credit Services
+PYT,PYT,NYQ,
+PYXS,PYXS,NMS,Biotechnology
+PZG,PZG,ASE,Gold
+PZZA,PZZA,NMS,Restaurants
+Q,Q,NYQ,Semiconductor Equipment & Materials
+QADR,QADR,NGM,Shell Companies
+QBTS,QBTS,NYQ,Computer Hardware
+QCLS,QCLS,,
+QCOM,QCOM,NMS,Semiconductors
+QCRH,QCRH,NGM,Banks - Regional
+QDEL,QDEL,NMS,Medical Devices
+QETA,QETA,,
+QGEN,QGEN,NYQ,Diagnostics & Research
+QH,QH,,
+QLYS,QLYS,NMS,Software - Infrastructure
+QMCO,QMCO,NGM,Computer Hardware
+QMMM,QMMM,NCM,Advertising Agencies
+QNC,QNC,ASE,Software - Infrastructure
+QNCX,QNCX,,
+QNST,QNST,NMS,Advertising Agencies
+QNT,QNT,NGM,Software - Application
+QNTM,QNTM,,
+QRED,QRED,NYQ,Shell Companies
+QRHC,QRHC,,
+QRVO,QRVO,NMS,Semiconductors
+QS,QS,NMS,Auto Parts
+QSEA,QSEA,NGM,Shell Companies
+QSI,QSI,NGM,Medical Devices
+QSR,QSR,NYQ,Restaurants
+QTEX,QTEX,NCM,Computer Hardware
+QTI,QTI,,
+QTRX,QTRX,NGM,Medical Devices
+QTTB,QTTB,NCM,Biotechnology
+QTWO,QTWO,NYQ,Software - Application
+QUAD,QUAD,NYQ,Specialty Business Services
+QUBT,QUBT,NCM,Computer Hardware
+QUCY,QUCY,,
+QUIK,QUIK,NCM,Semiconductors
+QUMS,QUMS,NGM,Shell Companies
+QURE,QURE,NMS,Biotechnology
+QXL,QXL,NCM,Information Technology Services
+QXO,QXO,NYQ,Industrial Distribution
+R,R,NYQ,Rental & Leasing Services
+RAAQ,RAAQ,NGM,Shell Companies
+RAC,RAC,NYQ,Shell Companies
+RACC,RACC,NCM,Shell Companies
+RACE,RACE,NYQ,Auto Manufacturers
+RAIL,RAIL,NMS,Railroads
+RAIN,RAIN,,
+RAL,RAL,NYQ,Electronic Components
+RAMP,RAMP,NYQ,Software - Infrastructure
+RANG,RANG,NGM,Shell Companies
+RANI,RANI,NGM,Biotechnology
+RAPP,RAPP,NGM,Biotechnology
+RARE,RARE,NMS,Biotechnology
+RAVE,RAVE,,
+RAY,RAY,,
+RAYA,RAYA,,
+RBA,RBA,NYQ,Specialty Business Services
+RBB,RBB,NMS,Banks - Regional
+RBBN,RBBN,NMS,Software - Application
+RBC,RBC,NYQ,Tools & Accessories
+RBCAA,RBCAA,NMS,Banks - Regional
+RBKB,RBKB,NCM,Banks - Regional
+RBLX,RBLX,NYQ,Electronic Gaming & Multimedia
+RBNE,RBNE,,
+RBRK,RBRK,NYQ,Software - Infrastructure
+RC,RC,NYQ,REIT - Mortgage
+RCAT,RCAT,NCM,Aerospace & Defense
+RCEL,RCEL,NCM,Medical Devices
+RCI,RCI,NYQ,Telecom Services
+RCKT,RCKT,NGM,Biotechnology
+RCKY,RCKY,NMS,Footwear & Accessories
+RCL,RCL,NYQ,Travel Services
+RCMT,RCMT,NGM,Conglomerates
+RCON,RCON,,
+RCT,RCT,,
+RCUS,RCUS,NYQ,Biotechnology
+RDAC,RDAC,,
+RDAG,RDAG,NGM,Shell Companies
+RDCM,RDCM,NCM,Telecom Services
+RDDT,RDDT,NYQ,Internet Content & Information
+RDGT,RDGT,,
+RDI,RDI,,
+RDIB,RDIB,NCM,Entertainment
+RDN,RDN,NYQ,Insurance - Specialty
+RDNT,RDNT,NGM,Diagnostics & Research
+RDNW,RDNW,NCM,Auto & Truck Dealerships
+RDVT,RDVT,NCM,Software - Application
+RDW,RDW,NYQ,Aerospace & Defense
+RDWR,RDWR,NMS,Software - Infrastructure
+RDY,RDY,NYQ,Drug Manufacturers - Specialty & Generic
+RDZN,RDZN,NGM,Software - Application
+REA,REA,ASE,Other Industrial Metals & Mining
+REAL,REAL,NMS,Luxury Goods
+REAX,REAX,NCM,Real Estate Services
+REBN,REBN,,
+RECT,RECT,,
+REE,REE,,
+REED,REED,,
+REFI,REFI,NGM,REIT - Mortgage
+REFR,REFR,,
+REG,REG,NMS,REIT - Retail
+REGN,REGN,NMS,Biotechnology
+REI,REI,ASE,Oil & Gas E&P
+REKR,REKR,NCM,Software - Infrastructure
+RELL,RELL,NMS,Electronic Components
+RELY,RELY,NMS,Software - Infrastructure
+RENT,RENT,NGM,Apparel Retail
+RENX,RENX,,
+REPL,REPL,NMS,Biotechnology
+REPX,REPX,ASE,Oil & Gas E&P
+RES,RES,NYQ,Oil & Gas Equipment & Services
+RETO,RETO,,
+REVB,REVB,,
+REX,REX,NYQ,Chemicals
+REXR,REXR,NYQ,REIT - Industrial
+REYN,REYN,NMS,Packaging & Containers
+REZI,REZI,NYQ,Industrial Distribution
+RF,RF,NYQ,Banks - Regional
+RFAI,RFAI,NGM,Shell Companies
+RFAM,RFAM,NGM,Shell Companies
+RFIL,RFIL,NGM,Electrical Equipment & Parts
+RFL,RFL,NYQ,Real Estate Services
+RGA,RGA,NYQ,Insurance - Reinsurance
+RGC,RGC,NCM,Drug Manufacturers - Specialty & Generic
+RGCO,RGCO,NGM,Utilities - Regulated Gas
+RGEN,RGEN,NMS,Medical Instruments & Supplies
+RGLD,RGLD,NMS,Gold
+RGNT,RGNT,,
+RGNX,RGNX,NMS,Biotechnology
+RGP,RGP,NMS,Consulting Services
+RGR,RGR,NYQ,Aerospace & Defense
+RGS,RGS,NGM,Personal Services
+RGT,RGT,NYQ,Asset Management
+RGTI,RGTI,NCM,Computer Hardware
+RH,RH,NYQ,Specialty Retail
+RHI,RHI,NYQ,Staffing & Employment Services
+RHLD,RHLD,NYQ,Specialty Business Services
+RHP,RHP,NYQ,REIT - Hotel & Motel
+RIBB,RIBB,NCM,Shell Companies
+RICK,RICK,NGM,Restaurants
+RIG,RIG,NYQ,Oil & Gas Drilling
+RIGL,RIGL,NMS,Biotechnology
+RILY,RILY,NGM,Financial Conglomerates
+RIME,RIME,,
+RIO,RIO,NYQ,Other Industrial Metals & Mining
+RIOT,RIOT,NCM,Capital Markets
+RITM,RITM,NYQ,REIT - Mortgage
+RITR,RITR,,
+RIVN,RIVN,NMS,Auto Manufacturers
+RJET,RJET,NMS,Airlines
+RJF,RJF,NYQ,Asset Management
+RKDA,RKDA,,
+RKLB,RKLB,NMS,Aerospace & Defense
+RKT,RKT,NYQ,Mortgage Finance
+RKTO,RKTO,,
+RL,RL,NYQ,Apparel Manufacturing
+RLAY,RLAY,NGM,Biotechnology
+RLGT,RLGT,ASE,Integrated Freight & Logistics
+RLI,RLI,NYQ,Insurance - Property & Casualty
+RLJ,RLJ,NYQ,REIT - Hotel & Motel
+RLMD,RLMD,NCM,Biotechnology
+RLYB,RLYB,NCM,Biotechnology
+RM,RM,NYQ,Credit Services
+RMAX,RMAX,NYQ,Real Estate Services
+RMBI,RMBI,NCM,Banks - Regional
+RMBS,RMBS,NMS,Semiconductors
+RMCF,RMCF,,
+RMCO,RMCO,,
+RMD,RMD,NYQ,Medical Instruments & Supplies
+RMIX,RMIX,NGM,Building Materials
+RMNI,RMNI,NGM,Software - Application
+RMR,RMR,NCM,Real Estate Services
+RMSG,RMSG,,
+RMT,RMT,NYQ,Asset Management
+RMTI,RMTI,,
+RNA,RNA,NMS,Biotechnology
+RNAC,RNAC,NGM,Biotechnology
+RNAZ,RNAZ,,
+RNG,RNG,NYQ,Software - Application
+RNGR,RNGR,NYQ,Oil & Gas Equipment & Services
+RNGT,RNGT,NGM,Shell Companies
+RNR,RNR,NYQ,Insurance - Reinsurance
+RNST,RNST,NYQ,Banks - Regional
+RNTX,RNTX,NCM,Biotechnology
+RNW,RNW,NMS,Utilities - Renewable
+RNXT,RNXT,,
+ROAD,ROAD,NMS,Engineering & Construction
+ROC,ROC,NCM,
+ROCK,ROCK,NMS,Building Products & Equipment
+ROG,ROG,NYQ,Electronic Components
+ROIV,ROIV,NMS,Biotechnology
+ROK,ROK,NYQ,Specialty Industrial Machinery
+ROKU,ROKU,NMS,Entertainment
+ROL,ROL,NYQ,Personal Services
+ROLR,ROLR,ASE,Gambling
+ROMA,ROMA,NCM,Consulting Services
+ROOT,ROOT,NMS,Insurance - Property & Casualty
+ROP,ROP,NMS,Software - Application
+ROST,ROST,NMS,Apparel Retail
+RPAY,RPAY,NCM,Software - Infrastructure
+RPC,RPC,NYQ,Asset Management
+RPD,RPD,NGM,Software - Infrastructure
+RPGL,RPGL,,
+RPID,RPID,NCM,Medical Devices
+RPM,RPM,NYQ,Specialty Chemicals
+RPRX,RPRX,NMS,Biotechnology
+RPT,RPT,NYQ,REIT - Mortgage
+RR,RR,NCM,Specialty Industrial Machinery
+RRBI,RRBI,NMS,Banks - Regional
+RRC,RRC,NYQ,Oil & Gas E&P
+RREV,RREV,NGM,
+RRGB,RRGB,NMS,Restaurants
+RRR,RRR,NMS,Resorts & Casinos
+RRX,RRX,NYQ,Specialty Industrial Machinery
+RS,RS,NYQ,Steel
+RSG,RSG,NYQ,Waste Management
+RSI,RSI,NYQ,Gambling
+RSKD,RSKD,NYQ,Software - Application
+RSSS,RSSS,NCM,Software - Application
+RSVR,RSVR,NGM,Entertainment
+RTAC,RTAC,NGM,Shell Companies
+RTB,RTB,NCM,Software - Application
+RTX,RTX,NYQ,Aerospace & Defense
+RUBI,RUBI,,
+RUM,RUM,NGM,Internet Content & Information
+RUN,RUN,NMS,Solar
+RUSHA,RUSHA,NMS,Auto & Truck Dealerships
+RUSHB,RUSHB,NMS,Auto & Truck Dealerships
+RVLV,RVLV,NYQ,Internet Retail
+RVMD,RVMD,NMS,Biotechnology
+RVP,RVP,,
+RVSB,RVSB,NMS,Banks - Regional
+RVSN,RVSN,,
+RVT,RVT,NYQ,Asset Management
+RVTY,RVTY,NYQ,Diagnostics & Research
+RWAY,RWAY,NMS,Asset Management
+RWT,RWT,NYQ,REIT - Mortgage
+RXO,RXO,NYQ,Trucking
+RXRX,RXRX,NMS,Biotechnology
+RXST,RXST,NGM,Medical Devices
+RXT,RXT,NMS,Software - Infrastructure
+RY,RY,NYQ,Banks - Diversified
+RYAM,RYAM,NYQ,Chemicals
+RYAN,RYAN,NYQ,Insurance - Specialty
+RYDE,RYDE,ASE,Software - Application
+RYET,RYET,,
+RYM,RYM,NCM,Tobacco
+RYN,RYN,NYQ,REIT - Specialty
+RYOJ,RYOJ,,
+RYTM,RYTM,NGM,Biotechnology
+RYZ,RYZ,NYQ,Metal Fabrication
+RZC,RZC,NYQ,
+RZLT,RZLT,NCM,Biotechnology
+RZLV,RZLV,NGM,Software - Infrastructure
+S,S,NYQ,Software - Infrastructure
+SA,SA,NYQ,Gold
+SAAQ,SAAQ,NGM,Shell Companies
+SABR,SABR,NMS,Software - Infrastructure
+SABS,SABS,NCM,Biotechnology
+SAC,SAC,NYQ,Shell Companies
+SACH,SACH,,
+SAFE,SAFE,NYQ,REIT - Diversified
+SAFT,SAFT,NMS,Insurance - Property & Casualty
+SAFX,SAFX,NCM,Utilities - Renewable
+SAGT,SAGT,,
+SAGU,SAGU,NYQ,Shell Companies
+SAH,SAH,NYQ,Auto & Truck Dealerships
+SAIA,SAIA,NMS,Trucking
+SAIC,SAIC,NMS,Information Technology Services
+SAIH,SAIH,,
+SAIL,SAIL,NMS,Software - Infrastructure
+SAM,SAM,NYQ,Beverages - Brewers
+SAMG,SAMG,NGM,Asset Management
+SAN,SAN,NYQ,Banks - Diversified
+SANA,SANA,NMS,Biotechnology
+SANG,SANG,NMS,Software - Infrastructure
+SANM,SANM,NMS,Electronic Components
+SAP,SAP,NYQ,Software - Application
+SAR,SAR,NYQ,Asset Management
+SARO,SARO,NYQ,Aerospace & Defense
+SATL,SATL,NCM,Aerospace & Defense
+SATS,SATS,NMS,Telecom Services
+SB,SB,NYQ,Marine Shipping
+SBAC,SBAC,NMS,REIT - Specialty
+SBC,SBC,NGM,Consulting Services
+SBCF,SBCF,NMS,Banks - Regional
+SBET,SBET,NCM,Capital Markets
+SBEV,SBEV,,
+SBFG,SBFG,NCM,Banks - Regional
+SBFM,SBFM,,
+SBGI,SBGI,NMS,Broadcasting
+SBH,SBH,NYQ,Specialty Retail
+SBLK,SBLK,NMS,Marine Shipping
+SBMT,SBMT,ASE,Other Industrial Metals & Mining
+SBR,SBR,NYQ,Oil & Gas Midstream
+SBRA,SBRA,NMS,REIT - Healthcare Facilities
+SBSI,SBSI,NYQ,Banks - Regional
+SBSW,SBSW,NYQ,Other Precious Metals & Mining
+SBUX,SBUX,NMS,Restaurants
+SBXD,SBXD,NYQ,Shell Companies
+SBXE,SBXE,NYQ,Shell Companies
+SCCO,SCCO,NYQ,Copper
+SCHL,SCHL,NMS,Publishing
+SCHW,SCHW,NYQ,Capital Markets
+SCI,SCI,NYQ,Personal Services
+SCII,SCII,NGM,Shell Companies
+SCKT,SCKT,,
+SCL,SCL,NYQ,Specialty Chemicals
+SCLX,SCLX,NCM,Drug Manufacturers - General
+SCM,SCM,NYQ,Asset Management
+SCNX,SCNX,,
+SCOR,SCOR,NMS,Software - Application
+SCPQ,SCPQ,NGM,Shell Companies
+SCSC,SCSC,NMS,Electronics & Computer Distribution
+SCWO,SCWO,,
+SCYX,SCYX,NCM,Drug Manufacturers - Specialty & Generic
+SCZM,SCZM,NCM,Other Industrial Metals & Mining
+SD,SD,NYQ,Oil & Gas E&P
+SDA,SDA,NCM,Auto & Truck Dealerships
+SDEV,SDEV,,
+SDGR,SDGR,NMS,Health Information Services
+SDHC,SDHC,NYQ,Real Estate - Development
+SDHI,SDHI,NGM,Shell Companies
+SDM,SDM,NCM,Advertising Agencies
+SDOT,SDOT,,
+SDRL,SDRL,NYQ,Oil & Gas Drilling
+SDST,SDST,,
+SEAT,SEAT,NMS,Internet Content & Information
+SEB,SEB,ASE,Conglomerates
+SEDG,SEDG,NMS,Solar
+SEED,SEED,,
+SEER,SEER,NMS,Biotechnology
+SEG,SEG,NYQ,Real Estate Services
+SEGG,SEGG,,
+SEI,SEI,NYQ,Oil & Gas Equipment & Services
+SEIC,SEIC,NMS,Asset Management
+SELF,SELF,NCM,REIT - Specialty
+SEM,SEM,NYQ,Medical Care Facilities
+SENEA,SENEA,NMS,Packaged Foods
+SENEB,SENEB,NMS,Packaged Foods
+SENS,SENS,NMS,Medical Devices
+SEPN,SEPN,NGM,Biotechnology
+SER,SER,,
+SERA,SERA,NGM,Medical Devices
+SERV,SERV,NCM,Specialty Industrial Machinery
+SES,SES,NYQ,Auto Parts
+SEV,SEV,NCM,
+SEVN,SEVN,NCM,REIT - Mortgage
+SEZL,SEZL,NCM,Credit Services
+SF,SF,NYQ,Capital Markets
+SFBC,SFBC,NCM,Banks - Regional
+SFBS,SFBS,NYQ,Banks - Regional
+SFD,SFD,NMS,Packaged Foods
+SFHG,SFHG,,
+SFIX,SFIX,NMS,Apparel Retail
+SFL,SFL,NYQ,Marine Shipping
+SFM,SFM,NMS,Grocery Stores
+SFNC,SFNC,NMS,Banks - Regional
+SFST,SFST,NGM,Banks - Regional
+SFWL,SFWL,NCM,Integrated Freight & Logistics
+SG,SG,NYQ,Restaurants
+SGA,SGA,NGM,Broadcasting
+SGC,SGC,NGM,Apparel Manufacturing
+SGHC,SGHC,NYQ,Gambling
+SGHT,SGHT,NMS,Medical Devices
+SGI,SGI,NYQ,"Furnishings, Fixtures & Appliances"
+SGLY,SGLY,,
+SGML,SGML,NCM,Other Industrial Metals & Mining
+SGMT,SGMT,NGM,Biotechnology
+SGP,SGP,NMS,Biotechnology
+SGRP,SGRP,,
+SGRY,SGRY,NMS,Medical Care Facilities
+SGU,SGU,NYQ,Oil & Gas Refining & Marketing
+SHAK,SHAK,NYQ,Restaurants
+SHAZ,SHAZ,NCM,Information Technology Services
+SHBI,SHBI,NMS,Banks - Regional
+SHC,SHC,NMS,Diagnostics & Research
+SHEN,SHEN,NMS,Telecom Services
+SHFS,SHFS,,
+SHIM,SHIM,NCM,Engineering & Construction
+SHIP,SHIP,NCM,Marine Shipping
+SHLS,SHLS,NGM,Solar
+SHMD,SHMD,NGM,Specialty Industrial Machinery
+SHO,SHO,NYQ,REIT - Hotel & Motel
+SHOE,SHOE,NMS,Apparel Retail
+SHOO,SHOO,NMS,Footwear & Accessories
+SHOP,SHOP,NMS,Software - Application
+SHPH,SHPH,,
+SHW,SHW,NYQ,Specialty Chemicals
+SI,SI,NYQ,
+SIBN,SIBN,NGM,Medical Devices
+SID,SID,NYQ,Steel
+SIDU,SIDU,NCM,Aerospace & Defense
+SIEB,SIEB,NCM,Capital Markets
+SIF,SIF,ASE,Aerospace & Defense
+SIFY,SIFY,NCM,Telecom Services
+SIG,SIG,NYQ,Luxury Goods
+SIGA,SIGA,NGM,Drug Manufacturers - Specialty & Generic
+SIGI,SIGI,NMS,Insurance - Property & Casualty
+SII,SII,NYQ,Asset Management
+SILA,SILA,NYQ,REIT - Healthcare Facilities
+SILC,SILC,NMS,Communication Equipment
+SILO,SILO,,
+SIMA,SIMA,NGM,Shell Companies
+SINT,SINT,,
+SION,SION,NGM,Biotechnology
+SIRI,SIRI,NMS,Entertainment
+SITC,SITC,NYQ,REIT - Retail
+SITE,SITE,NYQ,Industrial Distribution
+SITM,SITM,NGM,Semiconductors
+SJ,SJ,,
+SJM,SJM,NYQ,Packaged Foods
+SJT,SJT,NYQ,Oil & Gas E&P
+SKE,SKE,NYQ,Other Industrial Metals & Mining
+SKIL,SKIL,NYQ,Education & Training Services
+SKIN,SKIN,NCM,Household & Personal Products
+SKK,SKK,,
+SKLZ,SKLZ,NYQ,Electronic Gaming & Multimedia
+SKM,SKM,NYQ,Telecom Services
+SKT,SKT,NYQ,REIT - Retail
+SKWD,SKWD,NMS,Insurance - Property & Casualty
+SKY,SKY,NYQ,Residential Construction
+SKYA,SKYA,,
+SKYE,SKYE,,
+SKYH,SKYH,NYQ,Real Estate - Development
+SKYQ,SKYQ,,
+SKYT,SKYT,NCM,Semiconductors
+SKYW,SKYW,NMS,Airlines
+SKYX,SKYX,NCM,Electrical Equipment & Parts
+SLAB,SLAB,NMS,Semiconductors
+SLB,SLB,NYQ,Oil & Gas Equipment & Services
+SLBT,SLBT,NGM,Biotechnology
+SLDB,SLDB,NMS,Biotechnology
+SLDE,SLDE,NMS,Insurance - Property & Casualty
+SLDP,SLDP,NMS,Auto Parts
+SLE,SLE,,
+SLF,SLF,NYQ,Insurance - Diversified
+SLG,SLG,NYQ,REIT - Office
+SLGB,SLGB,,
+SLGL,SLGL,NCM,Biotechnology
+SLGN,SLGN,NYQ,Packaging & Containers
+SLI,SLI,ASE,Other Industrial Metals & Mining
+SLM,SLM,NMS,Credit Services
+SLMT,SLMT,,
+SLN,SLN,NGM,Biotechnology
+SLND,SLND,,
+SLNG,SLNG,NCM,Oil & Gas Integrated
+SLNH,SLNH,NCM,Capital Markets
+SLP,SLP,NMS,Health Information Services
+SLQT,SLQT,NYQ,Insurance Brokers
+SLS,SLS,NCM,Biotechnology
+SLSN,SLSN,NCM,Household & Personal Products
+SLSR,SLSR,ASE,Other Precious Metals & Mining
+SLVM,SLVM,NYQ,Paper & Paper Products
+SLXN,SLXN,,
+SM,SM,NYQ,Oil & Gas E&P
+SMA,SMA,NYQ,REIT - Industrial
+SMBC,SMBC,NGM,Banks - Regional
+SMBK,SMBK,NYQ,Banks - Regional
+SMC,SMC,NYQ,Oil & Gas Midstream
+SMCI,SMCI,NMS,Computer Hardware
+SMG,SMG,NYQ,Agricultural Inputs
+SMHI,SMHI,NYQ,Marine Shipping
+SMID,SMID,NCM,Building Materials
+SMJF,SMJF,ASE,Textile Manufacturing
+SMMT,SMMT,NGM,Biotechnology
+SMP,SMP,NYQ,Auto Parts
+SMPL,SMPL,NCM,Packaged Foods
+SMR,SMR,NYQ,Specialty Industrial Machinery
+SMRT,SMRT,NYQ,Software - Application
+SMSI,SMSI,,
+SMTC,SMTC,NMS,Semiconductors
+SMTI,SMTI,NCM,Medical Instruments & Supplies
+SMTK,SMTK,,
+SMWB,SMWB,NYQ,Software - Application
+SMX,SMX,,
+SMXT,SMXT,,
+SN,SN,NYQ,"Furnishings, Fixtures & Appliances"
+SNA,SNA,NYQ,Tools & Accessories
+SNAL,SNAL,,
+SNAP,SNAP,NYQ,Internet Content & Information
+SNBR,SNBR,,
+SND,SND,NMS,Oil & Gas Equipment & Services
+SNDA,SNDA,NYQ,Medical Care Facilities
+SNDK,SNDK,NMS,Computer Hardware
+SNDL,SNDL,NCM,Beverages - Wineries & Distilleries
+SNDR,SNDR,NYQ,Trucking
+SNDX,SNDX,NMS,Biotechnology
+SNES,SNES,,
+SNEX,SNEX,NMS,Capital Markets
+SNFCA,SNFCA,NGM,Insurance - Life
+SNGX,SNGX,,
+SNN,SNN,NYQ,Medical Devices
+SNOA,SNOA,,
+SNOW,SNOW,NYQ,Software - Application
+SNPS,SNPS,NMS,Software - Infrastructure
+SNT,SNT,NGM,Security & Protection Services
+SNTG,SNTG,,
+SNTI,SNTI,,
+SNWV,SNWV,NGM,Medical Devices
+SNX,SNX,NYQ,Electronics & Computer Distribution
+SNYR,SNYR,,
+SO,SO,NYQ,Utilities - Regulated Electric
+SOAR,SOAR,,
+SOBO,SOBO,NYQ,Oil & Gas Midstream
+SOBR,SOBR,,
+SOC,SOC,NYQ,Oil & Gas Drilling
+SOCA,SOCA,NGM,Shell Companies
+SOFI,SOFI,NMS,Credit Services
+SOLS,SOLS,NMS,Specialty Chemicals
+SOLV,SOLV,NYQ,Medical Instruments & Supplies
+SON,SON,NYQ,Packaging & Containers
+SONM,SONM,,
+SONO,SONO,NMS,Consumer Electronics
+SOPH,SOPH,NMS,Health Information Services
+SOR,SOR,NYQ,Asset Management
+SORA,SORA,NCM,Luxury Goods
+SORN,SORN,NGM,Shell Companies
+SOS,SOS,,
+SOTK,SOTK,NCM,Scientific & Technical Instruments
+SOUL,SOUL,NYQ,Shell Companies
+SOUN,SOUN,NGM,Software - Application
+SOWG,SOWG,NCM,Confectioners
+SPAI,SPAI,NCM,Aerospace & Defense
+SPB,SPB,NYQ,Household & Personal Products
+SPCB,SPCB,NCM,Security & Protection Services
+SPCE,SPCE,NYQ,Aerospace & Defense
+SPCX,SPCX,NMS,Aerospace & Defense
+SPEG,SPEG,NGM,Shell Companies
+SPFI,SPFI,NMS,Banks - Regional
+SPG,SPG,NYQ,REIT - Retail
+SPGI,SPGI,NYQ,Financial Data & Stock Exchanges
+SPH,SPH,NYQ,Utilities - Regulated Gas
+SPHL,SPHL,,
+SPHR,SPHR,NYQ,Entertainment
+SPIR,SPIR,NYQ,Specialty Business Services
+SPKL,SPKL,NGM,Shell Companies
+SPMC,SPMC,NYQ,Asset Management
+SPNT,SPNT,NYQ,Insurance - Reinsurance
+SPOK,SPOK,NMS,Health Information Services
+SPOT,SPOT,NYQ,Internet Content & Information
+SPPL,SPPL,,
+SPRB,SPRB,NCM,Biotechnology
+SPRC,SPRC,,
+SPRO,SPRO,NMS,Biotechnology
+SPRU,SPRU,NYQ,Solar
+SPRY,SPRY,NGM,Biotechnology
+SPSC,SPSC,NMS,Software - Application
+SPT,SPT,NCM,Software - Application
+SPTX,SPTX,NMS,Biotechnology
+SPWH,SPWH,NMS,Specialty Retail
+SPWR,SPWR,NGM,Solar
+SPXC,SPXC,NYQ,Building Products & Equipment
+SQFT,SQFT,,
+SQM,SQM,NYQ,Specialty Chemicals
+SR,SR,NYQ,Utilities - Regulated Gas
+SRAD,SRAD,NMS,Software - Application
+SRBK,SRBK,NCM,Banks - Regional
+SRCE,SRCE,NMS,Banks - Regional
+SRE,SRE,NYQ,Utilities - Diversified
+SRFM,SRFM,NYQ,Airlines
+SRG,SRG,NYQ,Real Estate Services
+SRI,SRI,NYQ,Auto Parts
+SRL,SRL,NYQ,Capital Markets
+SRPT,SRPT,NMS,Biotechnology
+SRRK,SRRK,NMS,Biotechnology
+SRTA,SRTA,NCM,Medical Care Facilities
+SRTS,SRTS,,
+SRXH,SRXH,ASE,Packaged Foods
+SRZN,SRZN,NCM,Biotechnology
+SSAC,SSAC,NGM,Shell Companies
+SSB,SSB,NYQ,Banks - Regional
+SSBI,SSBI,NGM,Banks - Regional
+SSD,SSD,NYQ,Lumber & Wood Production
+SSEA,SSEA,NCM,Shell Companies
+SSII,SSII,NCM,Medical Devices
+SSM,SSM,,
+SSMR,SSMR,NYQ,Other Industrial Metals & Mining
+SSNC,SSNC,NMS,Software - Application
+SSP,SSP,NMS,Broadcasting
+SSRM,SSRM,NMS,Gold
+SST,SST,,
+SSTI,SSTI,NCM,Software - Application
+SSTK,SSTK,NYQ,Internet Content & Information
+SSYS,SSYS,NMS,Computer Hardware
+ST,ST,NYQ,Scientific & Technical Instruments
+STAA,STAA,NGM,Medical Instruments & Supplies
+STAG,STAG,NYQ,REIT - Industrial
+STAK,STAK,NCM,Oil & Gas Equipment & Services
+STBA,STBA,NMS,Banks - Regional
+STC,STC,NYQ,Insurance - Property & Casualty
+STE,STE,NYQ,Medical Devices
+STEL,STEL,NYQ,Banks - Regional
+STEM,STEM,NYQ,Utilities - Renewable
+STEP,STEP,NMS,Asset Management
+STEX,STEX,NCM,Capital Markets
+STFS,STFS,,
+STGW,STGW,NMS,Advertising Agencies
+STHO,STHO,NGM,Real Estate Services
+STI,STI,NCM,Electrical Equipment & Parts
+STIM,STIM,NGM,Medical Devices
+STKE,STKE,,
+STKS,STKS,NCM,Restaurants
+STLA,STLA,NYQ,Auto Manufacturers
+STLD,STLD,NMS,Steel
+STM,STM,NYQ,Semiconductors
+STN,STN,NYQ,Engineering & Construction
+STNE,STNE,NMS,Software - Infrastructure
+STNG,STNG,NYQ,Oil & Gas Midstream
+STOK,STOK,NMS,Biotechnology
+STRA,STRA,NMS,Education & Training Services
+STRL,STRL,NMS,Engineering & Construction
+STRO,STRO,NGM,Biotechnology
+STRR,STRR,,
+STRS,STRS,NMS,Real Estate - Diversified
+STRT,STRT,NGM,Auto Parts
+STRW,STRW,ASE,REIT - Healthcare Facilities
+STRZ,STRZ,NMS,Entertainment
+STT,STT,NYQ,Asset Management
+STTK,STTK,NMS,Biotechnology
+STUB,STUB,NYQ,Internet Content & Information
+STVN,STVN,NYQ,Medical Instruments & Supplies
+STWD,STWD,NYQ,REIT - Mortgage
+STX,STX,NMS,Computer Hardware
+STXS,STXS,ASE,Medical Instruments & Supplies
+STZ,STZ,NYQ,Beverages - Brewers
+SU,SU,NYQ,Oil & Gas Integrated
+SUGP,SUGP,,
+SUI,SUI,NYQ,REIT - Residential
+SUIG,SUIG,NCM,Credit Services
+SUJA,SUJA,NMS,Beverages - Non-Alcoholic
+SUMA,SUMA,NGM,Shell Companies
+SUNB,SUNB,NYQ,Rental & Leasing Services
+SUNE,SUNE,,
+SUNS,SUNS,NCM,REIT - Mortgage
+SUPN,SUPN,NGM,Drug Manufacturers - Specialty & Generic
+SUPX,SUPX,NCM,Software - Infrastructure
+SURG,SURG,,
+SVA,SVA,NMS,
+SVAC,SVAC,NGM,Shell Companies
+SVAQ,SVAQ,NGM,Shell Companies
+SVC,SVC,NMS,REIT - Hotel & Motel
+SVCC,SVCC,NGM,Shell Companies
+SVCO,SVCO,NMS,Software - Application
+SVIV,SVIV,NGM,Shell Companies
+SVM,SVM,ASE,Silver
+SVRA,SVRA,NMS,Biotechnology
+SVRN,SVRN,,
+SVV,SVV,NYQ,Specialty Retail
+SW,SW,NYQ,Packaging & Containers
+SWAG,SWAG,,
+SWBI,SWBI,NMS,Aerospace & Defense
+SWIM,SWIM,NMS,Building Products & Equipment
+SWK,SWK,NYQ,Tools & Accessories
+SWKS,SWKS,NMS,Semiconductors
+SWMR,SWMR,NCM,Software - Infrastructure
+SWVL,SWVL,,
+SWX,SWX,NYQ,Utilities - Regulated Gas
+SXC,SXC,NYQ,Coking Coal
+SXI,SXI,NYQ,Specialty Industrial Machinery
+SXT,SXT,NYQ,Specialty Chemicals
+SXTC,SXTC,,
+SXTP,SXTP,,
+SY,SY,NCM,Health Information Services
+SYBT,SYBT,NMS,Banks - Regional
+SYF,SYF,NYQ,Credit Services
+SYK,SYK,NYQ,Medical Devices
+SYM,SYM,NGM,Specialty Industrial Machinery
+SYNA,SYNA,NMS,Semiconductors
+SYNX,SYNX,,
+SYPR,SYPR,NGM,Auto Parts
+SYRE,SYRE,NMS,Biotechnology
+SYY,SYY,NYQ,Food Distribution
+SZZL,SZZL,NGM,Shell Companies
+T,T,NYQ,Telecom Services
+TAC,TAC,NYQ,Utilities - Independent Power Producers
+TACH,TACH,NGM,Shell Companies
+TACO,TACO,NGM,Shell Companies
+TACT,TACT,NGM,Computer Hardware
+TALK,TALK,NCM,Health Information Services
+TALO,TALO,NYQ,Oil & Gas E&P
+TANH,TANH,,
+TAOP,TAOP,,
+TAOX,TAOX,,
+TAP,TAP,NYQ,Beverages - Brewers
+TAP-A,TAP-A,NYQ,Beverages - Brewers
+TARA,TARA,NGM,Biotechnology
+TARS,TARS,NMS,Biotechnology
+TASK,TASK,NMS,Information Technology Services
+TATT,TATT,NGM,Aerospace & Defense
+TAVI,TAVI,NGM,Shell Companies
+TAYD,TAYD,NCM,Specialty Industrial Machinery
+TBBB,TBBB,NYQ,Discount Stores
+TBBK,TBBK,NMS,Banks - Regional
+TBCH,TBCH,NGM,Consumer Electronics
+TBH,TBH,NCM,Electronic Gaming & Multimedia
+TBI,TBI,NYQ,Staffing & Employment Services
+TBLA,TBLA,NMS,Internet Content & Information
+TBN,TBN,NYQ,Oil & Gas E&P
+TBPH,TBPH,NGM,Biotechnology
+TBRG,TBRG,NMS,Health Information Services
+TCBI,TCBI,NMS,Banks - Regional
+TCBK,TCBK,NMS,Banks - Regional
+TCBS,TCBS,NCM,Banks - Regional
+TCBX,TCBX,NYQ,Banks - Regional
+TCI,TCI,NYQ,Real Estate Services
+TCMD,TCMD,NGM,Medical Devices
+TCRT,TCRT,,
+TCRX,TCRX,NGM,Biotechnology
+TCX,TCX,NCM,Software - Infrastructure
+TD,TD,NYQ,Banks - Diversified
+TDAC,TDAC,NGM,Shell Companies
+TDAY,TDAY,NYQ,Publishing
+TDC,TDC,NYQ,Software - Infrastructure
+TDG,TDG,NYQ,Aerospace & Defense
+TDIC,TDIC,,
+TDOC,TDOC,NYQ,Health Information Services
+TDS,TDS,NYQ,Telecom Services
+TDTH,TDTH,,
+TDUP,TDUP,NMS,Internet Retail
+TDW,TDW,NYQ,Oil & Gas Equipment & Services
+TDWD,TDWD,NGM,Shell Companies
+TDY,TDY,NYQ,Scientific & Technical Instruments
+TE,TE,NYQ,Electrical Equipment & Parts
+TEAD,TEAD,NMS,Internet Content & Information
+TEAM,TEAM,NMS,Software - Application
+TECH,TECH,NMS,Biotechnology
+TECK,TECK,NYQ,Other Industrial Metals & Mining
+TECX,TECX,NGM,Biotechnology
+TEL,TEL,NYQ,Electronic Components
+TELA,TELA,,
+TELO,TELO,NCM,Biotechnology
+TEM,TEM,NMS,Health Information Services
+TEN,TEN,NYQ,Oil & Gas Midstream
+TENB,TENB,NMS,Software - Infrastructure
+TENX,TENX,NCM,Biotechnology
+TEO,TEO,NYQ,Telecom Services
+TER,TER,NMS,Semiconductor Equipment & Materials
+TEX,TEX,NYQ,Farm & Heavy Construction Machinery
+TFC,TFC,NYQ,Banks - Regional
+TFII,TFII,NYQ,Trucking
+TFIN,TFIN,NYQ,Banks - Regional
+TFPM,TFPM,NYQ,Other Precious Metals & Mining
+TFSL,TFSL,NMS,Banks - Regional
+TFX,TFX,NYQ,Medical Instruments & Supplies
+TG,TG,NYQ,Metal Fabrication
+TGB,TGB,ASE,Copper
+TGE,TGE,NYQ,Asset Management
+TGEN,TGEN,ASE,Electrical Equipment & Parts
+TGHL,TGHL,,
+TGL,TGL,,
+TGLS,TGLS,NYQ,Building Materials
+TGS,TGS,NYQ,Oil & Gas Integrated
+TGT,TGT,NYQ,Discount Stores
+TGTX,TGTX,NCM,Biotechnology
+TH,TH,NCM,Specialty Business Services
+THC,THC,NYQ,Medical Care Facilities
+THCH,THCH,NCM,Restaurants
+THFF,THFF,NMS,Banks - Regional
+THG,THG,NYQ,Insurance - Property & Casualty
+THH,THH,,
+THM,THM,ASE,Gold
+THO,THO,NYQ,Recreational Vehicles
+THRM,THRM,NMS,Auto Parts
+THRY,THRY,NCM,Software - Application
+TIC,TIC,NYQ,Specialty Business Services
+TIGO,TIGO,NMS,Telecom Services
+TII,TII,ASE,Other Industrial Metals & Mining
+TIL,TIL,NCM,Biotechnology
+TILE,TILE,NMS,"Furnishings, Fixtures & Appliances"
+TIPT,TIPT,NCM,Insurance - Specialty
+TISI,TISI,NYQ,Specialty Business Services
+TITN,TITN,NMS,Industrial Distribution
+TJGC,TJGC,,
+TJX,TJX,NYQ,Apparel Retail
+TK,TK,NYQ,Oil & Gas Midstream
+TKC,TKC,NYQ,Telecom Services
+TKNO,TKNO,NGM,Drug Manufacturers - Specialty & Generic
+TKO,TKO,NYQ,Entertainment
+TKR,TKR,NYQ,Tools & Accessories
+TLF,TLF,,
+TLIH,TLIH,,
+TLK,TLK,NYQ,Telecom Services
+TLN,TLN,NMS,Utilities - Independent Power Producers
+TLNC,TLNC,NGM,Shell Companies
+TLPH,TLPH,NCM,Drug Manufacturers - Specialty & Generic
+TLRY,TLRY,NMS,Drug Manufacturers - Specialty & Generic
+TLS,TLS,NGM,Software - Infrastructure
+TLSA,TLSA,NCM,Biotechnology
+TLSI,TLSI,NGM,Medical Devices
+TLYS,TLYS,NYQ,Apparel Retail
+TM,TM,NYQ,Auto Manufacturers
+TMC,TMC,NMS,Other Industrial Metals & Mining
+TMCI,TMCI,NMS,Medical Devices
+TMCR,TMCR,NCM,Other Industrial Metals & Mining
+TMDE,TMDE,,
+TMDX,TMDX,NGM,Medical Devices
+TMHC,TMHC,NYQ,Residential Construction
+TMO,TMO,NYQ,Diagnostics & Research
+TMP,TMP,ASE,Banks - Regional
+TMQ,TMQ,ASE,Other Industrial Metals & Mining
+TMTS,TMTS,NGM,Shell Companies
+TMUS,TMUS,NMS,Telecom Services
+TNC,TNC,NYQ,Specialty Industrial Machinery
+TNDM,TNDM,NGM,Medical Devices
+TNET,TNET,NYQ,Staffing & Employment Services
+TNGX,TNGX,NGM,Biotechnology
+TNK,TNK,NYQ,Oil & Gas Midstream
+TNL,TNL,NYQ,Travel Services
+TNMG,TNMG,,
+TNON,TNON,,
+TNXP,TNXP,NMS,Biotechnology
+TNYA,TNYA,NMS,Biotechnology
+TOI,TOI,NCM,Medical Care Facilities
+TOL,TOL,NYQ,Residential Construction
+TOMZ,TOMZ,,
+TONX,TONX,NCM,Software - Application
+TOON,TOON,ASE,Entertainment
+TOP,TOP,NCM,Capital Markets
+TOPP,TOPP,,
+TOPS,TOPS,,
+TORO,TORO,NCM,Oil & Gas Midstream
+TOST,TOST,NYQ,Software - Infrastructure
+TOVX,TOVX,,
+TOWN,TOWN,NMS,Banks - Regional
+TOYO,TOYO,NCM,Solar
+TPB,TPB,NYQ,Tobacco
+TPC,TPC,NYQ,Engineering & Construction
+TPCS,TPCS,,
+TPET,TPET,,
+TPG,TPG,NMS,Asset Management
+TPL,TPL,NYQ,Oil & Gas E&P
+TPR,TPR,NYQ,Luxury Goods
+TPST,TPST,,
+TPVG,TPVG,NYQ,Asset Management
+TR,TR,NYQ,Confectioners
+TRAD,TRAD,NYQ,Shell Companies
+TRAK,TRAK,NYQ,Software - Application
+TRAW,TRAW,,
+TRAX,TRAX,NMS,Biotechnology
+TRC,TRC,NYQ,Conglomerates
+TRDA,TRDA,NGM,Biotechnology
+TREE,TREE,NMS,Financial Conglomerates
+TREX,TREX,NYQ,Building Products & Equipment
+TRGP,TRGP,NYQ,Oil & Gas Midstream
+TRGS,TRGS,NGM,Shell Companies
+TRI,TRI,NMS,Specialty Business Services
+TRIN,TRIN,NMS,Asset Management
+TRIP,TRIP,NMS,Travel Services
+TRLV,TRLV,NYQ,Drug Manufacturers - Specialty & Generic
+TRMB,TRMB,NMS,Scientific & Technical Instruments
+TRMD,TRMD,NMS,Oil & Gas Midstream
+TRMK,TRMK,NMS,Banks - Regional
+TRN,TRN,NYQ,Railroads
+TRNO,TRNO,NYQ,REIT - Industrial
+TRNR,TRNR,,
+TRNS,TRNS,NGM,Specialty Business Services
+TRON,TRON,NCM,Leisure
+TROO,TROO,NCM,Credit Services
+TROW,TROW,NMS,Asset Management
+TROX,TROX,NYQ,Chemicals
+TRP,TRP,NYQ,Oil & Gas Midstream
+TRS,TRS,NMS,Packaging & Containers
+TRSG,TRSG,,
+TRST,TRST,NMS,Banks - Regional
+TRT,TRT,ASE,Semiconductor Equipment & Materials
+TRTX,TRTX,NYQ,REIT - Mortgage
+TRU,TRU,NYQ,Financial Data & Stock Exchanges
+TRUG,TRUG,,
+TRUP,TRUP,NGM,Insurance - Property & Casualty
+TRV,TRV,NYQ,Insurance - Property & Casualty
+TRVI,TRVI,NGM,Biotechnology
+TRX,TRX,ASE,Gold
+TSAT,TSAT,NMS,Communication Equipment
+TSBK,TSBK,NGM,Banks - Regional
+TSCO,TSCO,NMS,Specialty Retail
+TSEM,TSEM,NMS,Semiconductors
+TSHA,TSHA,NMS,Biotechnology
+TSLA,TSLA,NMS,Auto Manufacturers
+TSLX,TSLX,NYQ,Asset Management
+TSM,TSM,NYQ,Semiconductors
+TSN,TSN,NYQ,Farm Products
+TSQ,TSQ,NYQ,Advertising Agencies
+TSSI,TSSI,NCM,Information Technology Services
+TT,TT,NYQ,Building Products & Equipment
+TTAM,TTAM,NYQ,Building Materials
+TTAN,TTAN,NMS,Software - Application
+TTC,TTC,NYQ,Tools & Accessories
+TTD,TTD,NGM,Advertising Agencies
+TTE,TTE,NYQ,Oil & Gas Integrated
+TTEC,TTEC,NMS,Information Technology Services
+TTEK,TTEK,NMS,Engineering & Construction
+TTGT,TTGT,NMS,Information Technology Services
+TTI,TTI,NYQ,Conglomerates
+TTMI,TTMI,NMS,Electronic Components
+TTRX,TTRX,NGM,Biotechnology
+TTWO,TTWO,NMS,Electronic Gaming & Multimedia
+TU,TU,NYQ,Telecom Services
+TULP,TULP,,
+TUSK,TUSK,NMS,Conglomerates
+TV,TV,NYQ,Telecom Services
+TVA,TVA,NGM,Shell Companies
+TVAI,TVAI,NGM,Shell Companies
+TVC,TVC,NYQ,
+TVE,TVE,NYQ,
+TVGN,TVGN,,
+TVRD,TVRD,,
+TVTX,TVTX,NGM,Biotechnology
+TW,TW,NMS,Capital Markets
+TWAV,TWAV,,
+TWFG,TWFG,NMS,Insurance Brokers
+TWG,TWG,NCM,Food Distribution
+TWI,TWI,NYQ,Farm & Heavy Construction Machinery
+TWIN,TWIN,NMS,Specialty Industrial Machinery
+TWLO,TWLO,NYQ,Software - Infrastructure
+TWLV,TWLV,NGM,Shell Companies
+TWO,TWO,NYQ,REIT - Mortgage
+TWST,TWST,NMS,Diagnostics & Research
+TXG,TXG,NMS,Health Information Services
+TXMD,TXMD,,
+TXN,TXN,NMS,Semiconductors
+TXNM,TXNM,NYQ,Utilities - Regulated Electric
+TXRH,TXRH,NMS,Restaurants
+TXT,TXT,NYQ,Aerospace & Defense
+TY,TY,NYQ,Asset Management
+TYG,TYG,NYQ,Asset Management
+TYGO,TYGO,NCM,Solar
+TYL,TYL,NYQ,Software - Application
+TYRA,TYRA,NMS,Biotechnology
+TZOO,TZOO,NMS,Internet Content & Information
+U,U,NYQ,Software - Application
+UA,UA,NYQ,Apparel Manufacturing
+UAA,UAA,NYQ,Apparel Manufacturing
+UAC,UAC,ASE,Shell Companies
+UAL,UAL,NMS,Airlines
+UAMY,UAMY,NYQ,Other Industrial Metals & Mining
+UAVS,UAVS,ASE,Computer Hardware
+UBCP,UBCP,NCM,Banks - Regional
+UBER,UBER,NYQ,Software - Application
+UBS,UBS,NYQ,Banks - Diversified
+UBSI,UBSI,NMS,Banks - Regional
+UBXG,UBXG,,
+UCAR,UCAR,,
+UCB,UCB,NYQ,Banks - Regional
+UCFI,UCFI,NCM,Packaged Foods
+UCTT,UCTT,NMS,Semiconductor Equipment & Materials
+UDR,UDR,NYQ,REIT - Residential
+UE,UE,NYQ,REIT - Retail
+UEC,UEC,ASE,Uranium
+UEIC,UEIC,NMS,Consumer Electronics
+UFCS,UFCS,NMS,Insurance - Property & Casualty
+UFG,UFG,,
+UFI,UFI,NYQ,Textile Manufacturing
+UFPI,UFPI,NMS,Lumber & Wood Production
+UFPT,UFPT,NCM,Medical Devices
+UG,UG,,
+UGI,UGI,NYQ,Utilities - Regulated Gas
+UHAL,UHAL,NYQ,Rental & Leasing Services
+UHAL-B,UHAL-B,NYQ,Rental & Leasing Services
+UHS,UHS,NYQ,Medical Care Facilities
+UHT,UHT,NYQ,REIT - Healthcare Facilities
+UI,UI,NYQ,Communication Equipment
+UIS,UIS,NYQ,Information Technology Services
+UK,UK,,
+ULBI,ULBI,NGM,Electrical Equipment & Parts
+ULCC,ULCC,NMS,Airlines
+ULH,ULH,NMS,Trucking
+ULS,ULS,NYQ,Specialty Business Services
+ULTA,ULTA,NMS,Specialty Retail
+UMAC,UMAC,ASE,Computer Hardware
+UMBF,UMBF,NMS,Banks - Regional
+UMC,UMC,NYQ,Semiconductors
+UMH,UMH,NYQ,REIT - Residential
+UNB,UNB,NGM,Banks - Regional
+UNCY,UNCY,NCM,Biotechnology
+UNF,UNF,NYQ,Specialty Business Services
+UNFI,UNFI,NYQ,Food Distribution
+UNH,UNH,NYQ,Healthcare Plans
+UNIT,UNIT,NMS,REIT - Specialty
+UNM,UNM,NYQ,Insurance - Life
+UNP,UNP,NYQ,Railroads
+UNTY,UNTY,NGM,Banks - Regional
+UONE,UONE,,
+UONEK,UONEK,,
+UP,UP,NYQ,Airports & Air Services
+UPB,UPB,NMS,Biotechnology
+UPBD,UPBD,NMS,Software - Application
+UPC,UPC,,
+UPLD,UPLD,,
+UPS,UPS,NYQ,Integrated Freight & Logistics
+UPST,UPST,NMS,Credit Services
+UPWK,UPWK,NMS,Internet Content & Information
+UPXI,UPXI,NCM,Internet Content & Information
+URBN,URBN,NMS,Apparel Retail
+URG,URG,ASE,Uranium
+URGN,URGN,NGM,Biotechnology
+URI,URI,NYQ,Rental & Leasing Services
+UROY,UROY,NCM,Uranium
+USAR,USAR,NGM,Other Industrial Metals & Mining
+USAS,USAS,ASE,Other Industrial Metals & Mining
+USAU,USAU,NCM,Gold
+USB,USB,NYQ,Banks - Regional
+USBC,USBC,ASE,Scientific & Technical Instruments
+USCB,USCB,NGM,Banks - Regional
+USEA,USEA,,
+USFD,USFD,NYQ,Food Distribution
+USGO,USGO,NCM,Other Industrial Metals & Mining
+USIO,USIO,NGM,Software - Infrastructure
+USLM,USLM,NMS,Building Materials
+USNA,USNA,NYQ,Packaged Foods
+USPH,USPH,NYQ,Medical Care Facilities
+UTHR,UTHR,NMS,Drug Manufacturers - Specialty & Generic
+UTI,UTI,NYQ,Education & Training Services
+UTL,UTL,NYQ,Utilities - Diversified
+UTMD,UTMD,NMS,Medical Instruments & Supplies
+UTSI,UTSI,,
+UTZ,UTZ,NYQ,Packaged Foods
+UUU,UUU,,
+UUUU,UUUU,ASE,Uranium
+UVE,UVE,NYQ,Insurance - Property & Casualty
+UVSP,UVSP,NMS,Banks - Regional
+UVV,UVV,NYQ,Tobacco
+UWMC,UWMC,NYQ,Mortgage Finance
+UYSC,UYSC,NCM,Shell Companies
+UZX,UZX,,
+V,V,NYQ,Credit Services
+VABK,VABK,NCM,Banks - Regional
+VAC,VAC,NYQ,Resorts & Casinos
+VACI,VACI,NYQ,Shell Companies
+VAL,VAL,NYQ,Oil & Gas Drilling
+VALU,VALU,NCM,Financial Data & Stock Exchanges
+VANI,VANI,NCM,Biotechnology
+VATE,VATE,NYQ,Engineering & Construction
+VBIO,VBIO,,
+VBNK,VBNK,NMS,Banks - Regional
+VC,VC,NMS,Auto Parts
+VCEL,VCEL,NGM,Biotechnology
+VCIG,VCIG,,
+VCTR,VCTR,NMS,Asset Management
+VCV,VCV,NYQ,Asset Management
+VCYT,VCYT,NGM,Diagnostics & Research
+VECA,VECA,NYQ,Shell Companies
+VECO,VECO,NMS,Semiconductor Equipment & Materials
+VEEA,VEEA,,
+VEEE,VEEE,,
+VEEV,VEEV,NYQ,Health Information Services
+VEL,VEL,NYQ,Mortgage Finance
+VELO,VELO,NCM,Computer Hardware
+VENU,VENU,ASE,Restaurants
+VERA,VERA,NGM,Biotechnology
+VERI,VERI,NGM,Software - Infrastructure
+VERU,VERU,,
+VERX,VERX,NGM,Software - Application
+VET,VET,NYQ,Oil & Gas E&P
+VFC,VFC,NYQ,Apparel Manufacturing
+VFF,VFF,NCM,Farm Products
+VFS,VFS,NMS,Auto Manufacturers
+VG,VG,NYQ,Oil & Gas Midstream
+VGAS,VGAS,NCM,Utilities - Renewable
+VGM,VGM,NYQ,Asset Management
+VGNT,VGNT,NYQ,Auto Parts
+VGZ,VGZ,ASE,Gold
+VHC,VHC,NCM,Software - Infrastructure
+VHCP,VHCP,NGM,Shell Companies
+VHI,VHI,NYQ,Chemicals
+VHUB,VHUB,NGM,Grocery Stores
+VIA,VIA,NYQ,Software - Application
+VIAV,VIAV,NMS,Communication Equipment
+VICI,VICI,NYQ,REIT - Diversified
+VICR,VICR,NMS,Electronic Components
+VIDA,VIDA,ASE,Software - Application
+VIK,VIK,NYQ,Travel Services
+VINP,VINP,NMS,Asset Management
+VIR,VIR,NMS,Biotechnology
+VIRC,VIRC,NGM,"Furnishings, Fixtures & Appliances"
+VIRT,VIRT,NYQ,Capital Markets
+VISN,VISN,NMS,Communication Equipment
+VITL,VITL,NGM,Farm Products
+VIVK,VIVK,,
+VIVO,VIVO,NCM,Software - Infrastructure
+VIVS,VIVS,,
+VKI,VKI,ASE,Asset Management
+VKQ,VKQ,NYQ,Asset Management
+VKTX,VKTX,NCM,Biotechnology
+VLGEA,VLGEA,NMS,Grocery Stores
+VLN,VLN,NYQ,Semiconductors
+VLO,VLO,NYQ,Oil & Gas Refining & Marketing
+VLT,VLT,NYQ,Asset Management
+VLTO,VLTO,NYQ,Pollution & Treatment Controls
+VLY,VLY,NMS,Banks - Regional
+VMAR,VMAR,,
+VMC,VMC,NYQ,Building Materials
+VMD,VMD,NCM,Medical Devices
+VMET,VMET,NCM,Other Precious Metals & Mining
+VMI,VMI,NYQ,Conglomerates
+VMO,VMO,NYQ,Asset Management
+VNCE,VNCE,NCM,Apparel Manufacturing
+VNDA,VNDA,NGM,Biotechnology
+VNME,VNME,NGM,Shell Companies
+VNO,VNO,NYQ,REIT - Office
+VNOM,VNOM,NMS,Oil & Gas Midstream
+VNRX,VNRX,,
+VNT,VNT,NYQ,Scientific & Technical Instruments
+VNTG,VNTG,,
+VOR,VOR,NMS,Biotechnology
+VOXR,VOXR,NCM,Other Precious Metals & Mining
+VOYA,VOYA,NYQ,Financial Conglomerates
+VOYG,VOYG,NYQ,Aerospace & Defense
+VPG,VPG,NYQ,Scientific & Technical Instruments
+VPV,VPV,NYQ,Asset Management
+VRA,VRA,NMS,Footwear & Accessories
+VRAX,VRAX,,
+VRCA,VRCA,NCM,Biotechnology
+VRDN,VRDN,NCM,Biotechnology
+VREX,VREX,NMS,Medical Devices
+VRM,VRM,NGM,Credit Services
+VRME,VRME,,
+VRNS,VRNS,NMS,Software - Infrastructure
+VRRM,VRRM,NCM,Information Technology Services
+VRSK,VRSK,NMS,Consulting Services
+VRSN,VRSN,NMS,Software - Infrastructure
+VRT,VRT,NYQ,Electrical Equipment & Parts
+VRTS,VRTS,NYQ,Asset Management
+VRTX,VRTX,NMS,Biotechnology
+VRXA,VRXA,NGM,Biotechnology
+VS,VS,,
+VSAT,VSAT,NMS,Communication Equipment
+VSEC,VSEC,NMS,Aerospace & Defense
+VSEE,VSEE,,
+VSH,VSH,NYQ,Semiconductors
+VSME,VSME,,
+VSNT,VSNT,NMS,Entertainment
+VST,VST,NYQ,Utilities - Independent Power Producers
+VSTD,VSTD,,
+VSTM,VSTM,NCM,Biotechnology
+VSTS,VSTS,NYQ,Rental & Leasing Services
+VSXY,VSXY,NYQ,Apparel Retail
+VTAK,VTAK,,
+VTEX,VTEX,NYQ,Software - Application
+VTGN,VTGN,,
+VTIX,VTIX,NGM,Computer Hardware
+VTN,VTN,NYQ,Asset Management
+VTOL,VTOL,NYQ,Oil & Gas Equipment & Services
+VTR,VTR,NYQ,REIT - Healthcare Facilities
+VTRS,VTRS,NMS,Drug Manufacturers - Specialty & Generic
+VTS,VTS,NYQ,Oil & Gas E&P
+VTSI,VTSI,,
+VTVT,VTVT,NCM,Biotechnology
+VUZI,VUZI,NCM,Consumer Electronics
+VVOS,VVOS,,
+VVR,VVR,NYQ,Asset Management
+VVV,VVV,NYQ,Auto & Truck Dealerships
+VVX,VVX,NYQ,Aerospace & Defense
+VWAV,VWAV,NGM,Aerospace & Defense
+VYGR,VYGR,NMS,Biotechnology
+VYNE,VYNE,,
+VYX,VYX,NYQ,Information Technology Services
+VZ,VZ,NYQ,Telecom Services
+VZLA,VZLA,ASE,Other Industrial Metals & Mining
+W,W,NYQ,Internet Retail
+WAB,WAB,NYQ,Railroads
+WABC,WABC,NMS,Banks - Regional
+WAFD,WAFD,NMS,Banks - Regional
+WAFU,WAFU,,
+WAI,WAI,,
+WAL,WAL,NYQ,Banks - Regional
+WALD,WALD,NCM,Household & Personal Products
+WASH,WASH,NMS,Banks - Regional
+WAT,WAT,NYQ,Diagnostics & Research
+WATT,WATT,NCM,Communication Equipment
+WAY,WAY,NMS,Health Information Services
+WBD,WBD,NMS,Entertainment
+WBI,WBI,NYQ,Oil & Gas Equipment & Services
+WBS,WBS,NYQ,Banks - Regional
+WBTN,WBTN,NMS,Internet Content & Information
+WBUY,WBUY,,
+WBX,WBX,NYQ,Electronic Components
+WCC,WCC,NYQ,Industrial Distribution
+WCN,WCN,NYQ,Waste Management
+WCT,WCT,,
+WD,WD,NYQ,Mortgage Finance
+WDAY,WDAY,NMS,Software - Application
+WDC,WDC,NMS,Computer Hardware
+WDFC,WDFC,NMS,Specialty Chemicals
+WEAV,WEAV,NYQ,Health Information Services
+WEC,WEC,NYQ,Utilities - Regulated Electric
+WELL,WELL,NYQ,REIT - Healthcare Facilities
+WEN,WEN,NMS,Restaurants
+WENC,WENC,NYQ,Shell Companies
+WENN,WENN,NGM,Shell Companies
+WERN,WERN,NMS,Trucking
+WEST,WEST,NGM,Packaged Foods
+WETH,WETH,,
+WETO,WETO,NCM,Software - Infrastructure
+WEX,WEX,NYQ,Software - Infrastructure
+WEYS,WEYS,NMS,Footwear & Accessories
+WFC,WFC,NYQ,Banks - Diversified
+WFCF,WFCF,NCM,Specialty Business Services
+WFF,WFF,,
+WFG,WFG,NYQ,Lumber & Wood Production
+WFRD,WFRD,NMS,Oil & Gas Equipment & Services
+WGO,WGO,NYQ,Recreational Vehicles
+WGRX,WGRX,,
+WGS,WGS,NMS,Diagnostics & Research
+WH,WH,NYQ,Lodging
+WHD,WHD,NYQ,Oil & Gas Equipment & Services
+WHG,WHG,NYQ,Asset Management
+WHK,WHK,NYQ,Oil & Gas Midstream
+WHLR,WHLR,,
+WHR,WHR,NYQ,"Furnishings, Fixtures & Appliances"
+WHWK,WHWK,NCM,Biotechnology
+WILC,WILC,NCM,Food Distribution
+WIMI,WIMI,,
+WINA,WINA,NGM,Specialty Retail
+WING,WING,NMS,Restaurants
+WIT,WIT,NYQ,Information Technology Services
+WIX,WIX,NMS,Software - Infrastructure
+WK,WK,NYQ,Software - Application
+WKC,WKC,NYQ,Oil & Gas Refining & Marketing
+WKHS,WKHS,,
+WKSP,WKSP,,
+WLDN,WLDN,NGM,Engineering & Construction
+WLDS,WLDS,,
+WLFC,WLFC,NGM,Rental & Leasing Services
+WLII,WLII,NGM,Shell Companies
+WLK,WLK,NYQ,Specialty Chemicals
+WLTH,WLTH,NMS,Software - Application
+WLY,WLY,NYQ,Publishing
+WLYB,WLYB,NYQ,Publishing
+WM,WM,NYQ,Waste Management
+WMB,WMB,NYQ,Oil & Gas Midstream
+WMG,WMG,NMS,Entertainment
+WMK,WMK,NYQ,Grocery Stores
+WMS,WMS,NYQ,Building Products & Equipment
+WMT,WMT,NMS,Discount Stores
+WNC,WNC,NYQ,Farm & Heavy Construction Machinery
+WNEB,WNEB,NMS,Banks - Regional
+WNW,WNW,,
+WOK,WOK,,
+WOLF,WOLF,NYQ,Semiconductors
+WOOF,WOOF,NMS,Specialty Retail
+WOR,WOR,NYQ,Metal Fabrication
+WPAC,WPAC,NYQ,Shell Companies
+WPC,WPC,NYQ,REIT - Diversified
+WPM,WPM,NYQ,Gold
+WPRT,WPRT,,
+WRAP,WRAP,NCM,Scientific & Technical Instruments
+WRB,WRB,NYQ,Insurance - Property & Casualty
+WRBY,WRBY,NYQ,Medical Instruments & Supplies
+WRLD,WRLD,NMS,Credit Services
+WRN,WRN,ASE,Other Industrial Metals & Mining
+WS,WS,NYQ,Steel
+WSBC,WSBC,NMS,Banks - Regional
+WSBF,WSBF,NMS,Banks - Regional
+WSBK,WSBK,NCM,Banks - Regional
+WSC,WSC,NCM,Rental & Leasing Services
+WSE,WSE,NMS,Information Technology Services
+WSFS,WSFS,NMS,Banks - Regional
+WSHP,WSHP,NCM,Internet Content & Information
+WSM,WSM,NYQ,Specialty Retail
+WSO,WSO,NYQ,Industrial Distribution
+WSO-B,WSO-B,NYQ,Industrial Distribution
+WSR,WSR,NYQ,REIT - Retail
+WST,WST,NYQ,Medical Instruments & Supplies
+WSTN,WSTN,NCM,Shell Companies
+WT,WT,NYQ,Asset Management
+WTBA,WTBA,NMS,Banks - Regional
+WTF,WTF,NCM,Capital Markets
+WTFC,WTFC,NMS,Banks - Regional
+WTG,WTG,NCM,Shell Companies
+WTI,WTI,NYQ,Oil & Gas E&P
+WTM,WTM,NYQ,Insurance - Property & Casualty
+WTO,WTO,,
+WTRG,WTRG,NYQ,Utilities - Regulated Water
+WTS,WTS,NYQ,Specialty Industrial Machinery
+WTTR,WTTR,NYQ,Oil & Gas Equipment & Services
+WTW,WTW,NMS,Insurance Brokers
+WU,WU,NYQ,Credit Services
+WULF,WULF,NCM,Capital Markets
+WVE,WVE,NGM,Biotechnology
+WVVI,WVVI,,
+WW,WW,NGM,Medical Care Facilities
+WWD,WWD,NMS,Aerospace & Defense
+WWR,WWR,ASE,Other Industrial Metals & Mining
+WWW,WWW,NYQ,Footwear & Accessories
+WXM,WXM,,
+WY,WY,NYQ,REIT - Specialty
+WYFI,WYFI,NCM,Information Technology Services
+WYNN,WYNN,NMS,Resorts & Casinos
+WYY,WYY,ASE,Information Technology Services
+XAIR,XAIR,,
+XBIO,XBIO,,
+XBIT,XBIT,NMS,Biotechnology
+XBP,XBP,,
+XCBE,XCBE,NGM,Shell Companies
+XCH,XCH,NGM,Specialty Industrial Machinery
+XCUR,XCUR,,
+XE,XE,NMS,Specialty Industrial Machinery
+XEL,XEL,NMS,Utilities - Regulated Electric
+XELB,XELB,,
+XENE,XENE,NGM,Biotechnology
+XERS,XERS,NMS,Drug Manufacturers - Specialty & Generic
+XFLH,XFLH,NYQ,Shell Companies
+XFLT,XFLT,NYQ,Asset Management
+XFOR,XFOR,NCM,Biotechnology
+XGN,XGN,NGM,Diagnostics & Research
+XHLD,XHLD,,
+XHR,XHR,NYQ,REIT - Hotel & Motel
+XLO,XLO,NCM,Biotechnology
+XMAX,XMAX,NCM,"Furnishings, Fixtures & Appliances"
+XMTR,XMTR,NMS,Industrial Distribution
+XNCR,XNCR,NGM,Biotechnology
+XNDU,XNDU,NGM,Software - Infrastructure
+XOM,XOM,NYQ,Oil & Gas Integrated
+XOMA,XOMA,NGM,Biotechnology
+XOS,XOS,,
+XP,XP,NMS,Capital Markets
+XPEL,XPEL,NCM,Auto Parts
+XPER,XPER,NYQ,Software - Application
+XPL,XPL,ASE,Other Industrial Metals & Mining
+XPO,XPO,NYQ,Trucking
+XPOF,XPOF,NYQ,Leisure
+XPON,XPON,,
+XPRO,XPRO,NYQ,Oil & Gas Equipment & Services
+XRAY,XRAY,NMS,Medical Instruments & Supplies
+XRN,XRN,NYQ,REIT - Healthcare Facilities
+XRPN,XRPN,NGM,Shell Companies
+XRTX,XRTX,,
+XRX,XRX,NMS,Business Equipment & Supplies
+XSLL,XSLL,NGM,Shell Companies
+XTIA,XTIA,NCM,Aerospace & Defense
+XTNT,XTNT,ASE,Medical Devices
+XWEL,XWEL,,
+XXI,XXI,NYQ,Shell Companies
+XXII,XXII,,
+XYL,XYL,NYQ,Specialty Industrial Machinery
+XYZ,XYZ,NYQ,Software - Infrastructure
+XZO,XZO,NYQ,Insurance - Diversified
+YAAS,YAAS,,
+YCBD,YCBD,,
+YCY,YCY,NYQ,Shell Companies
+YDDL,YDDL,NCM,Waste Management
+YDES,YDES,NGM,Biotechnology
+YDKG,YDKG,,
+YELP,YELP,NYQ,Internet Content & Information
+YETI,YETI,NYQ,Leisure
+YEXT,YEXT,NYQ,Software - Infrastructure
+YHC,YHC,,
+YHGJ,YHGJ,,
+YHNA,YHNA,,
+YIBO,YIBO,NCM,Computer Hardware
+YJ,YJ,,
+YMAT,YMAT,,
+YOOV,YOOV,NCM,Security & Protection Services
+YORW,YORW,NMS,Utilities - Regulated Water
+YOU,YOU,NYQ,Software - Application
+YPF,YPF,NYQ,Oil & Gas Integrated
+YSS,YSS,NYQ,Aerospace & Defense
+YSWY,YSWY,NMS,Grocery Stores
+YSXT,YSXT,,
+YTRA,YTRA,NCM,Travel Services
+YUM,YUM,NYQ,Restaurants
+YUMC,YUMC,NYQ,Restaurants
+YXT,YXT,,
+YYAI,YYAI,,
+YYGH,YYGH,,
+Z,Z,NMS,Internet Content & Information
+ZBAO,ZBAO,,
+ZBH,ZBH,NYQ,Medical Devices
+ZBIO,ZBIO,NMS,Biotechnology
+ZBRA,ZBRA,NMS,Communication Equipment
+ZCMD,ZCMD,,
+ZD,ZD,NMS,Advertising Agencies
+ZDAI,ZDAI,,
+ZDGE,ZDGE,,
+ZENA,ZENA,NCM,Software - Infrastructure
+ZEO,ZEO,NCM,Solar
+ZETA,ZETA,NYQ,Software - Infrastructure
+ZG,ZG,NMS,Internet Content & Information
+ZGN,ZGN,NYQ,Apparel Manufacturing
+ZIM,ZIM,NYQ,Marine Shipping
+ZION,ZION,NMS,Banks - Regional
+ZIP,ZIP,NYQ,Internet Content & Information
+ZJK,ZJK,NCM,Specialty Industrial Machinery
+ZJYL,ZJYL,,
+ZKIN,ZKIN,NCM,Steel
+ZKP,ZKP,NGM,Shell Companies
+ZM,ZM,NMS,Software - Application
+ZNB,ZNB,,
+ZNTL,ZNTL,NGM,Biotechnology
+ZONE,ZONE,ASE,Pollution & Treatment Controls
+ZOOZ,ZOOZ,,
+ZS,ZS,NMS,Software - Infrastructure
+ZSQR,ZSQR,NGM,Software - Infrastructure
+ZSTK,ZSTK,,
+ZTEK,ZTEK,,
+ZTG,ZTG,,
+ZTS,ZTS,NYQ,Drug Manufacturers - Specialty & Generic
+ZUMZ,ZUMZ,NMS,Apparel Retail
+ZURA,ZURA,NCM,Biotechnology
+ZVIA,ZVIA,NYQ,Beverages - Non-Alcoholic
+ZVRA,ZVRA,NMS,Biotechnology
+ZWS,ZWS,NYQ,Pollution & Treatment Controls
+ZYBT,ZYBT,,
+ZYME,ZYME,NMS,Biotechnology
