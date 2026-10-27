@@ -1,0 +1,123 @@
+name: "v44 canary: part N, M and C on a small grid"
+
+# docs/research/V44_PREREGISTRATION.md: run_v44n's canary (every family's first configurations), run_v44m with
+# V29_QUICK (the base unit, the first pair unit and a few more on shard 0) and its final, and run_v44c without part N's
+# members. Uses whatever v44 data is cached (none: the features and families that need it stay empty).
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v44-canary.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v44-canary
+  cancel-in-progress: true
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  V29_QUICK: "1"
+
+jobs:
+  canary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e . && python -m pip install scikit-learn
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v43
+          key: v43-data-none
+          restore-keys: v43-data-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v28-report
+          path: outputs/v28w/report
+          run-id: 39915126980
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v33-choice
+          path: outputs/v33w/choice
+          run-id: 40192951586
+          github-token: ${{ github.token }}
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-none
+          restore-keys: v44-data-
+          fail-on-cache-miss: false
+      - run: python scripts/run_v44m.py run --shard 0 --shards 300 --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/run
+      - run: python scripts/run_v44m.py final --runs outputs/v44w/m/run --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/report
+      - run: python scripts/run_v44c.py --procs 4 --choice outputs/v33w/choice --nsum outputs/v44w/n/none.json --msum outputs/v44w/m/report/v44m_summary.json --out outputs/v44w/c
+      - if: always()
+        run: python scripts/run_v44n.py real --canary --workers 4 --out outputs/v44w/n/canary
+      - if: always()
+        run: |
+          for f in outputs/v44w/m/report/V44M_REPORT.md outputs/v44w/c/V44C_REPORT.md; do
+            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
+          done
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44-canary
+          path: |
+            outputs/v44w/m/report
+            outputs/v44w/c
+          retention-days: 14
