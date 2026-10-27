@@ -137,3 +137,17 @@ the filing, not when the market read it. SIC codes are today's. Short interest a
 BTC trades around the clock, the stocks only in their sessions. The tick features exist only for the book's trades.
 TWAP is modelled as one entry at the last slice's minute at the slices' average price. The sleeve's intraday marks do
 not enter the broker's check.
+
+## 6. Implementation notes (added 2026-10-27 after the code review, before the full run and before any return on v44 data)
+
+- BOCPD: a change point is a probability of 0.5 or more that the run began within the last five bars; T5 uses hazard
+  1/30, the M feature `bocpd15` hazard 1/60.
+- Close entries: TWAP slices cannot start before 15:50 (the decision), so TWAP 5 at the close has the same three
+  slices as TWAP 3 (15:50, 15:55, the auction).
+- Tercile filters use strict inequalities (above the upper cut, below the lower cut), so a binary feature flags only
+  its rarer value; the models train on trades whose last session is before the year.
+- "In the prior 24 hours" and "in the prior 7 days" are clock time from the decision minute.
+- A filing-store symbol-day is in the universe only after its first filing of the N2 forms (8-K only with the listed
+  items), in the real trades and in the placebo pool.
+- run_v22's COMBO rule is used as is: a member's "Sortino before the year" is the pick's plateau score there.
+- The strict-fill COMBO44 line uses the members' monthly strict returns with the middle-cost weights.
