@@ -3,7 +3,7 @@ name: "v44 canary: part N, M and C on a small grid"
 # docs/research/V44_PREREGISTRATION.md: run_v44n's canary (every family's first configurations), run_v44m with
 # V29_QUICK (the base unit, the first pair unit and a few more on shard 0) and its final, and run_v44c without part N's
 # members. Uses whatever v44 data is cached (none: the features and families that need it stay empty).
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -101,8 +101,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-none
-          restore-keys: v44-data-
+          key: v44-a-40486882613-1
+          restore-keys: v44-a-
           fail-on-cache-miss: false
       - run: python scripts/run_v44m.py run --shard 0 --shards 300 --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/run
       - run: python scripts/run_v44m.py final --runs outputs/v44w/m/run --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/report
