@@ -35,6 +35,9 @@ def test_aggregate_ticks(DV) -> None:
     # minute 1: mid 10.2: 10.0 is a sell, 10.2 at the mid falls back to the tick rule (up)
     assert out.loc[1, "vs"] == 300 and out.loc[1, "vb"] == 100
     assert out.loc[1, "spread"] == pytest.approx(0.4 / 10.2) and out.loc[1, "dimb"] == pytest.approx(0.5)
+    # timestamps parsed at different precisions (ns trades, us quotes) still merge
+    mixed = DV.aggregate_ticks(trades, quotes.assign(t=quotes["t"].astype("datetime64[us, UTC]")), start)
+    assert mixed.set_index("minute").loc[1, "vs"] == 300
 
 
 # ---------------------------------------------------------------- part N: counts, statistics, signals, trades

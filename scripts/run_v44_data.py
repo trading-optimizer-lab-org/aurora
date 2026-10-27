@@ -257,12 +257,12 @@ def _paged(url: str, key: str, params: dict, headers: dict, limiter) -> list[dic
 def aggregate_ticks(trades: pd.DataFrame, quotes: pd.DataFrame, start: pd.Timestamp) -> pd.DataFrame:
     """Per minute from ``start``: buy and sell volume (Lee-Ready inside the quotes, the tick rule elsewhere), sweep,
     odd-lot and block volume, trade count; mean relative spread, depth imbalance and quote count."""
-    tr = trades.sort_values("t").reset_index(drop=True)
+    tr = trades.assign(t=trades["t"].astype("datetime64[ns, UTC]")).sort_values("t").reset_index(drop=True)
     p, s = tr["p"].to_numpy(float), tr["s"].to_numpy(float)
     d = np.sign(np.diff(p, prepend=np.nan))
     d = pd.Series(np.where(d == 0, np.nan, d)).ffill().fillna(0.0).to_numpy()
     if len(quotes):
-        q = quotes.sort_values("t")
+        q = quotes.assign(t=quotes["t"].astype("datetime64[ns, UTC]")).sort_values("t")
         mid = ((q["bp"] + q["ap"]) / 2).where((q["bp"] > 0) & (q["ap"] > q["bp"]))
         m = pd.merge_asof(tr[["t"]], pd.DataFrame({"t": q["t"], "mid": mid.to_numpy()}).dropna(), on="t",
                           tolerance=pd.Timedelta(seconds=5))["mid"].to_numpy()

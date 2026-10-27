@@ -3,7 +3,7 @@ name: "v44 data: news, EDGAR times, the filing store, SPY/IWM and BTC minutes, t
 # scripts/run_v44_data.py (V44_PREREGISTRATION.md section 0). Two jobs in a row (they share Alpaca's rate limit):
 # a = EDGAR acceptance times, BTC, SPY/IWM minutes, the book's tick aggregates; b = the filing store and the news.
 # Market data stays in the Actions cache; the step summary gets counts only.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: v44-data
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   V14_UNLOCK_SEALED: yes-the-owner-asked
@@ -54,6 +54,11 @@ jobs:
           key: v43-data-none
           restore-keys: v43-data-
           fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-a-none
+          restore-keys: v44-a-
       - run: python scripts/run_v44_data.py btc
       - run: python scripts/run_v44_data.py edgar
         env:
