@@ -53,6 +53,8 @@ def _daily_path(D, s, table, spread, fee_mult, gross, w_max):
         META[(int(s.t), int(s.j), float(s.prio))] = {
             "kind": s.kind, "stop": float(stop), "hold": P["hold"], "scale": P["scale"],
             "cat": float(cat) if cat is not None else np.nan, "target": P.get("target", "none"),
+            "ext": P["ext"], "rally": P["rally"], "ext_delay": bool(sh.EXT_DELAY),
+            "lim": float(R33.VARIANT["limit"]) if R33.VARIANT["limit"] is not None else np.nan,
             "limit": e != float(D["O"][s.t, s.j]) if s.kind == "open" else False,
             "exit_row": int(sh.EXIT.get("row", -1)), "exit_kind": str(sh.EXIT.get("kind", "")),
             "exit_minute": int(sh.EXIT.get("minute", -1))}

@@ -100,3 +100,17 @@ Same years as v40 to v42; the book was chosen on all of them on daily bars. Ther
 approximated by the bars' volume and the next bar's prices. The auctions are filled in full at the daily prices. The
 daily model's costs are kept per trade, not rebuilt per minute. The halt flag is inferred. The trades come from the
 daily selection; a rule cannot add a trade the daily model did not take, only drop or change it.
+
+## 7. Implementation notes (2026-10-27, written with the code, before any v43 return)
+
+- Cover levels (the shield's target and the grid's intraday cover) are resting limit orders: each bar trading at or
+  under the level fills at the better of its open and the level, under the participation cap; what is left at the
+  session's end fills at the close auction. The fill cases of section 3 apply to stops, time exits, the rally exit
+  and the liquidation.
+- Under the participation cap, a market cover left unfilled at 15:59 fills at the close auction; a night cover left
+  unfilled at 09:29 fills at the open auction.
+- The VWAP entry case applies to market entries; a limit entry fills at its level (or a bar's open beyond it).
+- A trailing stop is checked on regular-session bars and, gapped past, at the next open.
+- "How often the choice beats the shield's rule" (Q2) is measured on the historical path at the $10,000 level, base
+  costs, summed log growth. The bootstrap covers the shield's rule in all 96 cases and the walk-forward book in the
+  central and daily-like cases.
