@@ -295,7 +295,7 @@ def load_v44(folder: Path, D: dict) -> None:
         nw = pd.read_parquet(folder / "news.parquet")
         x = nw.assign(symbol=nw["symbols"].astype(str).str.split(",")).explode("symbol")
         x = x[x["symbol"].astype(bool)].reset_index(drop=True)
-        when = pd.to_datetime(x["created_at"], utc=True).dt.tz_convert("America/New_York").dt.tz_localize(None)
+        when = pd.to_datetime(x["created_at"], utc=True, format="ISO8601").dt.tz_convert("America/New_York").dt.tz_localize(None)
         ev = DV.session_events(D, x["symbol"], when)
         ev["code"] = x["headline"].map(v44.news_class).to_numpy()[ev.index]
         _G["news"] = v44.event_index(ev, "code")

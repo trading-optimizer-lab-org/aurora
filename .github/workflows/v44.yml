@@ -3,7 +3,7 @@ name: "v44: new one-minute families, the book's meta-labels and execution, their
 # docs/research/V44_PREREGISTRATION.md. Waits for the v44 data run (40551641084); then part N (run_v44n: 300 shards
 # of real returns, selection, 300 shards of placebos, report), part M (run_v44m: 300 shards of books, final) and part C
 # (run_v44c). Market data stays in the Actions cache; the shards upload strategy returns.
-# run: 2
+# run: 3
 on:
   push:
     branches: [research/stock-catalog]

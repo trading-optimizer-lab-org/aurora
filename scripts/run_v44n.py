@@ -71,7 +71,7 @@ def _store(folder: Path) -> vi.Store:
 
 
 def _ny(ts: pd.Series) -> pd.Series:
-    return pd.to_datetime(ts, utc=True).dt.tz_convert("America/New_York").dt.tz_localize(None)
+    return pd.to_datetime(ts, utc=True, format="ISO8601").dt.tz_convert("America/New_York").dt.tz_localize(None)
 
 
 def news_events(D: dict, news: pd.DataFrame) -> pd.DataFrame:
