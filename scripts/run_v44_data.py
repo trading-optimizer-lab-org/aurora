@@ -117,7 +117,7 @@ def cmd_edgar(args) -> int:
 
 
 def edgar_events(D: dict, edgar: pd.DataFrame) -> pd.DataFrame:
-    """Each filing on its session: t, j, minute (-1 for a pre event, else minutes after 09:30)."""
+    """Each filing on its session: t, j, minute (negative for a pre event, else minutes after 09:30)."""
     ev = session_events(D, edgar["symbol"], edgar["accepted"])
     ev["form"] = edgar["form"].to_numpy()[ev.index]
     ev["items"] = edgar["items"].astype(str).to_numpy()[ev.index]
@@ -125,8 +125,9 @@ def edgar_events(D: dict, edgar: pd.DataFrame) -> pd.DataFrame:
 
 
 def session_events(D: dict, symbols: pd.Series, when_ny: pd.Series) -> pd.DataFrame:
-    """Map naive New York times to sessions: 16:00 of t-1 to 09:29 of t is a pre event of t (minute -1), 09:30-15:59 an
-    intra event at its minute, later a pre event of the next session."""
+    """Map naive New York times to sessions: 16:00 of t-1 to 09:29 of t is a pre event of t (its minute is negative:
+    the minutes from 09:30 of t back to it), 09:30-15:59 an intra event at its minute after 09:30, later a pre event of
+    the next session."""
     dates = D["dates"]
     pos = {str(c): i for i, c in enumerate(D["cols"])}
     w = pd.to_datetime(pd.Series(when_ny).to_numpy())
@@ -137,7 +138,9 @@ def session_events(D: dict, symbols: pd.Series, when_ny: pd.Series) -> pd.DataFr
     intra = is_session & (mins >= 570) & (mins < 960)
     before = is_session & (mins < 570)
     t = np.where(intra | before, t_same, dates.searchsorted(day, side="right"))
-    minute = np.where(intra, np.floor(mins - 570), -1).astype(int)
+    opens = dates[np.minimum(t, len(dates) - 1)] + pd.Timedelta(minutes=570)
+    pre = np.minimum(np.floor((w - opens).total_seconds().to_numpy() / 60.0), -1)
+    minute = np.where(intra, np.floor(mins - 570), pre).astype(int)
     j = pd.Series(np.asarray(symbols, str)).map(pos)
     ev = pd.DataFrame({"t": t, "j": j.to_numpy(), "minute": minute})
     keep = ev["j"].notna().to_numpy() & (ev["t"].to_numpy() < len(dates))

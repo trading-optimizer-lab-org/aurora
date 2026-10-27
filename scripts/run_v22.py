@@ -49,6 +49,7 @@ WINDOWS = R20.WINDOWS
 R4 = np.array([[0.006633, 0.004728, 0.005763], [0.008026, 0.003602, 0.004782], [0.008188, 0.003977, 0.004642],
                [0.009853, 0.005096, 0.004473]])
 AUCTION = np.repeat(R4[:, 1:2], 3, axis=1)  # open and close legs at the session's half-spread
+REPORT_SC: tuple = ("low", "high", "auction", "gross")  # the family table's cost columns
 SCEN = (("mid", R4, 1.0, 1.0, False), ("low", R4, 0.5, 1.0, False), ("high", R4, 2.0, 3.0, False),
         ("auction", AUCTION, 1.0, 1.0, False))  # the middle first: its net paths give the trade statistics
 
@@ -211,8 +212,11 @@ def cmd_placebo(args) -> int:
         f.index = f.index.to_timestamp()
         f.to_parquet(args.out / "placebo.parquet")
     (args.out / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
-    print(f"done: {len(res)} units, {sum(1 for m in meta if m['error'])} errors", flush=True)
-    return 0
+    n_err = sum(1 for m in meta if m["error"])
+    print(f"done: {len(res)} units, {n_err} errors", flush=True)
+    for e in [m for m in meta if m["error"]][:5]:
+        print("error:", e, flush=True)
+    return 1 if n_err else 0
 
 
 # ---------------------------------------------------------------- selection
@@ -368,8 +372,8 @@ def cmd_report(args) -> int:
              f"(middle) unless stated; {REPS} placebos for each selected configuration; a configuration can be picked "
              f"only with at least {MIN_TRADES} trades and a trade in {MIN_ACTIVE:.0%} of the months before. Target: "
              f"{COMBO} monthly Sortino 4.", "", "## 1. Families", "",
-             "| family | WF Sortino 2018+ | 2018-20 | 2021+ | CAGR | max DD | low | high | auction | gross | "
-             "years placebo-ok | gate | PBO | SPA p (best t) |", "|" + "---|" * 14]
+             "| family | WF Sortino 2018+ | 2018-20 | 2021+ | CAGR | max DD | " + " | ".join(REPORT_SC) + " | "
+             "years placebo-ok | gate | PBO | SPA p (best t) |", "|" + "---|" * (10 + len(REPORT_SC))]
     summary, streams, fam_info, mats = {}, {}, {}, {}
     for fam, (key, names, M, Cn, A) in family_frames(monthly, counts, reg).items():
         chf = sel["choices"].get(fam, {"picks": {}, "scores": {}})
@@ -395,7 +399,7 @@ def cmd_report(args) -> int:
         st = R14._stats(wf, cash, "2018-01-01", str(end.date()))
         h1, h2 = R14._stats(wf, cash, "2018-01-01", "2020-12-31"), R14._stats(wf, cash, "2021-01-01", str(end.date()))
         sc_s = {}
-        for sc in ("low", "high", "auction", "gross"):
+        for sc in REPORT_SC:
             m = pd.concat([monthly[f"{names[i]}|{sc}"].loc[f"{y}-01-01":f"{y}-12-31"] for y, (i, _) in picks.items()])
             rows = np.isin(months, m.index)
             sc_s[sc] = float(core.sortino_cols(m.reindex(months[rows]).to_numpy()[:, None], cm[rows])[0])
@@ -410,10 +414,10 @@ def cmd_report(args) -> int:
                         "active_configs": int(act.sum())}
         lines.append(f"| {fam} | {fmt(st, 'sortino', '{:.2f}')} | {fmt(h1, 'sortino', '{:.2f}')} | "
                      f"{fmt(h2, 'sortino', '{:.2f}')} | {fmt(st, 'cagr', '{:.1%}')} | {fmt(st, 'dd', '{:.1%}')} | "
-                     f"{sc_s['low']:.2f} | {sc_s['high']:.2f} | {sc_s['auction']:.2f} | {sc_s['gross']:.2f} | "
+                     + "".join(f"{sc_s[sc]:.2f} | " for sc in REPORT_SC) +
                      f"{ok_years}/{len(picks)} | {'pass' if gate else 'fail'} | {fmt(pbo, 'pbo', '{:.0%}')} | "
                      f"{sp_p:.3f} ({sp_t:.1f}) |")
-    pieces, members = [], {}
+    pieces, members, weights = [], {}, {}
     for y in range(core.WF_YEARS[0], end.year + 1):
         chosen = {}
         for fam, (names, picks, pv, dd) in fam_info.items():
@@ -426,6 +430,7 @@ def cmd_report(args) -> int:
             continue
         Mx = pd.DataFrame(chosen)
         w = R14._ivol(Mx.loc[:f"{y - 1}-12-31"])
+        weights[y] = w
         pieces.append((Mx.loc[span] * w).sum(axis=1))
     combo = pd.concat(pieces).reindex(wf_index).fillna(0.0)
     cs = R14._stats(combo, cash, "2018-01-01", str(end.date()))
@@ -445,6 +450,19 @@ def cmd_report(args) -> int:
     ok = bool(cs and c1 and c2 and cs["sortino"] >= 4 and c1["sortino"] >= 3 and c2["sortino"] >= 3
               and np.isfinite(cpbo["pbo"]) and cpbo["pbo"] < 0.2 and seg.get("sortino", 0) >= 3)
     yearly = {int(y): float(v) for y, v in ((1 + combo).groupby(combo.index.year).prod() - 1).items()}
+    extra = []
+    for sc in [x for x in REPORT_SC if x not in ("low", "high", "auction", "gross")]:  # e.g. v44's strict fills
+        cm_s = pd.Series(0.0, index=months)
+        for y, w in weights.items():
+            for fam, wt in w.items():
+                names, picks, _, _ = fam_info[fam]
+                m = monthly[f"{names[picks[y][0]]}|{sc}"]
+                inside = (months >= pd.Timestamp(f"{y}-01-01")) & (months <= pd.Timestamp(f"{y}-12-31"))
+                cm_s[inside] += float(wt) * m[inside].fillna(0.0).to_numpy()
+        r18 = np.asarray(months >= pd.Timestamp("2018-01-01"))
+        srt = float(core.sortino_cols(cm_s.to_numpy()[r18][:, None], cm[r18])[0])
+        extra.append(f"{COMBO} at the {sc} costs (the members' monthly {sc} returns with the same weights): "
+                     f"Sortino 2018+ {srt:.2f}.")
     lines += ["", f"## 2. {COMBO} (families chosen each year on earlier data only)", "",
               "| stream | Sortino 2018+ | 2018-20 | 2021+ | CAGR | max DD | total | 2023-07+ | DSR | PBO | criterion |",
               "|---|---|---|---|---|---|---|---|---|---|---|",
@@ -453,7 +471,8 @@ def cmd_report(args) -> int:
               f"{fmt(cs, 'total', '{:+.0%}')} | {fmt(seg, 'sortino', '{:.2f}')} | {dsr:.2f} | "
               f"{fmt(cpbo, 'pbo', '{:.0%}')} | {'met' if ok else 'not met'} |", "",
               "Members by year: " + "; ".join(f"{y}: {', '.join(m) or 'none'}" for y, m in members.items()), "",
-              f"{COMBO} by year: " + ", ".join(f"{y} {v:+.1%}" for y, v in yearly.items())]
+              f"{COMBO} by year: " + ", ".join(f"{y} {v:+.1%}" for y, v in yearly.items())] + \
+        (["", *extra] if extra else [])
     lines += ["", "## 3. The 2023-07+ segment", "", "| family | Sortino | CAGR | max DD |", "|---|---|---|---|"]
     for fam, s in streams.items():
         st = R14._stats(s, cash, *SEGMENT)

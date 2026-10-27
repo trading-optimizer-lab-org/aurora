@@ -19,7 +19,7 @@ def test_session_events(DV) -> None:
                                      "2024-01-03 09:29", "2024-01-06 11:00"]))
     ev = DV.session_events(D, pd.Series(["AAA", "BBB", "AAA", "ZZZ", "BBB"]), when)
     assert list(ev.index) == [0, 1, 2]  # ZZZ has no column; Saturday falls past the last session
-    assert ev["t"].tolist() == [0, 0, 1] and ev["minute"].tolist() == [-1, 45, -1] and ev["j"].tolist() == [0, 1, 0]
+    assert ev["t"].tolist() == [0, 0, 1] and ev["minute"].tolist() == [-90, 45, -960] and ev["j"].tolist() == [0, 1, 0]
 
 
 def test_aggregate_ticks(DV) -> None:
@@ -139,7 +139,8 @@ def _x_extras(rng: np.random.Generator, T: int = 12) -> dict:
             "edgar": edgar, "btc_min": btc.astype(np.float32), "btc_sig": np.full((T, 3), 0.001),
             "corr_btc": np.full((T, 1), 0.6, np.float32), "beta_btc": np.ones((T, 1), np.float32),
             "iwm_min": iwm.astype(np.float32), "iwm_pc": np.full(T, 99.0), "beta_iwm": np.full((T, 1), 1.2),
-            "si_so": np.full((T, 1), 0.35), "dtc": np.full((T, 1), 4.0), "upos": np.array([0])}
+            "si_so": np.full((T, 1), 0.35), "dtc": np.full((T, 1), 4.0), "upos": np.array([0]),
+            "open_min": np.arange(T, dtype=np.int64) * 1440 + 570}
 
 
 def _signal(family: str, g: dict, cd: dict, b: tuple) -> tuple:
@@ -508,3 +509,34 @@ def test_c_liquidation_with_the_sleeve() -> None:
     assert hit[2] == pytest.approx(0.5 * 0.04)  # no bars: the book is bought back at the close of 10
     summ = {"members": {"2020": ["A", "B"]}, "families": {"A": {"picks": {"2020": "A|3"}}, "B": {"picks": {}}}}
     assert C.members(summ) == [(2020, "A", "A|3")]
+    days = np.r_[np.zeros(10), np.ones(10)].astype(int)
+    fee = np.where(days == 1, 2.0, 1.0)
+    got = C.boot_fee(np.zeros((5, 20)), {"all": np.arange(20)[None, :]}, fee, 5000.0, np.array([2500, 5000, 1e4, 2.5e4, 6e4]))
+    assert got["all"]["med"] == pytest.approx(5000.0 - 30.0)  # a dollar fee, not a share of the level
+
+
+def test_events_within_is_24_hours() -> None:
+    dates = pd.DatetimeIndex(["2024-01-04", "2024-01-05", "2024-01-08"])  # Thursday, Friday, Monday
+    om = v44.open_minutes(dates)
+    ev = {(1, 0): (np.array([300]), np.array([0])),  # Friday 14:30
+          (2, 0): (np.array([-810, -30]), np.array([1, 2]))}  # Sunday 20:00 and Monday 09:00
+    assert v44.events_within(ev, om, 2, 0, 0, 1440) == 2  # not Friday's, 67 hours back
+    assert v44.events_within(ev, om, 2, 0, 0, 1440, [2]) == 1
+    assert v44.events_within(ev, om, 2, 0, 0, 7 * 1440) == 3
+    assert v44.events_within(ev, om, 1, 0, 300, 1440) == 0 and v44.events_within(ev, om, 1, 0, 301, 1440) == 1
+
+
+def test_m_tied_terciles_flag_only_the_rare_value(M) -> None:
+    years = np.r_[np.full(60, 2018), np.full(4, 2019)]
+    X = np.zeros((64, len(M.FEATS)))
+    X[:6, 14] = 1.0  # an offering headline on a tenth of the trades
+    X[60, 14], X[61, 14] = 1.0, 0.0
+    keys = [(t, 0, 0.0) for t in range(64)]
+    out = M.fit_filters(keys, years, X, np.r_[np.zeros(30), np.ones(34)].astype(int))
+    assert out[keys[60]]["skip"][2 * 14] and not out[keys[61]]["skip"][2 * 14]
+    assert not out[keys[61]]["skip"][2 * 14 + 1]
+    ends = years.copy()
+    ends[50] = 2019  # still open on January 1: not in 2019's training set
+    out2 = M.fit_filters(keys, years, X, np.r_[np.zeros(30), np.ones(34)].astype(int), ends)
+    assert out2[keys[60]]["skip"][2 * 14]
+

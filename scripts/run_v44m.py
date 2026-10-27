@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import multiprocessing as mp
+import os
 import sys
 import time
 from itertools import combinations
@@ -180,7 +181,7 @@ def trigger_steps(F: dict | None) -> np.ndarray:
     if F is None:
         return out
     idx, o, h, lo, c = F["idx"], F["o"], F["h"], F["lo"], F["c"]
-    hod = np.r_[np.inf, np.maximum.accumulate(h)[:-1]]
+    hod = np.r_[-np.inf, np.maximum.accumulate(h)[:-1]]  # no session high before the first bar
     green = c > o
     run = np.zeros(len(c), int)
     for k in range(1, len(c)):
@@ -195,7 +196,7 @@ def trigger_steps(F: dict | None) -> np.ndarray:
             (F["vel"] < 0) & (np.arange(len(c)) >= 1),        # T4 Kalman velocity below 0
             (F["cp30"] >= XCP) & (F["mu30"] < 0),             # T5 a change point with a lower mean
             (lo < orl) & ~first5,                             # T6 the 5-minute opening range low broken
-            np.maximum.accumulate(F["z"] >= 2) & (c < o),     # T7 z-score 2 or more, then a red bar
+            np.r_[False, np.maximum.accumulate(F["z"] >= 2)[:-1]] & (c < o),  # T7 z-score 2 or more, then red
             F["vr30"] < 0.8,                                  # T8 30-bar variance ratio under 0.8
         )
     for i, m in enumerate(masks):
@@ -250,7 +251,8 @@ def exe_of(ex: int):
         if name.startswith("twap"):
             n = int(name[4:])
             if close:
-                px = [o[s] for s in (_at(o, LAST + 1 - 5 * (n - i)) for i in range(1, n)) if s <= LAST] + [e]
+                starts = [LAST + 1 - 5 * (n - i) for i in range(1, n)]  # 15:50 at the earliest: the decision's
+                px = [o[s] for s in (_at(o, x) for x in starts if x >= 950) if s <= LAST] + [e]  # minute
                 return float(np.mean(px)), es
             px, s = [], es
             for i in range(n):
@@ -278,11 +280,17 @@ def exe_of(ex: int):
 # ---------------------------------------------------------------- features at the entry and the filters
 
 def load_v44(folder: Path, D: dict) -> None:
-    """News and filing events, SPY and IWM minutes, BTC closes and the tick aggregates (what is present)."""
+    """News and filing events, SPY and IWM minutes, BTC closes and the tick aggregates (all required unless
+    ``V44_ALLOW_MISSING`` is set, as in the canary)."""
+    missing = [f for f in ("news.parquet", "edgar.parquet", "index.parquet", "btc.parquet", "ticks.parquet")
+               if not (folder / f).exists()]
+    if missing and not os.environ.get("V44_ALLOW_MISSING"):
+        raise SystemExit(f"v44 data missing in {folder}: {missing}")
     T = len(D["dates"])
     row = {pd.Timestamp(d): t for t, d in enumerate(D["dates"])}
     col = {str(c): j for j, c in enumerate(D["cols"])}
-    _G["news"], _G["edgar"] = {}, {}
+    _G["news"], _G["edgar"], _G["have"] = {}, {}, set()
+    _G["open_min"] = v44.open_minutes(D["dates"])
     if (folder / "news.parquet").exists():
         nw = pd.read_parquet(folder / "news.parquet")
         x = nw.assign(symbol=nw["symbols"].astype(str).str.split(",")).explode("symbol")
@@ -291,11 +299,13 @@ def load_v44(folder: Path, D: dict) -> None:
         ev = DV.session_events(D, x["symbol"], when)
         ev["code"] = x["headline"].map(v44.news_class).to_numpy()[ev.index]
         _G["news"] = v44.event_index(ev, "code")
+        _G["have"].add("news")
     if (folder / "edgar.parquet").exists():
         ev = DV.edgar_events(D, pd.read_parquet(folder / "edgar.parquet"))
         ev["code"] = [v44.form_codes(f, i) for f, i in zip(ev["form"], ev["items"])]
         ev = ev.explode("code").dropna(subset=["code"]).astype({"code": int})
         _G["edgar"] = v44.event_index(ev, "code")
+        _G["have"].add("edgar")
     if (folder / "index.parquet").exists():
         idx = pd.read_parquet(folder / "index.parquet")
         for sym in ("SPY", "IWM"):
@@ -336,21 +346,11 @@ def hot_ratio(D: dict) -> np.ndarray:
         return np.where(med > 0, n / med, np.nan)
 
 
-def _count_events(ev: dict, t: int, j: int, minute: int, codes=None, sessions: int = 1) -> int:
-    """Events in the ``sessions`` sessions before minute ``minute`` of session t (a pre event of t counts)."""
-    n = 0
-    for u in range(t - sessions, t + 1):
-        a = ev.get((u, j))
-        if a is None:
-            continue
-        mins, cs = a
-        sel = np.ones(len(mins), bool) if codes is None else np.isin(cs, codes)
-        if u == t:
-            sel &= mins < max(minute, 0)
-        elif sessions == 1:
-            sel &= mins >= max(minute, 0)  # the session before: from the same clock minute on
-        n += int(sel.sum())
-    return n
+def _count_events(kind: str, t: int, j: int, minute: int, codes=None, days: int = 1) -> float:
+    """Events in the ``days`` x 24 hours before minute ``minute`` (after 09:30) of session t; nan without the data."""
+    if kind not in _G.get("have", ()):
+        return np.nan
+    return float(v44.events_within(_G[kind], _G["open_min"], t, j, minute, 1440 * days, codes))
 
 
 def _btc_move(t: int, minute: int) -> float:
@@ -400,18 +400,17 @@ def trade_features(it: dict, kind: str) -> np.ndarray:
             if len(c) >= 15:
                 f[11] = float(st.bocpd(c, 1 / 60)[0][-15:].max())
             f[12] = st.zscore(c, line, "sess")[-1]
-    f[13] = _count_events(_G.get("news", {}), t, j, minute)
-    f[14] = float(_count_events(_G.get("news", {}), t, j, minute, [v44.NEWS_CLASSES.index(k) for k in
-                                                                    ("priced", "offering", "rsplit")]) > 0)
-    f[15] = float(_count_events(_G.get("edgar", {}), t, j, minute, [v44.FORMS.index(k) for k in ("424B", "S1", "S3")],
-                                sessions=5) > 0)
+    f[13] = _count_events("news", t, j, minute)
+    off = _count_events("news", t, j, minute, [v44.NEWS_CLASSES.index(k) for k in ("priced", "offering", "rsplit")])
+    fil = _count_events("edgar", t, j, minute, [v44.FORMS.index(k) for k in ("424B", "S1", "S3")], days=7)
+    f[14], f[15] = (float(x > 0) if np.isfinite(x) else np.nan for x in (off, fil))
     hr = _G.get("hot_ratio")
     if hr is not None:
-        f[16] = hr[t - 1] if kind == "open" else hr[t]  # the day's gaps are known only at its open
+        f[16] = (hr[t - 1] if t > 0 else np.nan) if kind == "open" else hr[t]  # the gaps are known at the open
     step = hi_s - R43.AH  # the index minute (from 04:00) of the last bar before the decision
     if "IWM" in _G and t > 0:
         f[17] = _G["IWM"]["c"][t, step] / _G["IWM"]["c"][t - 1, 719] - 1
-    f[18] = _btc_move(t, minute)
+    f[18] = _btc_move(t, hi_s - OPEN)
     if "SPY" in _G:
         a = _G["SPY"]
         w = slice(0, step + 1) if kind == "open" else slice(OPEN - R43.AH, step + 1)
@@ -436,22 +435,24 @@ def trade_features(it: dict, kind: str) -> np.ndarray:
         return np.where(np.isfinite(f), f, np.nan)
 
 
-def fit_filters(keys: list[tuple], years: np.ndarray, X: np.ndarray, y: np.ndarray) -> dict:
+def fit_filters(keys: list[tuple], years: np.ndarray, X: np.ndarray, y: np.ndarray,
+                ends: np.ndarray | None = None) -> dict:
     """Per trade: the 52 tercile flags (cuts from the trades of the years before; none in the first year) and the
-    two models' probability of a net gain (trained on the years before; nan in the first year)."""
+    two models' probability of a net gain (trained on the years before; nan in the first year). ``ends``: the year of
+    each trade's last session (a trade still open on January 1 is not known yet)."""
     from sklearn.ensemble import GradientBoostingClassifier
     from sklearn.linear_model import LogisticRegression
 
     out = {k: {"skip": np.zeros(2 * len(FEATS), bool), "p": np.full(len(MODELS), np.nan)} for k in keys}
     for Y in sorted(set(int(v) for v in years))[1:]:
-        tr, te = years < Y, np.flatnonzero(years == Y)
+        tr, te = (years < Y) & ((ends if ends is not None else years) < Y), np.flatnonzero(years == Y)
         if tr.sum() < 30 or not len(te):
             continue
         cuts = np.nanquantile(np.where(tr[:, None], X, np.nan), [1 / 3, 2 / 3], axis=0)
         enough = np.isfinite(X[tr]).sum(axis=0) >= 30
         with np.errstate(invalid="ignore"):
-            top = (X[te] >= cuts[1]) & enough
-            bot = (X[te] <= cuts[0]) & enough
+            top = (X[te] > cuts[1]) & enough  # strict: a binary feature's tied cuts flag only the other value
+            bot = (X[te] < cuts[0]) & enough
         med = np.nanmedian(X[tr], axis=0)
         med = np.where(np.isfinite(med), med, 0.0)
         Xtr = np.where(np.isfinite(X[tr]), X[tr], med)
@@ -576,8 +577,10 @@ def setup(args, levels=(LEVEL,), procs: int = 1) -> None:
     net = {_key(it): float(np.sum(it["r"])) - float(it.get("loc", 0.0)) for it in items}
     have = [i for i, k in enumerate(fkeys) if k in net]
     yrs = np.array([pd.Timestamp(D["dates"][k[0]]).year for k in fkeys])
+    last = {_key(it): min(int(it["t"]) + len(it["r"]) - 1, len(D["dates"]) - 1) for it in items}
+    ends = np.array([pd.Timestamp(D["dates"][last[fkeys[i]]]).year for i in have], int)
     _G["flt"] = fit_filters([fkeys[i] for i in have], yrs[have], X[have],
-                            np.array([net[fkeys[i]] > 0 for i in have], int))
+                            np.array([net[fkeys[i]] > 0 for i in have], int), ends)
     _G["X"] = (fkeys, X)
     print(json.dumps({"sessions": len(keys), "with_stats": sum(v is not None for v in _G["sf"].values()),
                       "trades": len(fkeys), "with_target": len(have), "setup_s": round(time.time() - t0),
@@ -680,6 +683,8 @@ def marginals(S: np.ndarray, ys: list[int]) -> list[tuple[str, str, float, float
 
 def cmd_final(args) -> int:
     S, ys, n = _read(args.runs)
+    if not QUICK and n != NBOOK:
+        raise SystemExit(f"{n} books of {NBOOK}: shards are missing")
     lv2 = np.r_[E2K, R43.LEVELS]
     setup(args, levels=tuple(float(x) for x in lv2), procs=args.procs)
     cal = R43._G["cal"]

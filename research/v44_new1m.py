@@ -160,7 +160,7 @@ def form_codes(form: str, items: str) -> list[int]:
 
 
 def event_index(ev: pd.DataFrame, code_col: str) -> dict[tuple[int, int], tuple[np.ndarray, np.ndarray]]:
-    """(t, j) -> (minutes, codes), sorted by minute (-1: a pre event)."""
+    """(t, j) -> (minutes, codes), sorted by minute (negative: a pre event, minutes before 09:30)."""
     out: dict = {}
     if ev.empty:
         return out
@@ -168,6 +168,28 @@ def event_index(ev: pd.DataFrame, code_col: str) -> dict[tuple[int, int], tuple[
     for (t, j), g in ev.groupby(["t", "j"], sort=False):
         out[(int(t), int(j))] = (g["minute"].to_numpy(int), g[code_col].to_numpy(int))
     return out
+
+
+def open_minutes(dates: pd.DatetimeIndex) -> np.ndarray:
+    """09:30 of each session in minutes since the epoch (naive New York time)."""
+    since = pd.DatetimeIndex(dates) - pd.Timestamp("1970-01-01")
+    return np.asarray(since // pd.Timedelta(minutes=1), np.int64) + 570
+
+
+def events_within(ev: dict, om: np.ndarray, t: int, j: int, minute: int, span: int, codes=None) -> int:
+    """The events of symbol j in the ``span`` minutes before minute ``minute`` (after 09:30) of session t."""
+    now = int(om[t]) + minute
+    n, u = 0, t
+    while u >= 0 and int(om[u]) + 390 > now - span:  # session u's events are before its 16:00
+        a = ev.get((u, j))
+        if a is not None:
+            at = int(om[u]) + a[0]
+            sel = (at < now) & (at >= now - span)
+            if codes is not None:
+                sel &= np.isin(a[1], codes)
+            n += int(sel.sum())
+        u -= 1
+    return n
 
 
 def hot_days(D: dict) -> np.ndarray:
@@ -226,8 +248,12 @@ def prepare(stores: dict, D: dict, extras: dict) -> None:
     SIC codes, short interest (``extras`` from run_v44n.load)."""
     v24.prepare(stores, D)
     X.clear()
+    _IDX.clear()
+    _BATCH.clear()
+    _SEL.clear()
     X.update(extras)
     X["hot"] = hot_days(D)
+    X["open_min"] = open_minutes(D["dates"])
     C = np.asarray(D["C"], float)
     with np.errstate(invalid="ignore", divide="ignore"):
         r = C[1:] / C[:-1] - 1
@@ -241,6 +267,11 @@ def prepare(stores: dict, D: dict, extras: dict) -> None:
         if name in extras:
             corr, beta = rolling_beta(r[:, used], np.asarray(extras[name], float))
             X[f"corr_{key}"], X[f"beta_{key}"] = corr, beta
+    if "filing" in stores:  # a filing-store row is in the universe only after its first filing of the N2 forms
+        c = stores["filing"].cands
+        ed = X.get("edgar", {})
+        tj = zip(c["t"].to_numpy(int), c["j"].to_numpy(int))
+        stores["filing"].cols["fmin"] = np.array([ed[k][0][0] if k in ed else 10_000 for k in tj], np.int64)
     DV1 = np.asarray(D["DV1"], float)
     for st_ in stores.values():
         c = st_.cands
@@ -259,14 +290,9 @@ def _px(arr_name: str, t: int, j: int) -> float:
 
 
 def news_before(t: int, j: int, minute: int) -> bool:
-    """A news item in the 24 hours before the entry minute (the session before from that minute, the pre events and
-    the intra events before it)."""
+    """A news item in the 24 hours before the entry minute."""
     nw = X.get("news", {})
-    a = nw.get((t, j))
-    if a is not None and (a[0] < max(minute, 0)).any():
-        return True
-    b = nw.get((t - 1, j))
-    return b is not None and (b[0] >= minute).any()
+    return bool(nw) and events_within(nw, X["open_min"], t, j, minute, 1440) > 0
 
 
 def ctx_ok(ctx: str, t: int, j: int, minute: int) -> bool:
@@ -319,8 +345,8 @@ def _live(b: tuple, cd: dict, scope: str, last: int = LAST) -> np.ndarray:
 
 
 def _next(k: int, b: tuple, live: np.ndarray, side: int) -> tuple:
-    """Entry at the open of the bar after signal bar k."""
-    if k < 0 or k + 1 >= len(b[0]) or not live[k]:
+    """Entry at the open of the bar after signal bar k (no later than 15:00)."""
+    if k < 0 or k + 1 >= len(b[0]) or not live[k] or b[0][k + 1] > LAST:
         return NONE
     return k + 1, float(b[1][k + 1]), np.nan, side
 
@@ -356,15 +382,19 @@ def _events_signal(g: dict, cd: dict, b: tuple, kind: str) -> tuple:
         if not (sel & (mins < 0)).any():
             return NONE
         k = _first(m >= d)
-        ref = float(cd["pc"])
-    else:
-        ok = sel & (mins >= 0) & (mins <= LAST - d - 1)
-        if not ok.any():
-            return NONE
-        mm = int(mins[ok][0])
-        k = _first(m >= mm + 1 + d)
+        return _event_entry(g, cd, o, m, k, float(cd["pc"]), side)
+    ok = sel & (mins >= 0) & (mins <= LAST - d - 1)
+    for mm in mins[ok]:  # the first event whose entry passes the move filter
+        k = _first(m >= int(mm) + 1 + d)
         before = np.flatnonzero(m <= mm)
         ref = float(c[before[-1]]) if len(before) else float(o[0])
+        r = _event_entry(g, cd, o, m, k, ref, side)
+        if r[0] >= 0:
+            return r
+    return NONE
+
+
+def _event_entry(g: dict, cd: dict, o: np.ndarray, m: np.ndarray, k: int, ref: float, side: int) -> tuple:
     if k < 0 or m[k] > LAST:
         return NONE
     e = float(o[k])
@@ -795,6 +825,9 @@ def batch(stores: dict, family: str, g: dict) -> list[tuple[str, int, int, float
             b = v24.bars(s_, i)
             if len(b[0]) < 30:
                 continue
+            fmin = int(s_.cols["fmin"][i]) if "fmin" in s_.cols else -10_000
+            if fmin >= LAST:
+                continue
             if sym is not None:
                 F = {"events": sym.get((nm, i), [])}
                 if not F["events"]:
@@ -809,7 +842,7 @@ def batch(stores: dict, family: str, g: dict) -> list[tuple[str, int, int, float
                     r = _events_signal(gg, cd, b, "news" if family == "NW_NEWS" else "edgar")
                 else:
                     r = SIGNALS[family](gg, cd, b, F)
-                if r[0] >= 0 and np.isfinite(r[1]) and r[1] > 0:
+                if r[0] >= 0 and np.isfinite(r[1]) and r[1] > 0 and b[0][r[0]] > fmin:
                     out[sk].append((nm, i, int(r[0]), float(r[1]), int(r[3])))
         _BATCH[fk] = out
     return _BATCH[fk][sig_key(family, g)]
@@ -845,12 +878,27 @@ def make_trade(D: dict, family: str, g: dict, cd: dict, b: tuple, k: int, e: flo
     return v19.trade_row(D, cd, b, line, side, k, e, stop, ex, prio)
 
 
-def trades(stores: dict, D: dict, family: str, g: dict) -> pd.DataFrame:
-    rows, keep = [], []
+def _band(st_, band: str) -> np.ndarray:
+    key = "band_" + band
+    if key not in st_.cols:
+        st_.cols[key] = np.asarray(v20.in_band(pd.Series(np.asarray(st_.cols["open"], float)), band), bool)
+    return st_.cols[key]
+
+
+_SEL: dict = {}
+
+
+def selected(stores: dict, family: str, g: dict) -> list[tuple]:
+    """The signals a configuration trades: its band and context, a valid stop, the first five a day by minute and
+    priority (independent of the costs, so shared by the cost cases)."""
+    ck = (family, tuple(sorted(g.items())))
+    if ck in _SEL:
+        return _SEL[ck]
+    keep = []
     for nm, i, k, e, side in batch(stores, family, g):
         cols = stores[nm].cols
         t, j = int(cols["t"][i]), int(cols["j"][i])
-        if not v20.in_band(pd.Series([float(cols["open"][i])]), g["band"]).iloc[0]:
+        if not _band(stores[nm], g["band"])[i]:
             continue
         b = v24.bars(stores[nm], i)
         if not ctx_ok(g["ctx"], t, j, int(b[0][k])):
@@ -861,21 +909,33 @@ def trades(stores: dict, D: dict, family: str, g: dict) -> pd.DataFrame:
         keep.append((pd.Timestamp(cols["date"][i]), int(b[0][k]), -abs(float(cols["gap"][i])), nm, i, k, e, side))
     keep.sort(key=lambda x: (x[0], x[1], x[2]))
     per_day: dict = {}
-    for d, _, negp, nm, i, k, e, side in keep:  # the book takes the first five a day by minute and priority
-        if per_day.get(d, 0) >= 5:
+    out = []
+    for x in keep:  # the book takes the first five a day by minute and priority
+        if per_day.get(x[0], 0) >= 5:
             continue
-        per_day[d] = per_day.get(d, 0) + 1
+        per_day[x[0]] = per_day.get(x[0], 0) + 1
+        out.append(x)
+    _SEL.clear()
+    _SEL[ck] = out
+    return out
+
+
+def trades(stores: dict, D: dict, family: str, g: dict) -> pd.DataFrame:
+    rows = []
+    for _, _, negp, nm, i, k, e, side in selected(stores, family, g):
         cd, b = v24.row(stores[nm], i), v24.bars(stores[nm], i)
         rows.append(make_trade(D, family, g, cd, b, k, e, side, -negp))
     return pd.DataFrame(rows, columns=v19.COLS)
 
 
 def pool_by_day(stores: dict, g: dict) -> dict:
+    """The day's candidates of a scope and band: (store, row, the minute after which it is in the universe)."""
     out: dict = {}
     for nm, i in candidates(stores, g["scope"]):
         cols = stores[nm].cols
-        if v20.in_band(pd.Series([float(cols["open"][i])]), g["band"]).iloc[0]:
-            out.setdefault(pd.Timestamp(cols["date"][i]), []).append((nm, i))
+        if _band(stores[nm], g["band"])[i]:
+            fmin = int(cols["fmin"][i]) if "fmin" in cols else -10_000
+            out.setdefault(pd.Timestamp(cols["date"][i]), []).append((nm, i, fmin))
     return out
 
 
@@ -885,10 +945,10 @@ def placebo(stores: dict, by_day: dict, D: dict, family: str, g: dict, real: pd.
     open), side, stop distance and exit."""
     rows = []
     for r in real.itertuples(index=False):
-        ch = by_day.get(pd.Timestamp(r.date), [])
+        ch = [c for c in by_day.get(pd.Timestamp(r.date), []) if c[2] < r.minute]
         if not ch:
             continue
-        nm, i = ch[int(rng.integers(len(ch)))]
+        nm, i, _ = ch[int(rng.integers(len(ch)))]
         cd, b = v24.row(stores[nm], i), v24.bars(stores[nm], i)
         if len(b[0]) < 30:
             continue

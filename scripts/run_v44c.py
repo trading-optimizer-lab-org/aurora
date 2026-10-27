@@ -4,8 +4,8 @@
 The book is the base rule, or part M's walk-forward book when it passed Q1. Each year's members (run_v22's rule in
 part N's summary) are rebuilt at the strict fills and sized as v26 at one of four (risk, cap) sizes; the size, or no
 sleeve, is chosen each year by v43's walk-forward rule at the $10,000 level. v28's joint caps; the broker's 15% rule
-every minute on the book's trades and at the close on the sleeve's. The PAID plan's extra $99 a month is charged on the
-days of the years the sleeve is on (at each equity level of the bootstrap).
+every minute on the book's trades and at the close on the sleeve's. The PAID plan's extra $99 a month is charged in
+dollars on the days of the years the sleeve is on, in the walk-forward choice and in the bootstrap.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import argparse
 import importlib.util
 import json
 import multiprocessing as mp
+import os
 import sys
 from pathlib import Path
 
@@ -164,8 +165,8 @@ def liquidate_mixed(taken: list[dict], recs: list[dict], T: int) -> np.ndarray:
     return out
 
 
-def account(level: float, task: str, size: int, sleeve_years: set) -> np.ndarray:
-    items, recs = book_items(level, task, _G["book_picks"])
+def account(book: tuple, level: float, task: str, size: int, sleeve_years: set) -> np.ndarray:
+    items, recs = book
     items = items + sleeve_items(level, task, size, sleeve_years)
     D = _G["D"]
     _, taken = A.joint(items, D["dates"], R33.GROSS, R33.MAX_OPEN, R33.MAX_NEW, "move", "none", "tzi", 0.0, 0.0,
@@ -173,9 +174,28 @@ def account(level: float, task: str, size: int, sleeve_years: set) -> np.ndarray
     return liquidate_mixed(taken, recs, len(D["dates"]))
 
 
-def _job(job: tuple) -> tuple[tuple, np.ndarray]:
-    level, task, size = job
-    return job, account(level, task, size, _G["member_years"])[R43._G["pos"]]
+def _job(job: tuple) -> list[tuple[tuple, np.ndarray]]:
+    """Every sleeve size at one level and cost set (the book's replay is shared by the sizes)."""
+    level, task, sizes = job
+    book = book_items(level, task, _G["book_picks"])
+    return [((level, task, s), account(book, level, task, s, _G["member_years"])[R43._G["pos"]]) for s in sizes]
+
+
+def boot_fee(Rb: np.ndarray, idx: dict, fee: np.ndarray, e0: float = R29.E0,
+             levels: np.ndarray = R43.LEVELS) -> dict:
+    """R43.boot with a dollar fee on each drawn day (``fee``: per day of the calendar)."""
+    out = {}
+    for sample, ix in idx.items():
+        eq = np.full(ix.shape[0], e0)
+        low = eq.copy()
+        for s in range(ix.shape[1]):
+            k = np.clip(np.searchsorted(levels, eq, side="right") - 1, 0, len(levels) - 1)
+            r = Rb[k, ix[:, s]]
+            eq = np.where(eq > 0, np.maximum(eq * (1 + np.maximum(r, -1.0)) - fee[ix[:, s]], 0.0), 0.0)
+            low = np.minimum(low, eq)
+        q = np.sort(eq)
+        out[sample] = {**R29.year_stats(eq, low, e0), "es5": float(q[:max(1, int(0.05 * len(q)))].mean())}
+    return out
 
 
 def setup(args, levels: tuple) -> None:
@@ -183,6 +203,8 @@ def setup(args, levels: tuple) -> None:
     D = R43._G["D"]
     _G["D"] = D
     _G["years_of_t"] = np.asarray(pd.DatetimeIndex(D["dates"]).year)
+    if not (args.msum.exists() and args.nsum.exists()) and not os.environ.get("V44_ALLOW_MISSING"):
+        raise SystemExit(f"missing part M or N summary: {args.msum}, {args.nsum}")
     msum: dict = json.loads(args.msum.read_text(encoding="utf-8")) if args.msum.exists() else {"q1": False}
     q1 = bool(msum.get("q1"))
     ys = R43._G["ys"]
@@ -209,14 +231,17 @@ def cmd_final(args) -> int:
     cal, years, ys = R43._G["cal"], R43._G["years"], R43._G["ys"]
     idx = R32._sub_idx(cal)
     sizes = range(len(SIZES)) if _G["members"] else range(1)
-    jobs = [(float(lv), task, s) for lv in lv2 for task in TASKS for s in sizes]
+    jobs = [(float(lv), task, tuple(sizes)) for lv in lv2 for task in TASKS]
     R43._G["count"] = {}
     with mp.get_context("fork").Pool(args.procs) as pool:
-        got = dict(pool.map(_job, jobs, chunksize=1))
+        got = dict(x for part in pool.map(_job, jobs, chunksize=1) for x in part)
+    paid = PAID_EXTRA * 12 / 252
+    member_day = np.isin(years, sorted(_G["member_years"]))
     G = np.full((len(SIZES), len(ys)), np.nan)
     DD = np.full((len(SIZES), len(ys)), np.nan)
     for s in sizes:
-        st = R40.year_stats(got[(LEVEL, "base", s)], years, ys)
+        r = got[(LEVEL, "base", s)] - (paid / LEVEL * member_day if s else 0.0)  # the PAID plan while the sleeve is on
+        st = R40.year_stats(r, years, ys)
         G[s], DD[s] = st[:, 0], st[:, 1]
     picks = {ys[0]: 0}
     for k in range(1, len(ys)):
@@ -225,21 +250,24 @@ def cmd_final(args) -> int:
         picks[ys[k]] = int(np.flatnonzero(elig)[np.argmax(g[elig])])
     on_years = {y for y, s in picks.items() if s and y in _G["member_years"]}
 
-    def series(task: str, wf: bool, fixed: int = 0) -> np.ndarray:
+    def series(task: str, wf: bool, fixed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+        """(returns at each level, the dollar fee of each day: FREE, plus the PAID extra on the sleeve's days)."""
         R = np.stack([got[(float(lv), task, 0 if wf else fixed)] for lv in lv2])
         on = set(on_years) if wf else (_G["member_years"] if fixed else set())
         if wf:
             for y, s in picks.items():
                 R[:, years == y] = np.stack([got[(float(lv), task, s)] for lv in lv2])[:, years == y]
-        day = np.isin(years, sorted(on))
-        R = R.copy()
-        R[:, day] -= (PAID_EXTRA * 12 / 252 / lv2)[:, None]  # the PAID plan on the sleeve's days
-        return R
+        fee = R35.FIXED * 12 / 252 + paid * np.isin(years, sorted(on))
+        return R, fee
 
-    res = {t: {b: R43.boot(series(t, b == "wf")[1:], idx if t == "base" else {"all": idx["all"]})
-               for b in ("alone", "wf")} for t in TASKS}
-    fixed = {s: R43.boot(series("base", False, s)[1:], {"all": idx["all"]})["all"] for s in sizes}
-    two = {b: R43.boot(series("base", b == "wf"), {"all": idx["all"]}, E2K, lv2)["all"] for b in ("alone", "wf")}
+    def boot(task: str, wf: bool, sub: dict, fixed: int = 0, two_k: bool = False) -> dict:
+        R, fee = series(task, wf, fixed)
+        return boot_fee(R, sub, fee, E2K, lv2) if two_k else boot_fee(R[1:], sub, fee)
+
+    res = {t: {b: boot(t, b == "wf", idx if t == "base" else {"all": idx["all"]}) for b in ("alone", "wf")}
+           for t in TASKS}
+    fixed = {s: boot("base", False, {"all": idx["all"]}, s)["all"] for s in sizes}
+    two = {b: boot("base", b == "wf", {"all": idx["all"]}, two_k=True)["all"] for b in ("alone", "wf")}
     a = {t: {b: res[t][b]["all"] for b in ("alone", "wf")} for t in TASKS}
     q3 = bool(a["base"]["wf"]["med"] >= GAIN * a["base"]["alone"]["med"] and a["base"]["wf"]["p_ruin"] <= MAX_RUIN
               and a["hot5"]["wf"]["p_ruin"] <= MAX_RUIN and a["high"]["wf"]["med"] >= a["high"]["alone"]["med"])

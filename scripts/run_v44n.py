@@ -8,6 +8,8 @@ in blocks that share a feature key, in a seeded order.
 """
 from __future__ import annotations
 
+import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -97,10 +99,14 @@ def btc_arrays(D: dict, btc: pd.DataFrame) -> dict:
     T = len(D["dates"])
     sig = np.full((T, 3), np.nan)
     lm = np.log(np.where(mins > 0, mins, np.nan))
-    for q, k in enumerate((1, 5, 15)):
+    for q, k in enumerate((1, 5, 15)):  # pooled over the regular-hour minutes of the five sessions before
         r = lm[:, k:] - lm[:, :-k]
-        sd = np.nanstd(r, axis=1)
-        sig[:, q] = pd.Series(sd).shift(1).rolling(5, min_periods=3).mean().to_numpy()
+        ok = np.isfinite(r)
+        z = np.where(ok, r, 0.0)
+        n, s1, s2 = (pd.Series(x).shift(1).rolling(5, min_periods=3).sum().to_numpy()
+                     for x in (ok.sum(axis=1).astype(float), z.sum(axis=1), (z * z).sum(axis=1)))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            sig[:, q] = np.sqrt(np.maximum(s2 - s1 * s1 / n, 0.0) / (n - 1))
     close = mins[:, -1].astype(float)
     with np.errstate(invalid="ignore", divide="ignore"):
         day = np.r_[np.nan, close[1:] / close[:-1] - 1]
@@ -117,7 +123,18 @@ def iwm_arrays(D: dict, idx: pd.DataFrame) -> dict:
     return {"iwm_min": mins, "iwm_pc": pc, "iwm_day": day}
 
 
+NEEDED = ("news.parquet", "edgar.parquet", "btc.parquet", "index.parquet", "filing/store/cands.parquet")
+
+
+def require_data(folder: Path) -> None:
+    """Every v44 input must be there, unless ``V44_ALLOW_MISSING`` is set (the canary)."""
+    missing = [f for f in NEEDED if not (folder / f).exists()]
+    if missing and not os.environ.get("V44_ALLOW_MISSING"):
+        raise SystemExit(f"v44 data missing in {folder}: {missing}")
+
+
 def extras(D: dict) -> dict:
+    require_data(DATA)
     out: dict = {"D": D}
     ex28 = R14.PREP.load(INPUTS28 / "extras28.pkl")
     for k in ("si_so", "dtc", "sic"):
@@ -148,6 +165,7 @@ def load(base: Path) -> None:
 
 
 _P: dict = {}
+_REAL: dict = {}
 SCEN = R22.SCEN + (("strict", R22.R4, 1.0, 1.0, False),)
 
 
@@ -156,8 +174,13 @@ def evaluate(key: str, ci: int, placebo_rng: np.random.Generator | None = None) 
     D, stores, table = R14._G["D"], R14._G["v44"], R16._W["table"]
     dates = D["dates"]
     v19.set_costs("r4", R22.SLIP, R22.R4)
-    tr = v44.trades(stores, D, key, g)
+    if placebo_rng is not None and (key, ci) in _REAL:
+        tr = _REAL[(key, ci)]  # a placebo block's draws share the real trades
+    else:
+        tr = v44.trades(stores, D, key, g)
     if placebo_rng is not None:
+        _REAL.clear()
+        _REAL[(key, ci)] = tr
         pk = (g["scope"], g["band"])
         if pk not in _P:
             _P[pk] = v44.pool_by_day(stores, g)
@@ -182,13 +205,59 @@ def evaluate(key: str, ci: int, placebo_rng: np.random.Generator | None = None) 
     return out, paths, taken
 
 
+def half_of(sym) -> int:
+    return int(hashlib.sha256(str(sym).encode()).hexdigest()[:8], 16) % 2  # v28's symbol halves (run_v44m.half_of)
+
+
+def cmd_halves(argv: list[str]) -> int:
+    """Each family's walk-forward stream (middle costs) rebuilt on each symbol half, appended to the report."""
+    ap = argparse.ArgumentParser(prog="run_v44n halves")
+    ap.add_argument("--inputs", type=Path, default=Path("outputs/v18"))
+    ap.add_argument("--selected", type=Path, required=True)
+    ap.add_argument("--report", type=Path, required=True)
+    args = ap.parse_args(argv)
+    load(args.inputs)
+    D, stores, table = R14._G["D"], R14._G["v44"], R16._W["table"]
+    dates, end = D["dates"], core.last_day()
+    cash = R14.PREP.load(args.inputs / "v14" / "daily.pkl")["cash"]
+    cal = dates[(dates >= core.DESIGN_START) & (dates <= end)]
+    wf_index = cal[cal >= pd.Timestamp("2018-01-01")]
+    sel = json.loads(args.selected.read_text(encoding="utf-8"))
+    v19.set_costs("r4", R22.SLIP, R22.R4)
+    lines = ["", "## Symbol halves (v28's: sha256 of the symbol; each family's walk-forward picks, middle costs)", "",
+             "| family | half 0 Sortino 2018+ | half 1 Sortino 2018+ | half 0 CAGR | half 1 CAGR |", "|---|---|---|---|---|"]
+    for fam, ch in sorted(sel["choices"].items()):
+        if not ch.get("picks"):
+            continue
+        parts: dict = {0: [], 1: []}
+        for y, name in sorted(ch["picks"].items(), key=lambda x: int(x[0])):
+            key, ci = name.split("|")
+            tr = v44.trades(stores, D, key, registry()[key][1][int(ci)])
+            h = tr["symbol"].map(half_of).to_numpy() if len(tr) else np.zeros(0, int)
+            for k in (0, 1):
+                r = v19.intra_book(tr[h == k], dates, table, 1.0)[0]
+                parts[k].append(r[(r.index >= pd.Timestamp(f"{y}-01-01")) & (r.index <= min(end, pd.Timestamp(f"{y}-12-31")))])
+        st = {k: R14._stats(pd.concat(parts[k]).reindex(wf_index).fillna(0.0), cash, "2018-01-01", str(end.date()))
+              for k in (0, 1)}
+        f = R22.R20._fmt
+        lines.append(f"| {fam} | {f(st[0], 'sortino', '{:.2f}')} | {f(st[1], 'sortino', '{:.2f}')} | "
+                     f"{f(st[0], 'cagr', '{:.1%}')} | {f(st[1], 'cagr', '{:.1%}')} |")
+    with args.report.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print("\n".join(lines), flush=True)
+    return 0
+
+
 R22.registry = registry
 R22.configs = configs
 R22.evaluate = evaluate
 R22.R19.load = load
 R22.TITLE, R22.COMBO = "v44: new one-minute ideas on small caps", "COMBO44"
+R22.REPORT_SC = R22.REPORT_SC + ("strict",)
 
 
 if __name__ == "__main__":
     sys.argv[0] = "run_v44n"
+    if len(sys.argv) > 1 and sys.argv[1] == "halves":
+        raise SystemExit(cmd_halves(sys.argv[2:]))
     raise SystemExit(R22.main())
