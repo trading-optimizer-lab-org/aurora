@@ -308,3 +308,179 @@ def test_runner_deals_every_configuration_once() -> None:
     cfgs = R.configs()
     assert len(cfgs) == len(set(cfgs)) == 772632
     assert R.SCEN[-1][0] == "strict" and R.R22.COMBO == "COMBO44"
+
+
+# ---------------------------------------------------------------- part M: the book's trades on minutes
+
+@pytest.fixture(scope="module")
+def M():
+    from test_v24 import _script
+    return _script("run_v44m", "run_v44m_under_test")
+
+
+def test_m_grid_matches_the_preregistration(M) -> None:
+    assert (len(M.FILTERS), len(M.TRIGS), len(M.EXES), len(M.XEXITS), len(M.LOCS), len(M.PARTIALS)) == \
+        (59, 65, 4, 13, 3, 2)
+    assert M.NB == 1_196_520 and len(M.PAIRS) == 1300 and M.NPB == 7800 and M.BASE == 0
+    assert M.book_of(M.BASE) == (0, 0, 0, 0, 0, 0)
+    seen = np.zeros(M.NBOOK, int)
+    for uid in range(M.NUNIT):
+        combo, flts, bids = M.unit_books(uid)
+        seen[bids] += 1
+        for f, b in zip(flts[:2], bids[:2]):
+            assert M.book_of(b) == (f,) + combo
+    assert (seen == 1).all()
+
+
+def _session(rng: np.random.Generator, start: float = 10.0) -> dict:
+    B = {k: np.full(960, np.nan) for k in ("o", "h", "l", "c", "v", "vw")}
+    s = np.arange(240, 960)
+    r = rng.normal(0, 0.004, len(s)) + rng.choice([0, 0.03, -0.03], len(s), p=[0.96, 0.02, 0.02])
+    c = start * np.exp(np.cumsum(r))
+    o = np.r_[start, c[:-1]]
+    B["o"][s], B["c"][s] = o, c
+    B["h"][s], B["l"][s] = np.maximum(o, c) * 1.002, np.minimum(o, c) * 0.998
+    B["v"][s] = rng.lognormal(8, 1, len(s)) * np.where(rng.random(len(s)) < 0.03, 12, 1)
+    B["vw"][s] = (B["h"][s] + B["l"][s] + B["c"][s]) / 3
+    return B
+
+
+def _after(B: dict, k: int, rng: np.random.Generator) -> dict:
+    B2 = {x: a.copy() for x, a in B.items()}
+    s = np.arange(960) > k
+    f = rng.uniform(0.6, 1.5, s.sum())
+    for x in ("o", "h", "l", "c", "vw"):
+        B2[x][s] = B2[x][s] * f
+    B2["v"][s] = B2["v"][s] * rng.uniform(0.1, 10, s.sum())
+    return B2
+
+
+def test_m_triggers_and_exits_use_bars_up_to_k(M) -> None:
+    rng = np.random.default_rng(44)
+    hits = 0
+    for _ in range(6):
+        B = _session(rng)
+        steps = M.trigger_steps(M.session_feats(B))
+        for i, s in enumerate(steps):
+            if s >= 10_000:
+                continue
+            hits += 1
+            assert M.trigger_steps(M.session_feats(_after(B, int(s), rng)))[i] == s, M.TRIG_KINDS[i]
+        for k in (600, 700, 850):
+            B2 = _after(B, k, rng)
+            for xx in range(1, len(M.XEXITS)):
+                f = M.xmask_of(xx)
+                M._G["sf"] = {(1, 0): M.session_feats(B)}
+                a = f(B, 1, 0, 10.0)
+                M._G["sf"] = {(1, 0): M.session_feats(B2)}
+                assert (f(B2, 1, 0, 10.0)[: k + 1] == a[: k + 1]).all(), M.XEXITS[xx]
+    assert hits >= 30
+    M._G["sf"] = {}
+
+
+def test_m_delay_of(M) -> None:
+    steps = np.array([M.OPEN + 20] + [10_000] * 7)
+    t = {x: i for i, x in enumerate(M.TRIGS)}
+    assert M.delay_of(steps, 0) == 0
+    assert M.delay_of(steps, t[("T1", 30, "skip")]) == 21  # the bar after the trigger bar
+    assert M.delay_of(steps, t[("T1", 15, "skip")]) is None
+    assert M.delay_of(steps, t[("T1", 15, "deadline")]) == 15
+    assert M.delay_of(steps, t[("T2", 60, "deadline")]) == 60
+
+
+def _world_m(M, C: list[float], bars: dict) -> None:
+    from test_v43 import _world
+    _world(M.R43, C, bars)
+    M.R43._G["D"]["DV1"] = np.full((len(C), 1), 5e6)
+    M._G["D"] = M.R43._G["D"]
+
+
+def test_m_execution(M) -> None:
+    from test_v43 import IT, _meta
+    s = np.arange(330, 720)
+    o = 10 + 0.01 * (s - 330)  # rising by a cent a minute from 09:30
+    b = (s, o, o + 0.005, o - 0.005, o, np.full(len(s), 1e6), o)
+    _world_m(M, [10, 10, 10], {(1, 0): b})
+    m = _meta()
+    e, es = M.exe_of(M.EXES.index("twap3"))(IT, m, 10.0, M.OPEN)
+    assert es == M.OPEN + 10 and e == pytest.approx((10.0 + 10.05 + 10.10) / 3)
+    e, es = M.exe_of(M.EXES.index("twap5"))(IT, m, 10.0, M.OPEN)
+    assert es == M.OPEN + 20
+    hs = float(M.core.half_spread(np.array([10.0]), "mid")[0])
+    e, es = M.exe_of(M.EXES.index("passive"))(IT, m, 10.0, M.OPEN)
+    lim = 10.0 * (1 + hs)  # no bar before the open here: the reference is the auction price
+    hit = np.flatnonzero(o[:5] + 0.005 > lim)
+    if len(hit):
+        assert es == M.OPEN + int(hit[0]) and e == pytest.approx(max(o[hit[0]], lim))
+    else:
+        assert es == M.OPEN + 5 and e == pytest.approx(o[5])
+    close = _meta(kind="close")
+    e, es = M.exe_of(M.EXES.index("twap3"))(IT, close, 13.9, -1)
+    assert es == -1 and e == pytest.approx((o[950 - 570] + o[955 - 570] + 13.9) / 3)
+
+
+def test_m_replay_hooks(M) -> None:
+    from test_v43 import IT, _flat, _meta
+    _world_m(M, [10, 9, 8], {(1, 0): _flat(9.0), (2, 0): _flat(8.0)})
+    m = _meta(stop=20.0, hold="d2")
+    none = M.R43.replay(IT, m, (0, 1.0, "hold", None, None, 1.0), "next_open", None, "auction")
+    half = M.R43.replay(IT, m, (0, 1.0, "hold", None, None, 1.0), "next_open", None, "auction", half=True)
+    assert none["g"] == [pytest.approx(0.1), pytest.approx(0.1)]
+    assert half["g"] == [pytest.approx(0.1), pytest.approx(0.05)]
+    b = [x.copy() for x in _flat(9.0)]
+    k = 700 - 570
+    b[1][k], b[2][k], b[3][k], b[4][k], b[5][k], b[6][k] = 9.0, 9.5, 9.0, 9.45, 2e7, 9.3  # a 5% green bar, 20x volume
+    b[1][k + 1:] = 9.6
+    b[2][k + 1:], b[3][k + 1:], b[4][k + 1:], b[6][k + 1:] = 9.6, 9.6, 9.6, 9.6
+    _world_m(M, [10, 9.6, 9.6], {(1, 0): tuple(b)})
+    M._G["sf"] = {(1, 0): M.session_feats(M.R43.timeline(1, 0))}
+    xm = M.xmask_of(M.XEXITS.index(("X4", 5.0)))
+    r = M.R43.replay(IT, m, (0, 1.0, "hold", None, None, 1.0), "next_open", None, "auction", xmask=xm)
+    assert r["u"] == [1] and r["g"][0] == pytest.approx((10 - 9.6) / 10)
+    assert r["Q"][0][700] == 1 and r["Q"][0][701] == 0
+    M._G["sf"] = {}
+
+
+def test_m_filters_use_earlier_years(M) -> None:
+    rng = np.random.default_rng(3)
+    years = np.r_[np.full(90, 2018), np.full(3, 2019)]
+    X = rng.normal(0, 1, (93, len(M.FEATS)))
+    X[:90, 0] = np.arange(1, 91)
+    X[90:, 0] = [100.0, 10.0, 45.0]
+    X[91, 1] = np.nan
+    y = rng.integers(0, 2, 93)
+    keys = [(t, 0, 0.0) for t in range(93)]
+    out = M.fit_filters(keys, years, X, y)
+    assert not out[keys[0]]["skip"].any() and np.isnan(out[keys[0]]["p"]).all()
+    assert out[keys[90]]["skip"][0] and not out[keys[90]]["skip"][1]  # 100: in the top tercile of 1-90
+    assert out[keys[91]]["skip"][1] and not out[keys[91]]["skip"][0] and not out[keys[91]]["skip"][2:4].any()
+    assert not out[keys[92]]["skip"][:2].any()
+    assert ((out[keys[92]]["p"] >= 0) & (out[keys[92]]["p"] <= 1)).all()
+    M._G["flt"] = {keys[90]: {"skip": out[keys[90]]["skip"], "p": np.array([0.6, 0.2])},
+                   keys[91]: {"skip": out[keys[91]]["skip"], "p": np.array([0.3, 0.8])}}
+    its = [{"t": t, "j": 0, "prio": 0.0, "w": 0.1} for t in (90, 91, 5)]
+    assert [it["t"] for it in M.filtered(its, M.FILTERS.index(("terc", 0, "top")))] == [91, 5]
+    assert [it["t"] for it in M.filtered(its, M.FILTERS.index(("model", "lr", "p40")))] == [90, 5]
+    sized = M.filtered(its, M.FILTERS.index(("model", "gb", "size")))
+    assert sized[0]["w"] == pytest.approx(0.07) and sized[1]["w"] == pytest.approx(0.13) and sized[2]["w"] == 0.1
+    assert its[0]["w"] == 0.1
+    pair = M.PAIRS.index(((0, "bottom"), (1, "top")))
+    assert len(M.filtered(its, ("pair", pair))) == 3
+    M._G["flt"] = {}
+
+
+def _bars_of(B: dict) -> tuple:
+    return (np.arange(0, 720), *(np.asarray(B[k][240:], float) for k in ("o", "h", "l", "c", "v", "vw")))
+
+
+def test_m_features_stop_at_the_decision(M) -> None:
+    rng = np.random.default_rng(9)
+    B = _session(rng)
+    it = {"t": 1, "j": 0, "so": 2e7, "price": 10.0}
+    _world_m(M, [10, 10, 10], {(1, 0): _bars_of(B)})
+    fo, fc = M.trade_features(it, "open"), M.trade_features(it, "close")
+    _world_m(M, [10, 10, 10], {(1, 0): _bars_of(_after(B, M.OPEN - 1, rng))})
+    assert np.allclose(M.trade_features(it, "open"), fo, equal_nan=True)
+    _world_m(M, [10, 10, 10], {(1, 0): _bars_of(_after(B, 949, rng))})
+    assert np.allclose(M.trade_features(it, "close"), fc, equal_nan=True)
+    assert np.isfinite(fo[:6]).all() and np.isfinite(fc[[0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12]]).all()

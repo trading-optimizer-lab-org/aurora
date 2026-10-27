@@ -212,9 +212,13 @@ def _first(mask: np.ndarray) -> int:
 
 # ---------------------------------------------------------------- one trade
 
-def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill: str) -> dict | None:
+def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill: str, exe=None, xmask=None,
+           half: bool = False) -> dict | None:
     """The trade walked minute by minute: its sessions, gross return a session and minute marks (gain since the
-    last close, part open, market value, all per unit of weight on the entry price); None when it does not fill."""
+    last close, part open, market value, all per unit of weight on the entry price); None when it does not fill.
+    v44's hooks: ``exe(it, m, e, es)`` -> (e, es) or None re-prices the entry; ``xmask(B, u, j, e)`` -> a mask over
+    the 960 steps of an emergency cover set off at a bar's close; ``half`` covers half at an open entry's first
+    close."""
     D = _G["D"]
     O, C, new = D["O"], D["C"], D["new"]
     T = C.shape[0]
@@ -247,6 +251,12 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
         first = t
     else:
         e, es, first = e0, -1, t + 1
+    if exe is not None:
+        got = exe(it, m, e, es)
+        if got is None:
+            _count("entry_not_filled")
+            return None
+        e, es = got
     S = float(m["stop"]) * e / e0 if np.isfinite(m["stop"]) else np.inf
     S = np.inf if stopx is None else e + stopx * (S - e)
     catl = e * (1 + m["cat"]) if np.isfinite(m.get("cat", np.nan)) else np.inf
@@ -311,7 +321,8 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
             k_tg = _first(ok & (Bl[seg] <= tgl))
             k_cv = _first(ok & (Bl[seg] <= cvl))
             k_time = _first(ok & (np.arange(lo_s, LAST + 1) >= flat)) if isinstance(flat, int) else 10_000
-            k = min(k_time, k_stop, k_tg, k_cv)
+            k_x = _first(ok & xmask(B, u, j, e)[seg]) if xmask is not None else 10_000
+            k = min(k_time, k_stop, k_tg, k_cv, k_x)
             if k < 10_000:
                 s0 = lo_s + k
                 rest = (LAST, c_u)
@@ -319,6 +330,8 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
                     f = market(B, s0, LAST, None, "slip" if fill == "slip" else fill, n_sh * q, part, rest)
                 elif k == k_stop:
                     f = market(B, s0, LAST, float(S_eff[k]), fill, n_sh * q, part, rest)
+                elif k == k_x:
+                    f = market(B, s0, LAST, None, "next_open" if fill == "slip" else fill, n_sh * q, part, rest)
                 else:
                     f = limit(B, s0, LAST, tgl if k == k_tg else cvl, n_sh * q, part, rest)
                 ev += [(s, p * q, px) for s, p, px in f]
@@ -326,6 +339,8 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
             low = min(low, float(np.min(lows[:k + 1] if k < 10_000 else lows, initial=np.inf)))
         if not done:
             cut = q if i == len(sess) - 1 else min(fr[i], q)
+            if half and i == 0 and kind == "open":
+                cut = min(q, max(cut, 0.5))
             if cut > 0:
                 ev.append((LAST, cut, c_u))
         # the marks
