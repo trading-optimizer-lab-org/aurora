@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: v44-canary
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   V14_UNLOCK_SEALED: yes-the-owner-asked
@@ -24,6 +24,7 @@ env:
   OPENBLAS_NUM_THREADS: "1"
   MKL_NUM_THREADS: "1"
   V29_QUICK: "1"
+  V44_ALLOW_MISSING: "1"
 
 jobs:
   canary:

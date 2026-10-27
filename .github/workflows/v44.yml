@@ -1,0 +1,823 @@
+name: "v44: new one-minute families, the book's meta-labels and execution, their combination"
+
+# docs/research/V44_PREREGISTRATION.md. Waits for the v44 data run (40486882613); then part N (run_v44n: 300 shards
+# of real returns, selection, 300 shards of placebos, report), part M (run_v44m: 300 shards of books, final) and part C
+# (run_v44c). Market data stays in the Actions cache; the shards upload strategy returns.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v44.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v44
+  cancel-in-progress: false
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+
+jobs:
+  wait_a:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Wait for the v44 data run to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 330); do
+            a=$(gh run view 40486882613 --repo "${{ github.repository }}" --json status,conclusion -q '.status + " " + .conclusion' || echo unknown)
+            echo "$(date -u +%H:%M) data=$a"
+            if [ "$a" = "completed success" ]; then exit 0; fi
+            case "$a" in completed*) echo "the data run did not succeed"; exit 1;; esac
+            sleep 60
+          done
+          exit 0
+
+  wait_b:
+    needs: wait_a
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Wait for the v44 data run to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 330); do
+            a=$(gh run view 40486882613 --repo "${{ github.repository }}" --json status,conclusion -q '.status + " " + .conclusion' || echo unknown)
+            echo "$(date -u +%H:%M) data=$a"
+            if [ "$a" = "completed success" ]; then exit 0; fi
+            case "$a" in completed*) echo "the data run did not succeed"; exit 1;; esac
+            sleep 60
+          done
+          exit 1
+
+  n_real_a:
+    needs: wait_b
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v44n.py real --shard ${{ matrix.shard }} --shards 300 --workers 4 --out outputs/v44w/n/part
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44n-real-${{ matrix.shard }}
+          path: outputs/v44w/n/part
+          retention-days: 14
+
+  n_real_b:
+    needs: wait_b
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v44n.py real --shard ${{ matrix.shard }} --shards 300 --workers 4 --out outputs/v44w/n/part
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44n-real-${{ matrix.shard }}
+          path: outputs/v44w/n/part
+          retention-days: 14
+
+  n_select:
+    needs: [n_real_a, n_real_b]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      names: ${{ steps.sel.outputs.names }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v44n-real-*
+          path: outputs/v44w/n/real-parts
+      - id: sel
+        run: |
+          python scripts/run_v44n.py select --parts outputs/v44w/n/real-parts --out outputs/v44w/n/sel
+          echo "names=$(cat outputs/v44w/n/sel/selected.txt)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44n-selection
+          path: outputs/v44w/n/sel
+          retention-days: 30
+
+  n_placebo_a:
+    needs: n_select
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      SELECTED: ${{ needs.n_select.outputs.names }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v44n.py placebo --shard ${{ matrix.shard }} --shards 300 --workers 4 --selected "$SELECTED" --out outputs/v44w/n/part
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44n-plac-${{ matrix.shard }}
+          path: outputs/v44w/n/part
+          retention-days: 14
+
+  n_placebo_b:
+    needs: n_select
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      SELECTED: ${{ needs.n_select.outputs.names }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v44n.py placebo --shard ${{ matrix.shard }} --shards 300 --workers 4 --selected "$SELECTED" --out outputs/v44w/n/part
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44n-plac-${{ matrix.shard }}
+          path: outputs/v44w/n/part
+          retention-days: 14
+
+  n_report:
+    needs: [n_select, n_placebo_a, n_placebo_b]
+    if: always() && needs.n_select.result == 'success' && needs.n_placebo_a.result == 'success' && needs.n_placebo_b.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v44n-selection
+          path: outputs/v44w/n/sel
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v44n-plac-*
+          path: outputs/v44w/n/parts
+      - run: |
+          mv outputs/v44w/n/sel/real outputs/v44w/n/parts/real
+          python scripts/run_v44n.py report --inputs outputs/v18/v14 --parts outputs/v44w/n/parts --selected outputs/v44w/n/sel/selected.json --out outputs/v44w/n/report
+          python scripts/run_v44n.py halves --inputs outputs/v18 --selected outputs/v44w/n/sel/selected.json --report outputs/v44w/n/report/REPORT.md
+      - if: always()
+        run: if [ -f outputs/v44w/n/report/REPORT.md ]; then cat outputs/v44w/n/report/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44n-report
+          path: |
+            outputs/v44w/n/report/REPORT.md
+            outputs/v44w/n/report/summary.json
+            outputs/v44w/n/report/streams.parquet
+          retention-days: 90
+
+  m_run_a:
+    needs: wait_b
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e . && python -m pip install scikit-learn
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v43
+          key: v43-data-none
+          restore-keys: v43-data-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v28-report
+          path: outputs/v28w/report
+          run-id: 39915126980
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v33-choice
+          path: outputs/v33w/choice
+          run-id: 40192951586
+          github-token: ${{ github.token }}
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v44m.py run --shard ${{ matrix.shard }} --shards 300 --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/run
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44m-run-${{ matrix.shard }}
+          path: outputs/v44w/m/run
+          retention-days: 90
+
+  m_run_b:
+    needs: wait_b
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e . && python -m pip install scikit-learn
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v43
+          key: v43-data-none
+          restore-keys: v43-data-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v28-report
+          path: outputs/v28w/report
+          run-id: 39915126980
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v33-choice
+          path: outputs/v33w/choice
+          run-id: 40192951586
+          github-token: ${{ github.token }}
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - run: python scripts/run_v44m.py run --shard ${{ matrix.shard }} --shards 300 --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/run
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44m-run-${{ matrix.shard }}
+          path: outputs/v44w/m/run
+          retention-days: 90
+
+  m_final:
+    needs: [m_run_a, m_run_b]
+    if: always() && needs.m_run_a.result == 'success' && needs.m_run_b.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e . && python -m pip install scikit-learn
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v43
+          key: v43-data-none
+          restore-keys: v43-data-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v28-report
+          path: outputs/v28w/report
+          run-id: 39915126980
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v33-choice
+          path: outputs/v33w/choice
+          run-id: 40192951586
+          github-token: ${{ github.token }}
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v44m-run-*
+          path: outputs/v44w/m/run
+          merge-multiple: true
+      - run: python scripts/run_v44m.py final --runs outputs/v44w/m/run --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/report
+      - if: always()
+        run: if [ -f outputs/v44w/m/report/V44M_REPORT.md ]; then cat outputs/v44w/m/report/V44M_REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44m-report
+          path: outputs/v44w/m/report
+          retention-days: 90
+
+  c_final:
+    needs: [n_report, m_final]
+    if: always() && needs.m_final.result == 'success' && needs.n_report.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e . && python -m pip install scikit-learn
+      - name: Add swap
+        run: |
+          sudo swapoff -a
+          avail=$(df --output=avail -BG /mnt | tail -1 | tr -dc 0-9)
+          size=$(( avail > 40 ? 24 : avail - 10 ))
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l "${size}G" /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v23/store
+          key: v23-store-none
+          restore-keys: v23-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v24/store
+          key: v24-store-none
+          restore-keys: v24-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-none
+          restore-keys: v28-inputs2-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v26/store
+          key: v26-store-none
+          restore-keys: v26-store-
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v43
+          key: v43-data-none
+          restore-keys: v43-data-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v28-report
+          path: outputs/v28w/report
+          run-id: 39915126980
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v33-choice
+          path: outputs/v33w/choice
+          run-id: 40192951586
+          github-token: ${{ github.token }}
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v44
+          key: v44-data-40486882613-none
+          restore-keys: v44-data-40486882613-
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v44m-report
+          path: outputs/v44w/m/report
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: v44n-report
+          path: outputs/v44w/n/report
+      - run: python scripts/run_v44c.py --procs 4 --choice outputs/v33w/choice --nsum outputs/v44w/n/report/summary.json --msum outputs/v44w/m/report/v44m_summary.json --out outputs/v44w/c
+      - if: always()
+        run: if [ -f outputs/v44w/c/V44C_REPORT.md ]; then cat outputs/v44w/c/V44C_REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v44c-report
+          path: outputs/v44w/c
+          retention-days: 90
