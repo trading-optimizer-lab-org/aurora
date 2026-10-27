@@ -484,3 +484,27 @@ def test_m_features_stop_at_the_decision(M) -> None:
     _world_m(M, [10, 10, 10], {(1, 0): _bars_of(_after(B, 949, rng))})
     assert np.allclose(M.trade_features(it, "close"), fc, equal_nan=True)
     assert np.isfinite(fo[:6]).all() and np.isfinite(fc[[0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12]]).all()
+
+
+# ---------------------------------------------------------------- part C: the book and the sleeve
+
+def test_c_liquidation_with_the_sleeve() -> None:
+    from test_v24 import _script
+    C = _script("run_v44c", "run_v44c_under_test")
+    p = np.r_[np.full(570, 10.0), np.linspace(10, 30, 390)]
+    rec = {"u": [2], "G": [(10 - p) / 10], "Q": [np.ones(960)], "M": [p / 10], "es": 0, "kind": "open", "t": 2,
+           "j": 0, "e": 10.0, "n": 100.0, "cost": 0.0}
+    calm = {**rec, "G": [np.zeros(960)], "M": [np.ones(960)]}
+    from test_v43 import _world
+    _world(C.R43, [10.0] * 5, {})
+    C._G["D"] = C.R43._G["D"]
+    assert C.liquidate_mixed([{"_rec": 0, "w": 1.0}], [calm], 5)[2] == 0.0
+    sl = {"i0": 2, "r": [0.05, -0.02], "w": 0.5, "side": -1, "loc": 0.01}
+    out = C.liquidate_mixed([{"_rec": 0, "w": 0.2}, sl], [calm], 5)
+    assert out[2] == pytest.approx(0.5 * 0.04) and out[3] == pytest.approx(0.5 * -0.02)
+    C.R43._G["count"] = {}
+    hit = C.liquidate_mixed([{"_rec": 0, "w": 1.0}, sl], [rec], 5)
+    assert C.R43._G["count"]["liquidations"] == 1 and hit[3] == 0.0  # the sleeve's second day is not held
+    assert hit[2] == pytest.approx(0.5 * 0.04)  # no bars: the book is bought back at the close of 10
+    summ = {"members": {"2020": ["A", "B"]}, "families": {"A": {"picks": {"2020": "A|3"}}, "B": {"picks": {}}}}
+    assert C.members(summ) == [(2020, "A", "A|3")]
