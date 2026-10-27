@@ -2,7 +2,7 @@ name: "v43: v39's best book replayed on one-minute bars, and a large minute grid
 
 # docs/research/V43_PREREGISTRATION.md, scripts/run_v43.py: 115,200 minute replays (1,382,400 books) on
 # 300 runners of 4 CPUs, walk-forward picks and the bootstrap -> V43_REPORT.md. Bars only from the cache.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
