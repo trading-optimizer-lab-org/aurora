@@ -1,9 +1,9 @@
 name: "v44: new one-minute families, the book's meta-labels and execution, their combination"
 
-# docs/research/V44_PREREGISTRATION.md. Waits for the v44 data run (40486882613); then part N (run_v44n: 300 shards
+# docs/research/V44_PREREGISTRATION.md. Waits for the v44 data run (40551641084); then part N (run_v44n: 300 shards
 # of real returns, selection, 300 shards of placebos, report), part M (run_v44m: 300 shards of books, final) and part C
 # (run_v44c). Market data stays in the Actions cache; the shards upload strategy returns.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -34,7 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           for i in $(seq 1 330); do
-            a=$(gh run view 40486882613 --repo "${{ github.repository }}" --json status,conclusion -q '.status + " " + .conclusion' || echo unknown)
+            a=$(gh run view 40551641084 --repo "${{ github.repository }}" --json status,conclusion -q '.status + " " + .conclusion' || echo unknown)
             echo "$(date -u +%H:%M) data=$a"
             if [ "$a" = "completed success" ]; then exit 0; fi
             case "$a" in completed*) echo "the data run did not succeed"; exit 1;; esac
@@ -52,7 +52,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           for i in $(seq 1 330); do
-            a=$(gh run view 40486882613 --repo "${{ github.repository }}" --json status,conclusion -q '.status + " " + .conclusion' || echo unknown)
+            a=$(gh run view 40551641084 --repo "${{ github.repository }}" --json status,conclusion -q '.status + " " + .conclusion' || echo unknown)
             echo "$(date -u +%H:%M) data=$a"
             if [ "$a" = "completed success" ]; then exit 0; fi
             case "$a" in completed*) echo "the data run did not succeed"; exit 1;; esac
@@ -115,8 +115,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - run: python scripts/run_v44n.py real --shard ${{ matrix.shard }} --shards 300 --workers 4 --out outputs/v44w/n/part
       - if: always()
@@ -181,8 +181,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - run: python scripts/run_v44n.py real --shard ${{ matrix.shard }} --shards 300 --workers 4 --out outputs/v44w/n/part
       - if: always()
@@ -293,8 +293,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - run: python scripts/run_v44n.py placebo --shard ${{ matrix.shard }} --shards 300 --workers 4 --selected "$SELECTED" --out outputs/v44w/n/part
       - if: always()
@@ -361,8 +361,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - run: python scripts/run_v44n.py placebo --shard ${{ matrix.shard }} --shards 300 --workers 4 --selected "$SELECTED" --out outputs/v44w/n/part
       - if: always()
@@ -424,8 +424,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -530,8 +530,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - run: python scripts/run_v44m.py run --shard ${{ matrix.shard }} --shards 300 --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/run
       - if: always()
@@ -620,8 +620,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - run: python scripts/run_v44m.py run --shard ${{ matrix.shard }} --shards 300 --procs 4 --choice outputs/v33w/choice --out outputs/v44w/m/run
       - if: always()
@@ -707,8 +707,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -801,8 +801,8 @@ jobs:
       - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/v44
-          key: v44-data-40486882613-none
-          restore-keys: v44-data-40486882613-
+          key: v44-data-40551641084-none
+          restore-keys: v44-data-40551641084-
           fail-on-cache-miss: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
