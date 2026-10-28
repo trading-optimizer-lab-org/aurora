@@ -46,13 +46,13 @@ SPEC = {
 
 
 def livery():
-    iryo_red = plain("iryo_red", (0.42, 0.012, 0.018), 0.32, 0.0, coat=0.6)
+    iryo_red = plain("iryo_red", (0.30, 0.004, 0.008), 0.36, 0.0, coat=0.2)
     out = {
         "IRYO": [iryo_red,
                  plain("iryo_silver", (0.48, 0.49, 0.5), 0.3, 0.75, coat=0.4),
                  plain("iryo_band", (0.012, 0.016, 0.03), 0.12, 0.2, coat=1.0),
                  plain("iryo_roof", (0.32, 0.33, 0.34), 0.5, 0.3)],
-        "AVE": [plain("ave_white", (0.80, 0.81, 0.82), 0.28, 0.0, coat=0.8),
+        "AVE": [plain("ave_white", (0.78, 0.79, 0.80), 0.3, 0.0, coat=0.35),
                 plain("ave_purple", (0.18, 0.02, 0.2), 0.3, 0.1, coat=0.8),
                 plain("ave_band", (0.16, 0.17, 0.18), 0.25, 0.4, coat=0.7),
                 plain("ave_roof", (0.6, 0.61, 0.62), 0.45, 0.2)],

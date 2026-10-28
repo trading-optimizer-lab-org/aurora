@@ -49,9 +49,11 @@ def render_job(which, n):
         with:
           name: dust-c${{{{ steps.c.outputs.chunk }}}}
           path: scene
+          run-id: {plan.DUST_RUN}
+          github-token: ${{{{ github.token }}}}
 """
     return f"""  render-{which}:
-    needs: [{'build' if which == 'early' else 'bake'}]
+    needs: [build]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
@@ -61,14 +63,14 @@ def render_job(which, n):
     steps:
 {checkout}{swap}{libs}{get_blender}      - uses: {DL}
         with:
-          name: urda-blend-{which}
+          name: urda-blend
           path: scene
 {cache}      - name: Render shard
         env:
           URDA_TIME_LIMIT: "1200"
         run: |
           nproc; free -g
-          "$BLENDER" -b scene/urda.blend --python render/urda/render_shard.py -- {which} ${{{{ matrix.shard }}}} out 2>&1 | grep -E "FRAME|Error|rror:|Traceback|Fra:1 .*Sample 1/" || true
+          nice -n 10 "$BLENDER" -b scene/urda.blend --python render/urda/render_shard.py -- {which} ${{{{ matrix.shard }}}} out 2>&1 | grep -E "FRAME|Error|rror:|Traceback|Fra:1 .*Sample 1/" || true
           ls -R out | head -20
           test -n "$(find out -name '*.png')"
       - uses: {UP}
@@ -87,6 +89,15 @@ chunk_uploads = "".join(f"""      - uses: {UP}
           retention-days: 3
           compression-level: 1
 """ for c in range(plan.N_CHUNKS))
+
+preview_chunks = "".join(f"""      - uses: {DL}
+        with:
+          name: dust-c{c}
+          path: scene
+          run-id: {plan.DUST_RUN}
+          github-token: ${{{{ github.token }}}}
+""" for c in sorted({plan.chunk_of(f) for _, f in plan.PREVIEW} - {None}))
+preview_specs = " ".join(f"{c}:{f}" for c, f in plan.PREVIEW)
 
 yml = f"""name: urda-crash-render
 
@@ -124,8 +135,16 @@ jobs:
           mkdir -p bl
           curl -sSL -o bl/blender.tar.xz https://download.blender.org/release/Blender{BL[:3]}/blender-{BL}-linux-x64.tar.xz
           tar xJf bl/blender.tar.xz -C bl
+      - uses: {DL}
+        with:
+          name: urda-blend-late
+          path: old
+          run-id: {plan.DUST_RUN}
+          github-token: ${{{{ github.token }}}}
       - name: Build scene
-        run: bl/blender-{BL}-linux-x64/blender -b --python render/urda/build.py -- data scene/urda.blend final 2>&1 | grep -E "^\[|Error|rror:|Traceback|File " ; test -f scene/urda.blend && ls -la scene
+        env:
+          URDA_DUST_FROM: old/urda.blend
+        run: bl/blender-{BL}-linux-x64/blender -b --python render/urda/build.py -- data scene/urda.blend final 2>&1 | grep -E "^.....[0-9.]+s. |dust domain|Error|rror:|Traceback|File " ; test -f scene/urda.blend && ls -la scene
       - uses: {UP}
         with:
           name: blender-bin
@@ -134,34 +153,30 @@ jobs:
           compression-level: 0
       - uses: {UP}
         with:
-          name: urda-blend-early
+          name: urda-blend
           path: scene/urda.blend
           retention-days: 3
           compression-level: 1
 
-  bake:
+  preview:
     needs: [build]
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 60
     steps:
-{checkout}{swap}{libs}{get_blender}      - uses: {DL}
+{checkout}{libs}{get_blender}      - uses: {DL}
         with:
-          name: urda-blend-early
+          name: urda-blend
           path: scene
-      - name: Bake Mantaflow dust
+{preview_chunks}      - name: Review stills
         run: |
-          "$BLENDER" -b scene/urda.blend --python render/urda/bake.py -- 320 2>&1 | grep -E "BAKED|Error|rror:|Traceback" || true
-          du -sh scene/dust_cache && find scene/dust_cache -type f | wc -l
-          test -n "$(find scene/dust_cache -name '*.vdb')"
-      - name: Split cache per shard group
-        run: python3 render/urda/split_cache.py scene/dust_cache chunks && du -sh chunks/* | head -30
+          nice -n 10 "$BLENDER" -b scene/urda.blend --python render/urda/preview.py -- prev 50 {preview_specs} 2>&1 | grep -E "STILL|Error|rror:|Traceback" || true
+          ls prev
       - uses: {UP}
         with:
-          name: urda-blend-late
-          path: scene/urda.blend
-          retention-days: 3
-          compression-level: 1
-{chunk_uploads}
+          name: urda-preview
+          path: prev
+          retention-days: 7
+
 {render_job("early", plan.EARLY_SHARDS)}
 {render_job("late", plan.LATE_SHARDS)}
   assemble:

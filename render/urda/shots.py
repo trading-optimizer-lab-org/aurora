@@ -140,7 +140,7 @@ def render_settings(quality):
     sc.camera = bpy.data.objects["CamA"]
     vl = sc.view_layers[0]
     vl.use_pass_mist = True
-    sc.world.mist_settings.start = 150
+    sc.world.mist_settings.start = 300
     sc.world.mist_settings.depth = 7000
     sc.world.mist_settings.falloff = "QUADRATIC"
 
@@ -156,11 +156,11 @@ def compositor():
     haze.blend_type = "MIX"
     mm = N.new("CompositorNodeMath")
     mm.operation = "MULTIPLY"
-    mm.inputs[1].default_value = 0.55
+    mm.inputs[1].default_value = 0.28
     L.new(rl.outputs["Mist"], mm.inputs[0])
     L.new(mm.outputs[0], haze.inputs[0])
     L.new(rl.outputs["Image"], haze.inputs[1])
-    haze.inputs[2].default_value = (0.62, 0.66, 0.72, 1)
+    haze.inputs[2].default_value = (0.74, 0.71, 0.67, 1)
     cur = haze.outputs[0]
     gl = N.new("CompositorNodeGlare")
     sa(gl, "glare_type", "FOG_GLOW")

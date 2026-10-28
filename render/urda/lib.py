@@ -65,10 +65,21 @@ def dem_utm(E, N):
     return a * (1 - fr) + b * fr - Z0
 
 
+_crest = None
+
+
 def crest(x):
-    """Formation level along the line: flat at the site, 0.77 % down towards Urda station."""
-    x = np.asarray(x, dtype=float)
-    return FORM + np.minimum(0.0, x + 200.0) * 0.0077
+    """Formation level along the line: flat at the site, real MDT05 profile (200 m smoothed) further north."""
+    global _crest
+    if _crest is None:
+        xs = np.arange(-2600.0, 1400.1, 5.0)
+        E, N = to_utm(xs, np.zeros_like(xs))
+        d = dem_utm(E, N)
+        k = 41
+        sm = np.convolve(np.pad(d, k // 2, mode="edge"), np.ones(k) / k, mode="valid")
+        off = FORM - float(np.interp(-200.0, xs, sm))
+        _crest = (xs, np.where(xs >= -200.0, FORM, sm + off))
+    return np.interp(np.asarray(x, dtype=float), _crest[0], _crest[1])
 
 
 def ground(x, y):

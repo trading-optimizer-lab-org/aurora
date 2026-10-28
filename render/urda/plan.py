@@ -5,7 +5,7 @@ I = 330
 SHOTS = [("J1", "CamA", 1, 150, 1), ("J2", "CamB", 151, 300, 1), ("J3", "CamC", 301, 450, 1),
          ("J4", "CamD", 318, 375, 3), ("J5", "CamE", 451, 780, 1)]
 EARLY = ("J1", "J2")          # before the impact: no dust cache needed
-EARLY_SHARDS = 100
+EARLY_SHARDS = 120
 LATE_SHARDS = 240
 CHUNK = 10                    # late shards per dust-cache artifact
 
@@ -38,3 +38,14 @@ def chunk_frames(c):
 
 
 N_CHUNKS = (LATE_SHARDS + CHUNK - 1) // CHUNK
+
+
+def chunk_of(scene_frame):
+    for n in range(LATE_SHARDS):
+        if any(t[2] == scene_frame for t in shard("late", n)):
+            return n // CHUNK
+    return None
+
+
+PREVIEW = [("CamA", 418), ("CamB", 838), ("CamC", 1258), ("CamD", 1011), ("CamE", 2098)]
+DUST_RUN = "40722463580"

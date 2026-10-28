@@ -229,7 +229,7 @@ def terrain_mat(name, ortho, bbox, detail=True):
 
 
 def materials():
-    MATS["ballast"] = pbr("ballast", "gravel_floor", 1.4, tint=(0.95, 0.93, 0.9), bump=2.0)
+    MATS["ballast"] = pbr("ballast", "gravel_floor", 1.1, tint=(0.80, 0.85, 0.95), bump=2.5)
     MATS["concrete"] = pbr("sleeper", "brushed_concrete", 1.2, tint=(0.82, 0.8, 0.77), bump=0.6)
     MATS["rail_side"] = pbr("rail_side", "rusty_metal_02", 0.8, tint=(0.75, 0.6, 0.5), bump=0.4, metal=0.6)
     MATS["rail_head"] = plain("rail_head", (0.62, 0.62, 0.62), 0.22, 1.0)
@@ -415,45 +415,37 @@ def sleeper_unit():
 
 
 def track():
-    def segment(name, x0, x1, parent=None):
-        objs = []
-        prof = [(-6.95, FORM), (-4.95, BALLAST - 0.03), (4.95, BALLAST - 0.03), (6.95, FORM)]
-        bl = Builder()
-        nseg = max(2, int((x1 - x0) / 25))
-        for i in range(nseg + 1):
-            x = x0 + (x1 - x0) * i / nseg
-            bl.v += [(x, y, z) for y, z in prof]
-        for i in range(nseg):
-            for j in range(3):
-                a = i * 4 + j
-                bl.f.append((a, a + 4, a + 5, a + 1))
-                bl.m.append(0)
-        objs.append(bl.obj(name + "_ballast", [MATS["ballast"]], smooth=True))
-        rb = Builder()
-        for yc in (TR, TL):
-            for s in (-0.7175, 0.7175):
-                rail_mesh(rb, yc + s, x0, x1)
-        objs.append(rb.obj(name + "_rails", [MATS["rail_side"], MATS["rail_head"]], smooth=True))
-        su = sleeper_unit()
-        for yc in (TR, TL):
-            sl = mesh_obj(name + "_sleepers", [(x + x0 + 0.3, y + yc, z) for x, y, z in su.v], su.f,
-                          [MATS["concrete"], MATS["steel_dark"]], su.m)
-            am = sl.modifiers.new("arr", "ARRAY")
-            am.count = int((x1 - x0) / 0.6)
-            am.use_relative_offset = False
-            am.use_constant_offset = True
-            am.constant_offset_displace = (0.6, 0, 0)
-            objs.append(sl)
-        if parent:
-            for o in objs:
-                o.parent = parent
-        return objs
-
-    segment("track_flat", -200.0, X1)
-    piv = link(bpy.data.objects.new("track_grade", None))
-    piv.location = (-200.0, 0, 0)
-    piv.rotation_euler = (0, -math.atan(0.0077), 0)
-    segment("track_grade", X0 + 200, 0.0, piv)
+    xs = np.arange(X0, X1 + 0.1, 10.0)
+    dz = lib.crest(xs) - FORM
+    prof = [(-6.95, FORM), (-4.7, BALLAST + 0.17), (4.7, BALLAST + 0.17), (6.95, FORM)]
+    bl = Builder()
+    for x, z in zip(xs, dz):
+        bl.v += [(x, y, h + z) for y, h in prof]
+    for i in range(len(xs) - 1):
+        for j in range(3):
+            a = i * 4 + j
+            bl.f.append((a, a + 4, a + 5, a + 1))
+            bl.m.append(0)
+    bl.obj("ballast", [MATS["ballast"]], smooth=True)
+    rb = Builder()
+    n = len(RAIL_RING)
+    for yc in (TR, TL):
+        for s in (-0.7175, 0.7175):
+            base = len(rb.v)
+            for x, z in zip(xs, dz):
+                rb.v += [(x, yc + s + y, BALLAST + 0.225 + h + z) for y, h in RAIL_RING]
+            for i in range(len(xs) - 1):
+                for k in range(n - 1):
+                    o = base + i * n
+                    rb.f.append((o + k, o + k + 1, o + n + k + 1, o + n + k))
+                    rb.m.append(1 if (RAIL_RING[k][1] + RAIL_RING[k + 1][1]) / 2 > 0.16 else 0)
+    rb.obj("rails", [MATS["rail_side"], MATS["rail_head"]], smooth=True)
+    su = sleeper_unit()
+    sl = mesh_obj("sleeper", su.v, su.f, [MATS["concrete"], MATS["steel_dark"]], su.m)
+    sx = np.arange(X0 + 0.3, X1, 0.6)
+    sz = lib.crest(sx) - FORM
+    items = [(float(x), yc, float(z), 1.0, 0.0) for yc in (TR, TL) for x, z in zip(sx, sz)]
+    instancer("sleepers", items, sl)
 
 
 # ---------------------------------------------------------------- catenary
@@ -753,35 +745,60 @@ def vegetation(trees, quality):
     for i, lst in sb.items():
         if lst:
             instancer(f"scrub_{i}", lst, parts[i])
-    # dry grass tufts around the crash site
-    grass = import_parts("grass_medium_01", None)
-    grass = [g for g in grass if "tiny" not in g.name] + [g for g in grass if "tiny" in g.name][:2]
-    for g in grass:
-        for m in g.data.materials:
-            nt = m.node_tree
-            bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
-            src = bsdf.inputs["Base Color"].links[0].from_socket if bsdf.inputs["Base Color"].links else None
-            if src is None:
-                continue
-            hs = nt.nodes.new("ShaderNodeHueSaturation")
-            hs.inputs["Hue"].default_value = 0.44
-            hs.inputs["Saturation"].default_value = 0.42
-            hs.inputs["Value"].default_value = 1.25
-            nt.links.new(src, hs.inputs["Color"])
-            nt.links.new(hs.outputs["Color"], bsdf.inputs["Base Color"])
+    # dry grass tufts: crash site field and the embankment slopes along the approach
+    grass = [grass_tuft(k) for k in range(6)]
     gb = {i: [] for i in range(len(grass))}
-    dens = 2.6 if quality == "final" else 0.4
-    area = [(-160, 320, -95, -16.5), (-160, 320, -16.5, -8.0), (-160, 320, 8.0, 20.5)]
-    for xa, xb, ya, yb in area:
-        n = int((xb - xa) * (yb - ya) * dens)
-        xs = np.array([rng.uniform(xa, xb) for _ in range(n)])
-        ys = np.array([rng.uniform(ya, yb) for _ in range(n)])
+    q = 1.0 if quality == "final" else 0.15
+    area = [(-160, 320, -95, -16.5, 2.6), (-160, 320, -16.5, -7.2, 2.6), (-160, 320, 7.2, 20.5, 2.6),
+            (-950, -160, -24, -7.2, 1.2), (-950, -160, 7.2, 24, 1.2), (320, 900, -24, -7.2, 1.0), (320, 900, 7.2, 24, 1.0)]
+    for xa, xb, ya, yb, dens in area:
+        n = int((xb - xa) * (yb - ya) * dens * q)
+        xs = np.random.default_rng(len(gb[0]) + n).uniform(xa, xb, n)
+        ys = np.random.default_rng(n + 7).uniform(ya, yb, n)
         zs = lib.ground(xs, ys)
         for x, y, z in zip(xs, ys, zs):
-            gb[rng.randrange(len(grass))].append((float(x), float(y), float(z) - 0.02, rng.uniform(0.7, 1.5), rng.uniform(0, 6.283)))
+            gb[rng.randrange(len(grass))].append((float(x), float(y), float(z) - 0.02, rng.uniform(0.7, 1.5),
+                                                  rng.uniform(0, 6.283)))
     for i, lst in gb.items():
         if lst:
             instancer(f"grass_{i}", lst, grass[i])
+
+
+def grass_tuft(k):
+    rng = random.Random(500 + k)
+    b = Builder()
+    for _ in range(rng.randint(22, 40)):
+        h = rng.uniform(0.12, 0.5)
+        a = rng.uniform(0, 2 * math.pi)
+        r0 = rng.uniform(0, 0.07)
+        lean = rng.uniform(0.15, 0.7)
+        w = rng.uniform(0.003, 0.0065)
+        bx, by = r0 * math.cos(a), r0 * math.sin(a)
+        dx, dy = math.cos(a) * lean * h, math.sin(a) * lean * h
+        px, py = -math.sin(a) * w, math.cos(a) * w
+        v = [(bx - px, by - py, 0), (bx + px, by + py, 0),
+             (bx + dx * 0.4 + px * 0.8, by + dy * 0.4 + py * 0.8, h * 0.55),
+             (bx + dx * 0.4 - px * 0.8, by + dy * 0.4 - py * 0.8, h * 0.55),
+             (bx + dx, by + dy, h)]
+        b.add(v, [(0, 1, 2, 3), (3, 2, 4)], 0)
+    if "straw" not in MATS:
+        m, N, L, bs = new_mat("straw")
+        info = N.new("ShaderNodeObjectInfo")
+        ramp = N.new("ShaderNodeValToRGB")
+        ramp.color_ramp.elements[0].color = (0.30, 0.25, 0.15, 1)
+        ramp.color_ramp.elements[1].color = (0.52, 0.43, 0.25, 1)
+        L.new(info.outputs["Random"], ramp.inputs["Fac"])
+        L.new(ramp.outputs["Color"], bs.inputs["Base Color"])
+        bs.inputs["Roughness"].default_value = 0.75
+        tr = N.new("ShaderNodeBsdfTranslucent")
+        L.new(ramp.outputs["Color"], tr.inputs["Color"])
+        ms = N.new("ShaderNodeMixShader")
+        ms.inputs[0].default_value = 0.25
+        L.new(bs.outputs[0], ms.inputs[1])
+        L.new(tr.outputs[0], ms.inputs[2])
+        L.new(ms.outputs[0], N["Material Output"].inputs["Surface"])
+        MATS["straw"] = m
+    return b.obj(f"tuft_{k}", [MATS["straw"]])
 
 
 # ---------------------------------------------------------------- sky

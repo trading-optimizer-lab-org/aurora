@@ -50,6 +50,15 @@ trains.extras(by)
 trains.catenary_collapse(env.falling, env.zone_wires)
 step("trains")
 dust.dust(cars, by, 320 if QUALITY == "final" else 64)
+src = os.environ.get("URDA_DUST_FROM")
+if src:
+    # reuse an already baked domain: same kinematics, same cache layout
+    bpy.data.objects.remove(bpy.data.objects["dust_domain"])
+    with bpy.data.libraries.load(os.path.abspath(src), link=False) as (lib_from, lib_to):
+        lib_to.objects = ["dust_domain"]
+    for o in lib_to.objects:
+        bpy.context.scene.collection.objects.link(o)
+        print("dust domain grafted from", src, o.modifiers["Fluid"].domain_settings.cache_frame_end, flush=True)
 step("dust")
 shots.cameras()
 shots.render_settings(QUALITY)
