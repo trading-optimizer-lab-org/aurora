@@ -213,12 +213,14 @@ def _first(mask: np.ndarray) -> int:
 # ---------------------------------------------------------------- one trade
 
 def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill: str, exe=None, xmask=None,
-           half: bool = False) -> dict | None:
+           half: bool = False, stopf=None, pmx=None) -> dict | None:
     """The trade walked minute by minute: its sessions, gross return a session and minute marks (gain since the
     last close, part open, market value, all per unit of weight on the entry price); None when it does not fill.
     v44's hooks: ``exe(it, m, e, es)`` -> (e, es) or None re-prices the entry; ``xmask(B, u, j, e)`` -> a mask over
     the 960 steps of an emergency cover set off at a bar's close; ``half`` covers half at an open entry's first
-    close."""
+    close. v46's hooks: a close entry's ``exe`` may return an after-hours step (0-239 of the next session's
+    timeline) as its entry step; ``stopf(it, m, e, es, S)`` -> the stop level; ``pmx(B, u, j, e, ref, lo)`` -> the step
+    (lo to 569) of a cover set off before the open of a carried session, or None."""
     D = _G["D"]
     O, C, new = D["O"], D["C"], D["new"]
     T = C.shape[0]
@@ -259,6 +261,8 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
         e, es = got
     S = float(m["stop"]) * e / e0 if np.isfinite(m["stop"]) else np.inf
     S = np.inf if stopx is None else e + stopx * (S - e)
+    if stopf is not None:
+        S = float(stopf(it, m, e, es, S))
     catl = e * (1 + m["cat"]) if np.isfinite(m.get("cat", np.nan)) else np.inf
     tg = m.get("target", "none")
     tgl = e * (1 - int(tg[1:]) / 100) if tg != "none" else -np.inf
@@ -289,13 +293,22 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
         ev: list[tuple[int, float, float]] = []  # (step, part of the original position, price)
         done = False
         Bo, Bh, Bl, Bc = B["o"], B["h"], B["l"], B["c"]
-        if carried and (live["ah"] or live["pm"] or rally != "none"):
+        lo0 = es if (i == 0 and kind != "open" and es >= 0) else 0  # an after-hours entry: its bars from es
+        if carried and (live["ah"] or live["pm"] or rally != "none" or pmx is not None):
             st = np.arange(OPEN)
-            ok = np.isfinite(Bo[:OPEN])
+            ok = np.isfinite(Bo[:OPEN]) & (st >= lo0)
             on = np.where(st < AH, live["ah"], live["pm"])
             ks = _first(ok & on & (Bh[:OPEN] >= S))
             kr = _first(ok & (Bc[:OPEN] >= ref * (1 + int(rally[1:]) / 100))) if rally != "none" else 10_000
-            if min(ks, kr) < OPEN:
+            kp = pmx(B, u, j, e, ref, lo0) if pmx is not None else None
+            kp = 10_000 if kp is None or not lo0 <= kp < OPEN else int(kp)
+            if kp < min(ks, kr):
+                f = market(B, kp, OPEN - 1, None, "next_open" if fill == "slip" else fill, n_sh * q, part,
+                           (OPEN, o_u))
+                ev += [(s, p * q, px) for s, p, px in f]
+                rec.setdefault("pmx", []).append((len(rec["u"]), q, kp))  # (session index, part, step)
+                done = True
+            elif min(ks, kr) < OPEN:
                 if ks <= kr:
                     how = ("next_open" if m.get("ext_delay") else "slip") if fill == "slip" else fill
                     f = market(B, ks, OPEN - 1, S, how, n_sh * q, part, (OPEN, o_u))
@@ -345,7 +358,7 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
                 ev.append((LAST, cut, c_u))
         # the marks
         Q = np.zeros(960)
-        start = es if not carried else 0
+        start = es if not carried else lo0
         Q[start:] = q
         real = np.zeros(960)
         for s, p, px in ev:
