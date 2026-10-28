@@ -35,7 +35,7 @@ def volume_material():
     L.new(mr.outputs["Result"], mul.inputs[1])
     gain = N.new("ShaderNodeMath")
     gain.operation = "MULTIPLY"
-    gain.inputs[1].default_value = 6.0
+    gain.inputs[1].default_value = 1.5
     L.new(mul.outputs[0], gain.inputs[0])
     L.new(gain.outputs[0], pv.inputs["Density"])
     L.new(pv.outputs["Volume"], N["Material Output"].inputs["Volume"])

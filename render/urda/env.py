@@ -744,6 +744,12 @@ def vegetation(trees, quality):
         for _ in range(2):
             px, py = x + rng.uniform(-1.2, 1.2), y + rng.uniform(-1.2, 1.2)
             sb[rng.randrange(len(parts))].append((px, py, float(lib.gz(px, py)) - 0.1, rng.uniform(0.6, 1.15), rng.uniform(0, 6.283)))
+    # low scrub scattered over both embankment slopes, as seen in the Guardia Civil aerials
+    for side in (-1, 1):
+        n = int(1300 * 15 * 0.04 * (1.0 if quality == "final" else 0.15))
+        for _ in range(n):
+            px, py = rng.uniform(-600, 700), side * rng.uniform(7.6, 22.0)
+            sb[rng.randrange(len(parts))].append((px, py, float(lib.gz(px, py)) - 0.1, rng.uniform(0.45, 1.0), rng.uniform(0, 6.283)))
     for i, lst in sb.items():
         if lst:
             instancer(f"scrub_{i}", lst, parts[i])
@@ -752,7 +758,7 @@ def vegetation(trees, quality):
     gb = {i: [] for i in range(len(grass))}
     q = 1.0 if quality == "final" else 0.15
     area = [(-160, 320, -95, -16.5, 2.6), (-160, 320, -16.5, -7.2, 2.6), (-160, 320, 7.2, 20.5, 2.6),
-            (-950, -160, -24, -7.2, 1.2), (-950, -160, 7.2, 24, 1.2), (320, 900, -24, -7.2, 1.0), (320, 900, 7.2, 24, 1.0)]
+            (-950, -160, -24, -7.2, 0.6), (-950, -160, 7.2, 24, 0.6), (320, 900, -24, -7.2, 0.5), (320, 900, 7.2, 24, 0.5)]
     for xa, xb, ya, yb, dens in area:
         n = int((xb - xa) * (yb - ya) * dens * q)
         xs = np.random.default_rng(len(gb[0]) + n).uniform(xa, xb, n)

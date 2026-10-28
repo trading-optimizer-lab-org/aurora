@@ -60,6 +60,9 @@ if src:
         bpy.context.scene.collection.objects.link(o)
         # appending rewrites the relative path against the source .blend
         o.modifiers["Fluid"].domain_settings.cache_directory = "//dust_cache"
+        # take the current dust shader, not the one saved with the bake
+        o.data.materials.clear()
+        o.data.materials.append(dust.volume_material())
         print("dust domain grafted from", src, o.modifiers["Fluid"].domain_settings.cache_frame_end, flush=True)
 step("dust")
 shots.cameras()
