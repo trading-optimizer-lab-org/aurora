@@ -5,7 +5,9 @@ plus CC0 HDRI, textures and models from Poly Haven.
 """
 import json
 import os
+import time
 import sys
+import urllib.error
 import urllib.request
 
 OUT = sys.argv[1]
@@ -24,12 +26,20 @@ def get(url, path):
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=300) as r, open(path + ".part", "wb") as fh:
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            fh.write(chunk)
+    for attempt in range(8):
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r, open(path + ".part", "wb") as fh:
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+            break
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as ex:
+            if attempt == 7:
+                raise
+            print("retry", url, ex, flush=True)
+            time.sleep(15 * (attempt + 1))
     os.replace(path + ".part", path)
     print("got", os.path.relpath(path, OUT), os.path.getsize(path) // 1024, "KB", flush=True)
 
