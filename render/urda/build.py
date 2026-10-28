@@ -58,6 +58,8 @@ if src:
         lib_to.objects = ["dust_domain"]
     for o in lib_to.objects:
         bpy.context.scene.collection.objects.link(o)
+        # appending rewrites the relative path against the source .blend
+        o.modifiers["Fluid"].domain_settings.cache_directory = "//dust_cache"
         print("dust domain grafted from", src, o.modifiers["Fluid"].domain_settings.cache_frame_end, flush=True)
 step("dust")
 shots.cameras()
