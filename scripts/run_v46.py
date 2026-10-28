@@ -783,7 +783,7 @@ def s2_combos(sel: dict) -> list[tuple]:
 
 def s2_units(sel: dict, shard: int, shards: int) -> list[tuple]:
     u = s2_combos(sel)[shard::shards]
-    return u[:2] if QUICK else u
+    return u[:2] + u[-1:] if QUICK and len(u) > 2 else u  # the canary: the base, the next and the last (every hook)
 
 
 def cmd_stage2(args) -> int:
