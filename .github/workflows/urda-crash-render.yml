@@ -120,6 +120,40 @@ jobs:
           path: prev
           retention-days: 7
 
+  dustcheck:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - name: Blender runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 libegl1 libx11-6 >/dev/null
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: blender-bin
+          path: bl
+      - name: Unpack Blender
+        run: tar xJf bl/blender.tar.xz -C bl && echo "BLENDER=$PWD/bl/blender-4.5.10-linux-x64/blender" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: urda-blend
+          path: scene
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dust-c4
+          path: scene
+          run-id: 40722463580
+          github-token: ${{ github.token }}
+      - name: Dust cache is readable
+        run: |
+          set -o pipefail
+          "$BLENDER" -b scene/urda.blend --python-exit-code 1 --python render/urda/dust_check.py -- 1258 2>&1 | grep -E "DUST|Error|rror:|Traceback|^Blender quit"
+
   render-early:
     needs: [build]
     runs-on: ubuntu-24.04
@@ -167,7 +201,7 @@ jobs:
           compression-level: 0
 
   render-late:
-    needs: [build]
+    needs: [build, dustcheck]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:

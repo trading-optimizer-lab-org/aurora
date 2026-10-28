@@ -53,7 +53,7 @@ def render_job(which, n):
           github-token: ${{{{ github.token }}}}
 """
     return f"""  render-{which}:
-    needs: [build]
+    needs: [build{", dustcheck" if which == "late" else ""}]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
@@ -176,6 +176,26 @@ jobs:
           name: urda-preview
           path: prev
           retention-days: 7
+
+  dustcheck:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+{checkout}{libs}{get_blender}      - uses: {DL}
+        with:
+          name: urda-blend
+          path: scene
+      - uses: {DL}
+        with:
+          name: dust-c{plan.chunk_of(1258)}
+          path: scene
+          run-id: {plan.DUST_RUN}
+          github-token: ${{{{ github.token }}}}
+      - name: Dust cache is readable
+        run: |
+          set -o pipefail
+          "$BLENDER" -b scene/urda.blend --python-exit-code 1 --python render/urda/dust_check.py -- 1258 2>&1 | grep -E "DUST|Error|rror:|Traceback|^Blender quit"
 
 {render_job("early", plan.EARLY_SHARDS)}
 {render_job("late", plan.LATE_SHARDS)}

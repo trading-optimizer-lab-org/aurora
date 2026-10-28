@@ -701,6 +701,8 @@ def instancer(name, items, child):
     me.from_pydata(v, [], f)
     ob = link(bpy.data.objects.new(name, me))
     ob.instance_type = "FACES"
+    ob.show_instancer_for_render = False
+    ob.show_instancer_for_viewport = False
     ob.use_instance_faces_scale = True
     ob.instance_faces_scale = 1.0
     child.parent = ob
