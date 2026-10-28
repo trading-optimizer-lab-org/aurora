@@ -54,7 +54,9 @@ def art(name: str, path: str, run_id: str) -> str:
 
 
 def v44data(must: bool) -> str:
-    return cache("outputs/v44", f"v44-data-{DATA_RUN}-none", f"v44-data-{DATA_RUN}-", must)
+    # The cache version hashes the path list, so it must match v44-data.yml's save step exactly.
+    path = "outputs/v44\n!outputs/v44/filing/minutes\n!outputs/v44/index_days\n!outputs/v44/tick_days"
+    return cache(path,f"v44-data-{DATA_RUN}-none", f"v44-data-{DATA_RUN}-", must)
 
 
 N_CACHES = (cache("outputs/v18", "v18-inputs-39433812183-1") + cache("outputs/v23/store", "v23-store-none", "v23-store-")
@@ -156,7 +158,7 @@ def full() -> str:
 # docs/research/V44_PREREGISTRATION.md. Waits for the v44 data run ({DATA_RUN}); then part N (run_v44n: 300 shards
 # of real returns, selection, 300 shards of placebos, report), part M (run_v44m: 300 shards of books, final) and part C
 # (run_v44c). Market data stays in the Actions cache; the shards upload strategy returns.
-# run: 3
+# run: 4
 on:
   push:
     branches: [research/stock-catalog]
