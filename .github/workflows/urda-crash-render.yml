@@ -1,0 +1,374 @@
+name: urda-crash-render
+
+on:
+  push:
+    branches: [render/urda-crash]
+    paths:
+      - .github/workflows/urda-crash-render.yml
+      - render/urda/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: urda-crash-render
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - name: Add swap
+        run: |
+          sudo fallocate -l 16G /mnt/urda.swap && sudo chmod 600 /mnt/urda.swap && sudo mkswap /mnt/urda.swap && sudo swapon /mnt/urda.swap || true
+          free -g
+      - name: Blender runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 libegl1 libx11-6 >/dev/null
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Real terrain and assets (IGN PNOA + MDT05, Poly Haven CC0)
+        run: |
+          pip install -q numpy pillow
+          python render/urda/tools/fetch_assets.py data
+          python render/urda/tools/prep.py data
+      - name: Download Blender 4.5.10
+        run: |
+          mkdir -p bl
+          curl -sSL -o bl/blender.tar.xz https://download.blender.org/release/Blender4.5/blender-4.5.10-linux-x64.tar.xz
+          tar xJf bl/blender.tar.xz -C bl
+      - name: Build scene
+        run: bl/blender-4.5.10-linux-x64/blender -b --python render/urda/build.py -- data scene/urda.blend final 2>&1 | grep -E "^\[|Error|rror:|Traceback|File " ; test -f scene/urda.blend && ls -la scene
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: blender-bin
+          path: bl/blender.tar.xz
+          retention-days: 3
+          compression-level: 0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: urda-blend-early
+          path: scene/urda.blend
+          retention-days: 3
+          compression-level: 1
+
+  bake:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - name: Add swap
+        run: |
+          sudo fallocate -l 16G /mnt/urda.swap && sudo chmod 600 /mnt/urda.swap && sudo mkswap /mnt/urda.swap && sudo swapon /mnt/urda.swap || true
+          free -g
+      - name: Blender runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 libegl1 libx11-6 >/dev/null
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: blender-bin
+          path: bl
+      - name: Unpack Blender
+        run: tar xJf bl/blender.tar.xz -C bl && echo "BLENDER=$PWD/bl/blender-4.5.10-linux-x64/blender" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: urda-blend-early
+          path: scene
+      - name: Bake Mantaflow dust
+        run: |
+          "$BLENDER" -b scene/urda.blend --python render/urda/bake.py -- 320 2>&1 | grep -E "BAKED|Error|rror:|Traceback" || true
+          du -sh scene/dust_cache && find scene/dust_cache -type f | wc -l
+          test -n "$(find scene/dust_cache -name '*.vdb')"
+      - name: Split cache per shard group
+        run: python3 render/urda/split_cache.py scene/dust_cache chunks && du -sh chunks/* | head -30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: urda-blend-late
+          path: scene/urda.blend
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c0
+          path: chunks/c0
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c1
+          path: chunks/c1
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c2
+          path: chunks/c2
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c3
+          path: chunks/c3
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c4
+          path: chunks/c4
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c5
+          path: chunks/c5
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c6
+          path: chunks/c6
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c7
+          path: chunks/c7
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c8
+          path: chunks/c8
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c9
+          path: chunks/c9
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c10
+          path: chunks/c10
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c11
+          path: chunks/c11
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c12
+          path: chunks/c12
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c13
+          path: chunks/c13
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c14
+          path: chunks/c14
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c15
+          path: chunks/c15
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c16
+          path: chunks/c16
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c17
+          path: chunks/c17
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c18
+          path: chunks/c18
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c19
+          path: chunks/c19
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c20
+          path: chunks/c20
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c21
+          path: chunks/c21
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c22
+          path: chunks/c22
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dust-c23
+          path: chunks/c23
+          retention-days: 3
+          compression-level: 1
+
+  render-early:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - name: Add swap
+        run: |
+          sudo fallocate -l 16G /mnt/urda.swap && sudo chmod 600 /mnt/urda.swap && sudo mkswap /mnt/urda.swap && sudo swapon /mnt/urda.swap || true
+          free -g
+      - name: Blender runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 libegl1 libx11-6 >/dev/null
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: blender-bin
+          path: bl
+      - name: Unpack Blender
+        run: tar xJf bl/blender.tar.xz -C bl && echo "BLENDER=$PWD/bl/blender-4.5.10-linux-x64/blender" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: urda-blend-early
+          path: scene
+      - name: Render shard
+        env:
+          URDA_TIME_LIMIT: "1200"
+        run: |
+          nproc; free -g
+          "$BLENDER" -b scene/urda.blend --python render/urda/render_shard.py -- early ${{ matrix.shard }} out 2>&1 | grep -E "FRAME|Error|rror:|Traceback|Fra:1 .*Sample 1/" || true
+          ls -R out | head -20
+          test -n "$(find out -name '*.png')"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: frames-early-${{ matrix.shard }}
+          path: out
+          retention-days: 7
+          compression-level: 0
+
+  render-late:
+    needs: [bake]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - name: Add swap
+        run: |
+          sudo fallocate -l 16G /mnt/urda.swap && sudo chmod 600 /mnt/urda.swap && sudo mkswap /mnt/urda.swap && sudo swapon /mnt/urda.swap || true
+          free -g
+      - name: Blender runtime libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 libegl1 libx11-6 >/dev/null
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: blender-bin
+          path: bl
+      - name: Unpack Blender
+        run: tar xJf bl/blender.tar.xz -C bl && echo "BLENDER=$PWD/bl/blender-4.5.10-linux-x64/blender" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: urda-blend-late
+          path: scene
+      - name: Cache chunk
+        id: c
+        run: echo "chunk=$(( ${{ matrix.shard }} / 10 ))" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: dust-c${{ steps.c.outputs.chunk }}
+          path: scene
+      - name: Render shard
+        env:
+          URDA_TIME_LIMIT: "1200"
+        run: |
+          nproc; free -g
+          "$BLENDER" -b scene/urda.blend --python render/urda/render_shard.py -- late ${{ matrix.shard }} out 2>&1 | grep -E "FRAME|Error|rror:|Traceback|Fra:1 .*Sample 1/" || true
+          ls -R out | head -20
+          test -n "$(find out -name '*.png')"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: frames-late-${{ matrix.shard }}
+          path: out
+          retention-days: 7
+          compression-level: 0
+
+  assemble:
+    needs: [render-early, render-late]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: frames-*
+          merge-multiple: true
+          path: frames
+      - name: Assemble video
+        run: |
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          for j in J1 J2 J3 J4 J5; do echo "$j $(ls frames/$j | wc -l)"; done
+          python3 render/urda/assemble.py frames work urda_reconstruccion_1080p.mp4
+          ls -la urda_reconstruccion_1080p.mp4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: urda-video
+          path: urda_reconstruccion_1080p.mp4
+          retention-days: 14
+          compression-level: 0
