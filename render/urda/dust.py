@@ -31,11 +31,16 @@ def volume_material():
     L.new(nz.outputs["Fac"], mr.inputs["Value"])
     mul = N.new("ShaderNodeMath")
     mul.operation = "MULTIPLY"
-    L.new(at.outputs["Fac"], mul.inputs[0])
+    # drop the faint far-field haze the simulation leaves behind; keep the dense plume
+    thr = N.new("ShaderNodeMapRange")
+    thr.inputs["From Min"].default_value = 0.04
+    thr.inputs["From Max"].default_value = 1.0
+    L.new(at.outputs["Fac"], thr.inputs["Value"])
+    L.new(thr.outputs["Result"], mul.inputs[0])
     L.new(mr.outputs["Result"], mul.inputs[1])
     gain = N.new("ShaderNodeMath")
     gain.operation = "MULTIPLY"
-    gain.inputs[1].default_value = 1.5
+    gain.inputs[1].default_value = 0.8
     L.new(mul.outputs[0], gain.inputs[0])
     L.new(gain.outputs[0], pv.inputs["Density"])
     L.new(pv.outputs["Volume"], N["Material Output"].inputs["Volume"])
@@ -96,7 +101,7 @@ def dust(cars, by, res):
     ds.vorticity = 0.12
     ds.use_dissolve_smoke = True
     ds.use_dissolve_smoke_log = True
-    ds.dissolve_speed = 700
+    ds.dissolve_speed = 450
     ds.use_noise = False
     for p in ("use_collision_border_front", "use_collision_border_back", "use_collision_border_right",
               "use_collision_border_left", "use_collision_border_top"):
@@ -117,18 +122,19 @@ def dust(cars, by, res):
         for e in (-1, 1):
             emitter(f"em_{c['ob'].name}_{e}", (e * (L / 2 - 3.0), 0.0, 0.3), (2.6, 2.0, 0.9),
                     I + d + 2, I + d + int(T * 0.95), parent=c["ob"], temp=0.4, dens=1.0)
-    # cars striking the west bank
-    for key in (("IRYO", 4), ("IRYO", 5), ("IRYO", 6), ("IRYO", 7), ("AVE", 0), ("AVE", 2)):
+    # cars striking the banks: Iryo 6-8 on the west side, the AVE head car on the east side
+    for key in (("IRYO", 5), ("IRYO", 6), ("IRYO", 7), ("AVE", 0)):
         c = by[key]
         xF, yF = c["final"][0], c["final"][1]
+        s = 1.0 if yF > 0 else -1.0
         d, T, _ = c["params"]
         zg = lib.gz(xF, yF)
-        emitter(f"em_bank_{key[0]}_{key[1]}", (xF, yF - 1.5, zg + 0.8), (c["L"] * 0.45, 4.0, 1.6),
-                I + d + int(T * 0.55), I + d + T + 12, temp=0.6, dens=1.4, vel=(0, -4.0, 2.5), follow=False)
+        emitter(f"em_bank_{key[0]}_{key[1]}", (xF, yF + s * 1.5, zg + 0.8), (c["L"] * 0.45, 4.0, 1.6),
+                I + d + int(T * 0.55), I + d + T + 12, temp=0.6, dens=1.4, vel=(0, s * 4.0, 2.5), follow=False)
     # light breeze from the north-east carries the cloud across the field
     bpy.ops.object.effector_add(type="WIND", location=(-60, 40, 10))
     w = bpy.context.active_object
     w.rotation_euler = (lib.D(90), 0, lib.D(45))
-    w.field.strength = 2.0
+    w.field.strength = 1.2
     w.field.flow = 0.5
     return dom

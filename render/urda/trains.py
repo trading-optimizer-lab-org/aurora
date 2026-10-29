@@ -6,7 +6,7 @@ import bpy
 from mathutils import Vector, noise
 
 import lib
-from lib import D, I, LAST, FPS, TOP, BALLAST, TR, GAP, Builder, box_data, cyl_data, link, mesh_obj, set_anim, \
+from lib import D, I, LAST, FPS, TOP, BALLAST, TR, TL, GAP, Builder, box_data, cyl_data, link, mesh_obj, set_anim, \
     ease_out, smooth
 from env import plain, MATS
 
@@ -320,16 +320,16 @@ def ave_shift():
 
 AVE_SHIFT = ave_shift()
 
-# Final rest positions from the Guardia Civil aerials as analysed by Gareth Dennis:
-# Iryo 1-2 on the rails, 3-4 partly derailed but upright, 5-6 pushed aside down the bank, 7-8 on their
-# side with the rear cab destroyed; AVE car 1 destroyed and embedded in the Iryo tail, car 2 heavily
-# damaged, car 3 pierced by a rail and partly down the bank, 4-8 derailed upright.
+# Final rest positions from the Guardia Civil aerials (RTVE, 20minutos, Gareth Dennis, 28/10/2026):
+# Iryo 1-2 on the rails, 3-5 derailed but upright, 6-8 down the west bank with 7-8 on their side and the
+# rear cab destroyed. The AVE head car broke away down the opposite (east) bank, car 2 broke up across
+# the tracks, car 3 was pierced by a rail and the rest of the AVE derailed onto the adjacent track.
 # (dx, y, yaw, roll, extra_pitch)
-IRYO_F = [(15, TR, 0, 0, 0), (15, TR, 0, 0, 0), (14.5, TR - 1.6, 8, 12, 0), (14, TR - 3.2, -6, 14, 0),
-          (12.4, -8.6, 12, 26, 0), (13.1, -11.6, -10, 34, 0), (15.8, -10.2, 15, 84, 0), (24.0, -6.2, -22, 80, 0)]
-AVE_F = [(46.0, -4.6, 16, 30, 0), (49.5, -3.4, -12, 10, -14), (51.6, -7.5, 18, 22, 0),
-         (49.0, TR - 0.8, 3, 3, 0), (49.0, TR - 0.5, -2, 2, 0), (49.0, TR - 0.3, 1, 1, 0),
-         (49.0, TR - 0.2, 0, 1, 0), (49.0, TR - 0.1, 0, 0, 0)]
+IRYO_F = [(15, TR, 0, 0, 0), (15, TR, 0, 0, 0), (14.5, TR - 0.5, 2, 3, 0), (14, TR - 1.1, -4, 5, 0),
+          (13.5, TR - 2.4, 7, 10, 0), (13.1, -10.6, -10, 30, 0), (15.8, -10.2, 15, 84, 0), (24.0, -6.2, -22, 80, 0)]
+AVE_F = [(44.0, 9.6, -24, -32, 0), (47.5, 1.6, -15, 7, -10), (49.5, 0.8, -8, 5, 0),
+         (49.0, TL - 0.4, -3, 3, 0), (49.0, TL - 0.2, -1, 2, 0), (49.0, TL - 0.1, 1, 1, 0),
+         (49.0, TL, 0, 1, 0), (49.0, TL, 0, 0, 0)]
 
 
 def g_off(x, y):
@@ -474,7 +474,7 @@ def extras(by):
     bend.deform_axis = "Z"
     bend.angle = D(14)
     rail.parent = rpiv
-    set_anim(rpiv, "rotation_euler", [(0, 0, 0), (0, 0, 0), (0, D(-16), D(-8)), (0, D(-25), D(-9))],
+    set_anim(rpiv, "rotation_euler", [(0, 0, 0), (0, 0, 0), (0, D(-16), D(8)), (0, D(-25), D(9))],
              [1, I + 6, I + 16, I + 34])
     set_anim(rpiv, "scale", [(0, 0, 0), (0, 0, 0), (1, 1, 1)], [1, I + 5, I + 6], interp="CONSTANT")
     # upper shell of the Iryo rear cab, torn off and thrown onto the embankment

@@ -130,6 +130,23 @@ def terrain_mat(name, ortho, bbox, detail=True):
     L.new(base.outputs["Result"], gain.inputs["A"])
     gain.inputs["B"].default_value = (0.92, 0.92, 0.92, 1)
     col = gain.outputs["Result"]
+    # rebuilt embankment slopes: the photo there is pale gravel smeared over a taller face; use the
+    # brown earth seen in the Guardia Civil aerials
+    geo = N.new("ShaderNodeNewGeometry")
+    nz = N.new("ShaderNodeSeparateXYZ")
+    L.new(geo.outputs["Normal"], nz.inputs["Vector"])
+    st = N.new("ShaderNodeMapRange")
+    st.inputs["From Min"].default_value = 0.97
+    st.inputs["From Max"].default_value = 0.80
+    st.inputs["To Min"].default_value = 0.0
+    st.inputs["To Max"].default_value = 0.75
+    L.new(nz.outputs["Z"], st.inputs["Value"])
+    earth = N.new("ShaderNodeMix")
+    earth.data_type = "RGBA"
+    L.new(st.outputs["Result"], earth.inputs["Factor"])
+    L.new(col, earth.inputs["A"])
+    earth.inputs["B"].default_value = (0.30, 0.22, 0.14, 1)
+    col = earth.outputs["Result"]
     if detail:
         attr = N.new("ShaderNodeAttribute")
         attr.attribute_name = "zone"

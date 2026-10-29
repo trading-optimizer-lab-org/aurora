@@ -64,7 +64,8 @@ def shot_b(f):
 
 def shot_c(f):
     t = (f - 301) / 150
-    return (92 - 12 * t, -88 + 6 * t, 30 - 3 * t), (12, -6, 4)
+    # east side, upwind of the dust plume
+    return (92 - 12 * t, 74 - 6 * t, 30 - 3 * t), (12, -3, 3)
 
 
 def shot_d(f):

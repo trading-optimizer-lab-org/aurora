@@ -1,4 +1,4 @@
-"""Write .github/workflows/urda-crash-render.yml from the shard plan.
+"""Write the Urda render workflow (v3: fresh dust bake, context stills, documentary edit).
 
 python gen_workflow.py <out.yml>
 """
@@ -13,6 +13,7 @@ PY = "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
 DL = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 UP = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
 BL = "4.5.10"
+NAME = "urda-crash-render-v3"
 
 checkout = f"""      - uses: {CHECKOUT}
         with:
@@ -38,6 +39,28 @@ get_blender = f"""      - uses: {DL}
 """
 
 
+def dl(name, path="scene"):
+    return f"""      - uses: {DL}
+        with:
+          name: {name}
+          path: {path}
+"""
+
+
+def dl_chunks(chunks):
+    return "".join(dl(f"dust-c{c}") for c in sorted(set(chunks) - {None}))
+
+
+def up(name, path, days=3, level=1):
+    return f"""      - uses: {UP}
+        with:
+          name: {name}
+          path: {path}
+          retention-days: {days}
+          compression-level: {level}
+"""
+
+
 def render_job(which, n):
     shards = ", ".join(str(i) for i in range(n))
     cache = ""
@@ -45,15 +68,9 @@ def render_job(which, n):
         cache = f"""      - name: Cache chunk
         id: c
         run: echo "chunk=$(( ${{{{ matrix.shard }}}} / {plan.CHUNK} ))" >> "$GITHUB_OUTPUT"
-      - uses: {DL}
-        with:
-          name: dust-c${{{{ steps.c.outputs.chunk }}}}
-          path: scene
-          run-id: {plan.DUST_RUN}
-          github-token: ${{{{ github.token }}}}
-"""
+""" + dl("dust-c${{ steps.c.outputs.chunk }}")
     return f"""  render-{which}:
-    needs: [build{", dustcheck" if which == "late" else ""}]
+    needs: [{'build' if which == 'early' else 'bake, dustcheck'}]
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
@@ -61,11 +78,7 @@ def render_job(which, n):
       matrix:
         shard: [{shards}]
     steps:
-{checkout}{swap}{libs}{get_blender}      - uses: {DL}
-        with:
-          name: urda-blend
-          path: scene
-{cache}      - name: Render shard
+{checkout}{swap}{libs}{get_blender}{dl('urda-blend' if which == 'early' else 'urda-blend-late')}{cache}      - name: Render shard
         env:
           URDA_TIME_LIMIT: "1200"
         run: |
@@ -73,39 +86,20 @@ def render_job(which, n):
           nice -n 10 "$BLENDER" -b scene/urda.blend --python render/urda/render_shard.py -- {which} ${{{{ matrix.shard }}}} out 2>&1 | grep -E "FRAME|Error|rror:|Traceback|Fra:1 .*Sample 1/" || true
           ls -R out | head -20
           test -n "$(find out -name '*.png')"
-      - uses: {UP}
-        with:
-          name: frames-{which}-${{{{ matrix.shard }}}}
-          path: out
-          retention-days: 7
-          compression-level: 0
-"""
+{up(f"frames-{which}-${{{{ matrix.shard }}}}", "out", 7, 0)}"""
 
 
-chunk_uploads = "".join(f"""      - uses: {UP}
-        with:
-          name: dust-c{c}
-          path: chunks/c{c}
-          retention-days: 3
-          compression-level: 1
-""" for c in range(plan.N_CHUNKS))
-
-preview_chunks = "".join(f"""      - uses: {DL}
-        with:
-          name: dust-c{c}
-          path: scene
-          run-id: {plan.DUST_RUN}
-          github-token: ${{{{ github.token }}}}
-""" for c in sorted({plan.chunk_of(f) for _, f in plan.PREVIEW} - {None}))
+chunk_uploads = "".join(up(f"dust-c{c}", f"chunks/c{c}") for c in range(plan.N_CHUNKS))
 preview_specs = " ".join(f"{c}:{f}" for c, f in plan.PREVIEW)
+still_ids = ", ".join(plan.STILLS)
 
-yml = f"""name: urda-crash-render
+yml = f"""name: {NAME}
 
 on:
   push:
-    branches: [render/urda-crash]
+    branches: [render/urda-crash-v3]
     paths:
-      - .github/workflows/urda-crash-render.yml
+      - .github/workflows/{NAME}.yml
       - render/urda/**
   workflow_dispatch:
 
@@ -114,7 +108,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: urda-crash-render
+  group: {NAME}
   cancel-in-progress: true
 
 jobs:
@@ -133,95 +127,90 @@ jobs:
       - name: Download Blender {BL}
         run: |
           mkdir -p bl
-          curl -sSL -o bl/blender.tar.xz https://download.blender.org/release/Blender{BL[:3]}/blender-{BL}-linux-x64.tar.xz
+          curl -sSL --retry 5 -o bl/blender.tar.xz https://download.blender.org/release/Blender{BL[:3]}/blender-{BL}-linux-x64.tar.xz
           tar xJf bl/blender.tar.xz -C bl
-      - uses: {DL}
-        with:
-          name: urda-blend-late
-          path: old
-          run-id: {plan.DUST_RUN}
-          github-token: ${{{{ github.token }}}}
       - name: Build scene
-        env:
-          URDA_DUST_FROM: old/urda.blend
-        run: bl/blender-{BL}-linux-x64/blender -b --python render/urda/build.py -- data scene/urda.blend final 2>&1 | grep -E "^.....[0-9.]+s. |dust domain|Error|rror:|Traceback|File " ; test -f scene/urda.blend && ls -la scene
-      - uses: {UP}
-        with:
-          name: blender-bin
-          path: bl/blender.tar.xz
-          retention-days: 3
-          compression-level: 0
-      - uses: {UP}
-        with:
-          name: urda-blend
-          path: scene/urda.blend
-          retention-days: 3
-          compression-level: 1
-
-  preview:
+        run: bl/blender-{BL}-linux-x64/blender -b --python render/urda/build.py -- data scene/urda.blend final 2>&1 | grep -E "^.....[0-9.]+s. |Error|rror:|Traceback|File " ; test -f scene/urda.blend && ls -la scene
+{up("blender-bin", "bl/blender.tar.xz", 3, 0)}{up("urda-blend", "scene/urda.blend")}
+  bake:
     needs: [build]
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 300
     steps:
-{checkout}{libs}{get_blender}      - uses: {DL}
-        with:
-          name: urda-blend
-          path: scene
-{preview_chunks}      - name: Review stills
+{checkout}{swap}{libs}{get_blender}{dl("urda-blend")}      - name: Bake Mantaflow dust
         run: |
-          nice -n 10 "$BLENDER" -b scene/urda.blend --python render/urda/preview.py -- prev 50 {preview_specs} 2>&1 | grep -E "STILL|Error|rror:|Traceback" || true
-          ls prev
-      - uses: {UP}
-        with:
-          name: urda-preview
-          path: prev
-          retention-days: 7
-
+          "$BLENDER" -b scene/urda.blend --python render/urda/bake.py -- 320 2>&1 | grep -E "BAKED|Error|rror:|Traceback" || true
+          du -sh scene/dust_cache && find scene/dust_cache -type f | wc -l
+          test -n "$(find scene/dust_cache -name '*.vdb')"
+      - name: Split cache per shard group
+        run: python3 render/urda/split_cache.py scene/dust_cache chunks && du -sh chunks/* | head -30
+{up("urda-blend-late", "scene/urda.blend")}{chunk_uploads}
   dustcheck:
-    needs: [build]
+    needs: [bake]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-{checkout}{libs}{get_blender}      - uses: {DL}
-        with:
-          name: urda-blend
-          path: scene
-      - uses: {DL}
-        with:
-          name: dust-c{plan.chunk_of(1258)}
-          path: scene
-          run-id: {plan.DUST_RUN}
-          github-token: ${{{{ github.token }}}}
-      - name: Dust cache is readable
+{checkout}{libs}{get_blender}{dl("urda-blend-late")}{dl_chunks([plan.chunk_of(1258)])}      - name: Dust cache is readable
         run: |
           set -o pipefail
           "$BLENDER" -b scene/urda.blend --python-exit-code 1 --python render/urda/dust_check.py -- 1258 2>&1 | grep -E "DUST|Error|rror:|Traceback|^Blender quit"
 
-{render_job("early", plan.EARLY_SHARDS)}
-{render_job("late", plan.LATE_SHARDS)}
-  assemble:
-    needs: [render-early, render-late]
-    if: ${{{{ !cancelled() }}}}
+  preview:
+    needs: [bake]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-{checkout}      - uses: {DL}
+{checkout}{libs}{get_blender}{dl("urda-blend-late")}{dl_chunks([plan.chunk_of(f) for _, f in plan.PREVIEW])}      - name: Review stills
+        run: |
+          nice -n 10 "$BLENDER" -b scene/urda.blend --python render/urda/preview.py -- prev 50 {preview_specs} 2>&1 | grep -E "STILL|Error|rror:|Traceback" || true
+          ls prev
+{up("urda-preview", "prev", 7)}
+  stills:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        sid: [{still_ids}]
+    steps:
+{checkout}{swap}{libs}{get_blender}{dl("urda-blend")}      - name: Render context still
+        env:
+          URDA_TIME_LIMIT: "1500"
+        run: |
+          nice -n 10 "$BLENDER" -b scene/urda.blend --python render/urda/stills.py -- st ${{{{ matrix.sid }}}} 2>&1 | grep -E "STILL|Error|rror:|Traceback" || true
+          ls -la st
+          test -f st/${{{{ matrix.sid }}}}.png
+{up("stills-${{ matrix.sid }}", "st", 7, 0)}
+{render_job("early", plan.EARLY_SHARDS)}
+{render_job("late", plan.LATE_SHARDS)}
+  assemble:
+    needs: [render-early, render-late, stills]
+    if: ${{{{ !cancelled() }}}}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+{checkout}      - uses: {PY}
+        with:
+          python-version: "3.12"
+      - uses: {DL}
         with:
           pattern: frames-*
           merge-multiple: true
           path: frames
-      - name: Assemble video
+      - uses: {DL}
+        with:
+          pattern: stills-*
+          merge-multiple: true
+          path: stills
+      - name: Assemble documentary
         run: |
           which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          pip install -q pillow pyproj
           for j in J1 J2 J3 J4 J5; do echo "$j $(ls frames/$j | wc -l)"; done
-          python3 render/urda/assemble.py frames work urda_reconstruccion_1080p.mp4
-          ls -la urda_reconstruccion_1080p.mp4
-      - uses: {UP}
-        with:
-          name: urda-video
-          path: urda_reconstruccion_1080p.mp4
-          retention-days: 14
-          compression-level: 0
-"""
+          ls stills
+          python render/urda/assemble.py frames stills work urda_reconstruccion_v3_1080p.mp4
+          ls -la urda_reconstruccion_v3_1080p.mp4
+{up("urda-video-v3", "urda_reconstruccion_v3_1080p.mp4", 14, 0)}"""
 open(sys.argv[1], "w", encoding="utf-8", newline="\n").write(yml)
 print("written", sys.argv[1])
