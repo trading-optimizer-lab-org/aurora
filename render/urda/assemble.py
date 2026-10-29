@@ -65,19 +65,19 @@ def caption_layer(title, sub):
     """Lower third that always fits the frame."""
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    ft, fs = font(40, True), font(31)
+    ft, fs = font(46, True), font(36)
     lines_t = wrap(d, title, ft, W - 160)
     lines_s = wrap(d, sub, fs, W - 160) if sub else []
-    h = 40 + len(lines_t) * 50 + len(lines_s) * 41 + 24
+    h = 40 + len(lines_t) * 57 + len(lines_s) * 46 + 24
     d.rectangle([0, H - h, W, H], fill=(0, 0, 0, 120))
     y = H - h + 26
     for ln in lines_t:
         d.text((80, y), ln, font=ft, fill=WHITE)
-        y += 50
+        y += 57
     y += 6
     for ln in lines_s:
         d.text((80, y), ln, font=fs, fill=(225, 225, 225))
-        y += 41
+        y += 46
     d.text((W - 36, 30), "RECONSTRUCCIÓN APROXIMADA", font=font(22), fill=(255, 255, 255, 170), anchor="ra")
     return im
 
@@ -118,16 +118,16 @@ def card(name, title, body, dur, bg=None, small=None):
     seg = Seg(name)
     base = (bg.copy() if bg is not None else Image.new("RGB", (W, H), BG)).convert("RGBA")
     d = ImageDraw.Draw(base)
-    y = 300 if body else 470
-    y = text_block(d, (W / 2, y), title, font(64, True), 1500, gap=18, anchor_center=True) + 30
+    y = 200 if body else 470
+    y = text_block(d, (W / 2, y), title, font(72, True), 1500, gap=18, anchor_center=True) + 36
     if small:
         text_block(d, (W / 2, H - 160), small, font(28), 1600, fill=GREY, gap=8, anchor_center=True)
     # body paragraphs appear one by one, each once the previous one has had time to be read
     layers, t = [], 1.0 + len(title) / CPS
     for para in body.split("\n") if body else []:
         lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        y = text_block(ImageDraw.Draw(lay), (W / 2, y), para, font(36), 1420, fill=(230, 230, 230), gap=14,
-                       anchor_center=True) + 16
+        y = text_block(ImageDraw.Draw(lay), (W / 2, y), para, font(44), 1500, fill=(230, 230, 230), gap=14,
+                       anchor_center=True) + 22
         layers.append((t, lay))
         t += len(para) / CPS + 0.8
     n = int(max(dur, t + 2.5) * FPS)
@@ -275,8 +275,8 @@ def map_sequence(crash_utm):
             marker(d, to_px(bb, *P0), RED, ring=ring)
             label(d, to_px(bb, *P0), "Urda (Toledo) · PK 118", font(30, True))
             cap = caption_layer("Línea de alta velocidad Madrid-Sevilla (1992)",
-                                "El AVE 2080 sale de Madrid-Puerta de Atocha a las 08:00. El Iryo 6076 había salido"
-                                " pocos minutos antes con el mismo destino. Trazado aproximado")
+                                "El Iryo 6076 sale de Madrid-Puerta de Atocha hacia Sevilla a las 07:54. El AVE 2080 sale"
+                                " seis minutos después, a las 08:00, con el mismo destino. Trazado aproximado")
         else:
             ps, pc = to_px(bb, *stop), to_px(bb, *P0)
             d.line([to_px(bb, *p) for p in LAV_LOCAL], fill=(160, 40, 120, 200), width=6, joint="curve")
@@ -318,7 +318,7 @@ EVENTS = [
 ]
 # AVE speed profile (minute, km/h): stopped until 08:43, then the per-minute averages published from
 # Renfe position data (El Español: 145, 214, 236, 181) and about 200 km/h at impact (Ministerio)
-SPEED = [(43.0, 0), (44.5, 90), (46.3, 145), (47.3, 214), (51.3, 236), (52.3, 190), (53.0, 200)]
+SPEED = [(43.0, 0), (44.0, 60), (45.0, 80), (46.3, 145), (47.3, 200), (52.3, 190), (53.0, 200)]
 
 
 def speed_at(m):
@@ -400,7 +400,8 @@ def timeline():
         d.rounded_rectangle([ax - 64, ty - 34, ax, ty - 12], 8, fill=(240, 240, 240))
         d.text((ax, ty - 96), "AVE 2080", font=font(26, True), fill=WHITE, anchor="ra")
         v = speed_at(m)
-        d.text((ax - 32, ty + 100), f"≈ {v:.0f} km/h" if v > 0 else "detenido", font=font(30, True),
+        d.text((ax - 32, ty + 100), f"≈ {v:.0f} km/h" if v >= 20 else ("arrancando" if v > 0 else "detenido"),
+               font=font(30, True),
                fill=AMBER, anchor="ma")
         gap = 118.0 - a
         if gap > 0.05 and m >= 38.0:
@@ -413,9 +414,9 @@ def timeline():
             last = ev is shown[-1]
             col = WHITE if last else (150, 156, 166)
             d.text((80, y), ev[1], font=font(34, True), fill=AMBER if last else col)
-            y = text_block(d, (230, y + 2), ev[2], font(30, last), 1600, fill=col, gap=8) + 18
-        d.text((W - 80, H - 46), "Velocidades: medias por minuto de datos públicos de posición (El Español) y "
-                                 "cifra del Ministerio. Posiciones aproximadas.", font=font(20), fill=GREY, anchor="ra")
+            y = text_block(d, (230, y + 2), ev[2], font(32, last), 1600, fill=col, gap=8) + 18
+        d.text((W - 80, H - 46), "Velocidad aproximada: datos de posición de Renfe (elDiario.es, El Español) y tope de 200 km/h "
+                                 "del Ministerio. Posiciones aproximadas.", font=font(20), fill=GREY, anchor="ra")
         if 36.0 <= m < 43.0:
             text_block(d, (980, 128), "A 200 km/h un tren de alta velocidad necesita unos 4 km para detenerse",
                        font(26, True), 620, fill=AMBER)
@@ -478,7 +479,7 @@ CAPS = {
     "J1": ("08:52 · El AVE 2080 se aproxima a Urda a unos 200 km/h",
            "Circula por la misma vía en la que el Iryo lleva 15 minutos detenido"),
     "J2": ("08:53 · El Iryo 6076 sigue parado ante la señal de entrada",
-           "Viajan 147 personas, entre ellas un bebé. El AVE lleva 397 pasajeros"),
+           "Lleva 147 pasajeros, entre ellos un bebé, y 5 tripulantes. El AVE lleva 397 pasajeros"),
     "J3": ("08:53 · Alcance en el PK 118 de la línea Madrid-Sevilla",
            "Unos 200 km/h según el Ministerio. La velocidad exacta la darán las cajas negras"),
     "J4": ("Repetición a cámara lenta ×6",
@@ -548,20 +549,22 @@ if os.path.exists(bgp):
     bg = Image.blend(Image.new("RGB", (W, H), (0, 0, 0)), bg, 0.35)
 card("balance", "Balance provisional",
      "Al menos 68 fallecidos: 44 en el Iryo y 24 en el AVE\n"
-     "107 heridos. 53 siguen hospitalizados, 15 de ellos graves\n"
-     "544 personas viajaban en los dos trenes (397 en el AVE y 147 en el Iryo)", 8, bg,
-     small="Junta de Castilla-La Mancha y Gobierno, 28-29 de octubre de 2026. Las cifras pueden cambiar.")
+     "110 heridos hospitalizados en Castilla-La Mancha: 53 siguen ingresados, 15 en estado crítico\n"
+     "Más de 80 heridos atendidos además en hospitales de Madrid\n"
+     "544 pasajeros en los dos trenes: 397 en el AVE y 147 en el Iryo", 8, bg,
+     small="Junta de Castilla-La Mancha, Comunidad de Madrid y Gobierno, 28-29 de octubre de 2026. Las cifras pueden"
+           " cambiar.")
 card("investigacion", "La investigación",
-     "Juzgado de Instrucción n.º 2 de Orgaz y Guardia Civil, con una investigación técnica independiente en paralelo."
-     " La jueza ha decretado el secreto de sumario\n"
+     "Juzgado de Instrucción n.º 2 de Orgaz, con secreto de sumario, y una investigación técnica independiente\n"
      "Claves: las cajas negras de los dos trenes y los audios entre el centro de control de Adif en Atocha y los"
      " maquinistas\n"
-     "El Ministerio de Transportes habla de un error humano: tras la caída del LZB el protocolo obligaba a ir a"
-     " 40 km/h como máximo", 9, bg,
-     small="Fuentes: Ministerio de Transportes, El País, elDiario.es, El Confidencial, Cadena SER, EFE.")
+     "La Guardia Civil ya ha tomado declaración al operador de Atocha y a la maquinista del Iryo\n"
+     "El Ministerio habla de error humano: tras la caída del LZB el protocolo obligaba a ir a 40 km/h como máximo",
+     9, bg, small="Fuentes: Ministerio de Transportes, TSJ de Castilla-La Mancha, El País, elDiario.es, Cadena SER, EFE.")
 card("contexto", "Contexto",
      "El LZB se instaló en 1992 y solo sigue en servicio en la Madrid-Sevilla, en sustitución por el ERTMS europeo\n"
      "Es el segundo accidente mortal en esta línea en 2026, tras el de Adamuz (Córdoba) en enero, con 46 muertos\n"
+     "Y el más grave en España desde Angrois (Santiago de Compostela, 2013), con 80 muertos\n"
      "El Gobierno ha decretado tres días de luto oficial, del 29 al 31 de octubre", 9, bg)
 card("end", "En memoria de las víctimas",
      "Recreación ilustrativa con datos publicados hasta el 29/10/2026 (Ministerio de Transportes, Adif, RTVE, "
