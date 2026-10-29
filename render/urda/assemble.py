@@ -301,7 +301,7 @@ def centre_panel(title, body, width=1400):
 # ------------------------------------------------------------------ the line, the trains and the clock
 # minutes are counted from 08:00; km along the line from Madrid-Puerta de Atocha
 # AVE speed after the restart: 80 km/h restriction at km 92.95-94.05, then up to the official 200 km/h
-SPEED = [(43.0, 0), (44.0, 60), (45.0, 80), (46.3, 145), (47.3, 200), (52.3, 190), (53.0, 200)]
+SPEED = [(43.0, 0), (44.0, 60), (45.6, 80), (46.6, 125), (47.6, 175), (48.4, 200), (52.3, 192), (53.0, 200)]
 IMPACT = 53.0
 
 
@@ -411,7 +411,7 @@ def hud(m):
     gap = iryo_km(m) - ave_km(m)
     if m >= 38 and gap > 0.05:
         a, b = X(ave_km(m)), X(118.0) - 54
-        txt = f"{gap:.1f} km entre los dos trenes"
+        txt = f"{gap:.1f} km entre los dos trenes" if gap >= 1 else f"≈ {gap * 1000:.0f} m entre los dos trenes"
         cx = min((a + b) / 2, x1 - d.textlength(txt, font=font(24, True)) / 2)
         d.line([(a + 4, ty + 78), (b - 4, ty + 78)], fill=(255, 255, 255, 200), width=2)
         d.text((cx, ty + 81), txt, font=font(24, True), fill=WHITE, anchor="ma")
@@ -463,7 +463,8 @@ def chapter(name, bg, title="", sub="", clock=None, items=(), explain=None, pane
         if extra:
             im = extra(im, tk, dur)
         if show_hud and clock:
-            m = clock[0] + (clock[1] - clock[0]) * smooth(tk / dur)
+            # real-time shots run the clock at real speed and land exactly on clock[1]
+            m = clock[1] - (dur - tk) / 60 if realtime is not None else clock[0] + (clock[1] - clock[0]) * smooth(tk / dur)
             im.alpha_composite(hud(m), (0, 0))
         # the last three lines of dialogue stay on screen, older ones give way
         y = top
@@ -547,9 +548,10 @@ def with_inset(inset):
     return f
 
 
-def cab_overlay(im, tk, dur, bg):
-    # distance left to the Iryo, from the remaining footage at about 200 km/h
-    left = max(0.0, (len(bg.files) - max(0.0, tk - bg.hold_in) * FPS / bg.slow) / FPS * 200 / 3.6)
+def cab_overlay(im, tk, dur):
+    # distance left to the Iryo from the same timing model as the top band
+    m = IMPACT - (dur - tk) / 60
+    left = max(0.0, (iryo_km(m) - ave_km(m)) * 1000)
     d = ImageDraw.Draw(im)
     d.rounded_rectangle([W / 2 - 230, 300, W / 2 + 230, 400], 16, fill=(0, 0, 0, 170))
     d.text((W / 2, 314), f"Iryo parado a ≈ {left:.0f} m", font=font(44, True), fill=IRYO_C, anchor="ma")
@@ -615,16 +617,16 @@ chapter("iryo_insiste", Still("S_iryo", 1.12, 1.25, 0.6, 0.5),
                         " detenida ante la señal de entrada»"),
                ("ATOCHA", "«Vale, conforme. Pues nada, cuando pueda. Y si tiene problemas, nos llama»")])
 j1 = Frames("J1")
+cab = Frames("CAB", 150)
 chapter("aproximacion", j1,
         "08:52 · El AVE llega a la recta de Urda a unos 200 km/h",
         "El Iryo está parado unos cientos de metros más adelante",
-        clock=(52.6, 52.8), realtime=j1.motion())
-cab = Frames("CAB", 150)
+        clock=(52.6, IMPACT - cab.motion() / 60), realtime=j1.motion())
 chapter("cabina", cab,
         "Los últimos segundos, desde el frontal del AVE",
         "Recreación. Con el LZB apagado, nada frena el tren de forma automática",
         clock=(52.8, IMPACT), realtime=cab.motion(), fout=4,
-        extra=lambda im, tk, dur: cab_overlay(im, tk, dur, cab))
+        extra=cab_overlay)
 j3 = Frames("J3")
 chapter("impacto", j3,
         "08:53 · El AVE choca contra la cola del Iryo en el PK 118",
