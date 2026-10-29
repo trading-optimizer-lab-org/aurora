@@ -301,13 +301,16 @@ def map_sequence(crash_utm):
 EVENTS = [
     (30.0, "08:30", "Un fallo informático en Urda tumba el sistema LZB. Seis trenes se detienen."),
     (31.0, "08:31", "El maquinista del AVE avisa a Atocha: \"fallo de transmisión por bloqueo parcial\"."),
-    (36.0, "08:36", "Atocha ordena al AVE reanudar \"al amparo del BSL con marcha normal\". "
-                    "El protocolo exigía marcha a la vista: máximo 40 km/h."),
-    (38.0, "08:38", "El Iryo 6076 queda detenido ante la señal de entrada de Urda (según Iryo)."),
-    (41.0, "08:41", "La maquinista del Iryo avisa: \"estoy detenida en señal de entrada de Urda\"."),
-    (43.0, "08:43", "El AVE arranca y acelera hacia Urda."),
-    (48.0, "08:48", "El Iryo insiste: \"estoy todavía detenida ante la señal de entrada\". "
-                    "Respuesta: \"en cuanto pueda, y si tiene problemas nos llama\"."),
+    (36.0, "08:36", "Tras cinco minutos de dudas, Atocha ordena al AVE reanudar \"al amparo del BSL con marcha"
+                    " normal\". \"¿Con marcha normal?\", pregunta el maquinista. \"Sí\". El protocolo exigía marcha"
+                    " a la vista: máximo 40 km/h."),
+    (38.0, "08:38", "El Iryo 6076, que circulaba en BSL con velocidad meta 40, queda detenido ante la señal de"
+                    " entrada de Urda."),
+    (41.0, "08:41", "La maquinista del Iryo avisa: \"estoy detenida en la señal de entrada de Urda\". Atocha: \"no"
+                    " le autorizamos el rebase\", y acto seguido le ordena reanudar con marcha normal."),
+    (43.0, "08:43", "El AVE arranca, pasa una limitación temporal a 80 km/h en el km 93 y acelera hacia Urda."),
+    (48.0, "08:48", "El Iryo insiste: \"no me está permitiendo el tren reiniciar el sistema LZB\". Respuesta:"
+                    " \"cuando pueda, y si tiene problemas nos llama\". El AVE está a unos 17 km."),
     (53.0, "08:53", "Alcance en el PK 118. No consta en los audios publicados ninguna orden al AVE para"
                     " detenerse."),
 ]
@@ -537,7 +540,8 @@ card("balance", "Balance provisional",
      "544 personas viajaban en los dos trenes (397 en el AVE y 147 en el Iryo)", 8, bg,
      small="Junta de Castilla-La Mancha y Gobierno, 28-29 de octubre de 2026. Las cifras pueden cambiar.")
 card("investigacion", "La investigación",
-     "Juzgado de Instrucción n.º 2 de Orgaz y Guardia Civil, con una investigación técnica independiente en paralelo\n"
+     "Juzgado de Instrucción n.º 2 de Orgaz y Guardia Civil, con una investigación técnica independiente en paralelo."
+     " La jueza ha decretado el secreto de sumario\n"
      "Claves: las cajas negras de los dos trenes y los audios entre el centro de control de Adif en Atocha y los"
      " maquinistas\n"
      "El Ministerio de Transportes habla de un error humano: tras la caída del LZB el protocolo obligaba a ir a"
