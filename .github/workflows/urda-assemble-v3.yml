@@ -176,10 +176,10 @@ jobs:
           for j in J1 J2 J3 J4 J5; do echo "$j $(ls frames/$j | wc -l)"; done
           ls stills
           python render/urda/assemble.py frames stills work urda_reconstruccion_v3_1080p.mp4
-          ls -la urda_reconstruccion_v3_1080p.mp4
+          ls -la urda_reconstruccion_v3_1080p*.mp4
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: urda-video-v3-lento
-          path: urda_reconstruccion_v3_1080p.mp4
+          path: urda_reconstruccion_v3_1080p*.mp4
           retention-days: 14
           compression-level: 0

@@ -20,6 +20,8 @@ DJ = "/usr/share/fonts/truetype/dejavu/"
 BG = (11, 13, 16)
 RED, WHITE, AMBER, GREY = (214, 40, 40), (245, 245, 245), (255, 196, 64), (170, 176, 186)
 ENC = ["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p", "-r", str(FPS)]
+LICENCE = ("Vídeo de libre uso con licencia CC BY 4.0: puedes compartirlo, recortarlo y reutilizarlo citando la"
+           " fuente. Terreno y mapas © Instituto Geográfico Nacional (CC BY 4.0).")
 CPS = 17  # comfortable reading speed for on-screen text, characters per second
 _fonts = {}
 
@@ -119,7 +121,7 @@ def card(name, title, body, dur, bg=None, small=None):
     y = 300 if body else 470
     y = text_block(d, (W / 2, y), title, font(64, True), 1500, gap=18, anchor_center=True) + 30
     if small:
-        text_block(d, (W / 2, H - 150), small, font(24), 1600, fill=GREY, gap=8, anchor_center=True)
+        text_block(d, (W / 2, H - 160), small, font(28), 1600, fill=GREY, gap=8, anchor_center=True)
     # body paragraphs appear one by one, each once the previous one has had time to be read
     layers, t = [], 1.0 + len(title) / CPS
     for para in body.split("\n") if body else []:
@@ -565,14 +567,27 @@ card("end", "En memoria de las víctimas",
      "Recreación ilustrativa con datos publicados hasta el 29/10/2026 (Ministerio de Transportes, Adif, RTVE, "
      "El País, elDiario.es, El Confidencial, El Español, La Vanguardia, 20minutos, Guardia Civil) y el análisis de "
      "imágenes aéreas de Gareth Dennis.\nTerreno: IGN/CNIG (PNOA, MDT05). Mapas: IGN Base. Posiciones, velocidades y "
-     "daños son aproximados. Las causas las determinará la investigación oficial.", 9)
+     "daños son aproximados. Las causas las determinará la investigación oficial.", 9, small=LICENCE)
+# closing card for the short cut, kept out of the full edit
+card("end_short", "En memoria de las víctimas",
+     "Recreación ilustrativa con datos publicados hasta el 29/10/2026. Posiciones, velocidades y daños son"
+     " aproximados. Las causas las determinará la investigación oficial.", 6, small=LICENCE)
+END_SHORT = SEGS.pop()
 
-lst = os.path.join(WORK, "list.txt")
-with open(lst, "w") as fh:
-    for s in SEGS:
-        fh.write(f"file '{os.path.abspath(s)}'\n")
-r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy",
-                    "-movflags", "+faststart", OUT])
-if r.returncode:
-    sys.exit("concat failed")
-print("OK", OUT, len(SEGS), "segments", flush=True)
+
+def concat(segs, out):
+    lst = out + ".txt"
+    with open(lst, "w") as fh:
+        for s in segs:
+            fh.write(f"file '{os.path.abspath(s)}'\n")
+    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy",
+                        "-movflags", "+faststart", out])
+    if r.returncode:
+        sys.exit("concat failed")
+    print("OK", out, len(segs), "segments", flush=True)
+
+
+concat(SEGS, OUT)
+# short cut under the 2:20 limit of non-Premium X accounts: title, the five shots, wreck map and toll
+keep = ("title", "J1", "J2", "J3", "J4", "J5", "S_top", "balance")
+concat([s for s in SEGS if os.path.basename(s)[3:-4] in keep] + [END_SHORT], OUT.replace(".mp4", "_corto.mp4"))
