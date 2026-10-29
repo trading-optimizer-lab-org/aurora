@@ -236,7 +236,7 @@ beat("recta", j1, "El AVE entra en la recta de Urda a unos 200 km/h",
 beat("cabina", cab, "", "", clock=(52.8, IMPACT), realtime=cab.motion(), show_gap=False, extra=cab_count,
      fout=1, sound=("rumble",))
 j3 = Frames("J3")
-beat("impacto", j3, "08:53 · El AVE alcanza al Iryo", "", realtime=j3.motion(), fin=1,
+beat("impacto", j3, "08:53 · El AVE alcanza al Iryo", "Si llegó a frenar, y cuánto, lo dirán las cajas negras", realtime=j3.motion(), fin=1,
      boom_at=boom_in(330 - 301))
 j4 = Frames("J4", slow=2.0)
 beat("repeticion", j4, "A cámara lenta", "La cabeza del AVE destroza el último coche del Iryo",
