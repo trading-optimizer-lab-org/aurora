@@ -20,7 +20,12 @@ DJ = "/usr/share/fonts/truetype/dejavu/"
 BG = (11, 13, 16)
 RED, WHITE, AMBER, GREY = (214, 40, 40), (245, 245, 245), (255, 196, 64), (170, 176, 186)
 ENC = ["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p", "-r", str(FPS)]
+CPS = 17  # comfortable reading speed for on-screen text, characters per second
 _fonts = {}
+
+
+def read_time(*texts, base=2.0):
+    return base + sum(len(t) for t in texts if t) / CPS
 
 
 def font(size, bold=False):
@@ -109,17 +114,32 @@ def fade(im, k, n, fin=10, fout=10):
 # ------------------------------------------------------------------ cards
 def card(name, title, body, dur, bg=None, small=None):
     seg = Seg(name)
-    base = bg.copy() if bg is not None else Image.new("RGB", (W, H), BG)
+    base = (bg.copy() if bg is not None else Image.new("RGB", (W, H), BG)).convert("RGBA")
     d = ImageDraw.Draw(base)
     y = 300 if body else 470
     y = text_block(d, (W / 2, y), title, font(64, True), 1500, gap=18, anchor_center=True) + 30
-    if body:
-        y = text_block(d, (W / 2, y), body, font(36), 1420, fill=(230, 230, 230), gap=14, anchor_center=True)
     if small:
         text_block(d, (W / 2, H - 150), small, font(24), 1600, fill=GREY, gap=8, anchor_center=True)
-    n = int(dur * FPS)
+    # body paragraphs appear one by one, each once the previous one has had time to be read
+    layers, t = [], 1.0 + len(title) / CPS
+    for para in body.split("\n") if body else []:
+        lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        y = text_block(ImageDraw.Draw(lay), (W / 2, y), para, font(36), 1420, fill=(230, 230, 230), gap=14,
+                       anchor_center=True) + 16
+        layers.append((t, lay))
+        t += len(para) / CPS + 0.8
+    n = int(max(dur, t + 2.5) * FPS)
     for k in range(n):
-        seg.put(fade(base, k, n, 15, 15))
+        im = base
+        for t0, lay in layers:
+            a = (k / FPS - t0) / 0.6
+            if a >= 1:
+                im = Image.alpha_composite(im, lay)
+            elif a > 0:
+                part = lay.copy()
+                part.putalpha(lay.getchannel("A").point(lambda v, a=a: int(v * a)))
+                im = Image.alpha_composite(im, part)
+        seg.put(fade(im, k, n, 15, 15))
     seg.close()
 
 
@@ -219,7 +239,7 @@ def map_sequence(crash_utm):
     big2 = wms("https://www.ign.es/wms-inspire/ign-base", "IGNBaseTodo", v2b, (4000, 2250), os.path.join(WORK, "m2.jpg"))
     madrid, sevilla = route[0], route[-1]
     seg = Seg("map")
-    n1, nz, n2 = 7 * FPS, 3 * FPS, 7 * FPS
+    n1, nz, n2 = 12 * FPS, 4 * FPS, 18 * FPS
     total = n1 + nz + n2
     for k in range(total):
         if k < n1:
@@ -238,7 +258,7 @@ def map_sequence(crash_utm):
         ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         d = ImageDraw.Draw(ov)
         if k < n1 + nz:
-            u = min(1.0, max(0.0, (k - 15) / (3 * FPS)))
+            u = min(1.0, max(0.0, (k - 15) / (6 * FPS)))
             pts = [to_px(bb, *p) for p in route]
             m = max(2, int(len(pts) * u) + 1)
             seg_pts = pts[:m]
@@ -317,14 +337,35 @@ def ave_km(m):
     return 93.0 + 25.0 * dist(min(m, 53.0)) / full
 
 
+def clock_keys():
+    # the clock runs between events and stops on each one long enough to read it
+    keys, t, m = [(0.0, 30.0)], 1.0, 30.0
+    for ev in EVENTS:
+        if ev[0] > m:
+            keys.append((t, m))
+            t += 1.0 + 0.6 * (ev[0] - m)
+            m = ev[0]
+        t += read_time(ev[2], base=1.5)
+        keys.append((t, m))
+    return keys
+
+
+def clock_at(keys, t):
+    for (ta, ma), (tb, mb) in zip(keys, keys[1:]):
+        if t <= tb:
+            u = (t - ta) / (tb - ta) if tb > ta else 1.0
+            return ma + (mb - ma) * u * u * (3 - 2 * u)
+    return keys[-1][1]
+
+
 def timeline():
     seg = Seg("timeline")
-    n = 27 * FPS
+    keys = clock_keys()
+    n = int((keys[-1][0] + 1.5) * FPS)
     x0, x1, km0, km1 = 140, 1780, 88.0, 121.0
     X = lambda km: x0 + (km - km0) / (km1 - km0) * (x1 - x0)  # noqa: E731
     for k in range(n):
-        t = k / FPS
-        m = 30.0 + min(23.0, max(0.0, t - 1.0))
+        m = clock_at(keys, k / FPS)
         im = Image.new("RGB", (W, H), BG)
         d = ImageDraw.Draw(im)
         d.text((80, 60), "Cronología · miércoles 28 de octubre de 2026", font=font(44, True), fill=WHITE)
@@ -404,7 +445,8 @@ def still(sid, title, sub, dur, z0=1.0, z1=1.12, labels=False):
                fill=(255, 255, 255, 230), anchor="ra")
     cap = caption_layer(title, sub)
     seg = Seg(sid)
-    n = int(dur * FPS)
+    extra = sum(len(l["text"]) for l in lab) / CPS if labels else 0.0
+    n = int(max(dur, read_time(title, sub) + extra) * FPS)
     for k in range(n):
         u = k / max(1, n - 1)
         z = z0 + (z1 - z0) * (u * u * (3 - 2 * u))
@@ -424,14 +466,15 @@ CAPS = {
            "Viajan 147 personas, entre ellas un bebé. El AVE lleva 397 pasajeros"),
     "J3": ("08:53 · Alcance en el PK 118 de la línea Madrid-Sevilla",
            "Unos 200 km/h según el Ministerio. La velocidad exacta la darán las cajas negras"),
-    "J4": ("Repetición a cámara lenta ×3",
+    "J4": ("Repetición a cámara lenta ×6",
            "La cabeza del AVE destroza la cola del Iryo, se separa del tren y cae por el talud contrario"),
     "J5": ("Tres coches del Iryo caen por el terraplén. El resto del AVE descarrila hacia la vía contigua",
            "Un carril roto atraviesa el coche 3 del AVE"),
 }
 
 
-def shot(j):
+def shot(j, slow=1, hold_out=0.0):
+    """Play a rendered shot; hold its first frame until the caption can be read, slow it by frame doubling."""
     d = os.path.join(FR, j)
     files = sorted(f for f in os.listdir(d) if f.endswith(".png")) if os.path.isdir(d) else []
     if not files:
@@ -439,14 +482,20 @@ def shot(j):
         return
     capp = os.path.join(WORK, f"cap_{j}.png")
     caption_layer(*CAPS[j]).save(capp)
+    motion = len(files) * slow / FPS
+    hold_in = max(1.0, read_time(*CAPS[j]) - motion - hold_out)
+    paths = [os.path.abspath(os.path.join(d, f)) for f in files]
+    entries = [(paths[0], hold_in)] + [(p, slow / FPS) for p in paths] + [(paths[-1], max(hold_out, 1 / FPS))]
     lst = os.path.join(WORK, f"{j}.txt")
     with open(lst, "w") as fh:
-        for f in files:
-            fh.write(f"file '{os.path.abspath(os.path.join(d, f))}'\nduration {1 / FPS:.6f}\n")
-    n = len(files)
+        for p, du in entries:
+            fh.write(f"file '{p}'\nduration {du:.6f}\n")
+        fh.write(f"file '{paths[-1]}'\n")  # concat demuxer ignores the duration of the last entry
+    n = int(round((hold_in + motion + hold_out) * FPS))
     Seg.n += 1
     out = os.path.join(WORK, f"{Seg.n:02d}_{j}.mp4")
-    fc = (f"[0:v]fps={FPS},noise=alls=3:allf=t[v];[v][1:v]overlay=0:0,"
+    blend = ",tmix=frames=2" if slow > 1 else ""
+    fc = (f"[0:v]fps={FPS}{blend},noise=alls=3:allf=t[v];[v][1:v]overlay=0:0,"
           f"fade=in:0:8,fade=out:{max(0, n - 8)}:8[o]")
     r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst,
                         "-i", capp, "-filter_complex", fc, "-map", "[o]", "-frames:v", str(n)] + ENC + [out])
@@ -467,8 +516,11 @@ still("S_wide", "La recta de Urda, a los pies de los Montes de Toledo",
 timeline()
 still("S_iryo", "08:38-08:53 · El Iryo 6076 espera ante la señal de entrada de Urda",
       "Su maquinista avisa al centro de control de Adif a las 08:41 y a las 08:48", 6, 1.0, 1.08)
-for j in ("J1", "J2", "J3", "J4", "J5"):
-    shot(j)
+shot("J1")
+shot("J2")
+shot("J3")
+shot("J4", slow=2)
+shot("J5", hold_out=4.0)
 still("S_top", "Posición final aproximada de los coches",
       "Según las imágenes aéreas de la Guardia Civil y lo publicado por RTVE, 20minutos y el ingeniero Gareth Dennis",
       10, 1.0, 1.04, labels=True)

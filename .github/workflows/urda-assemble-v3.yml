@@ -1,0 +1,75 @@
+name: urda-assemble-v3
+
+# Re-edit the v3 documentary with slower pacing from the frames of an existing render run.
+# Waits for that run's renders to finish, so it can be pushed while the run is still going.
+
+on:
+  push:
+    branches: [render/urda-assemble-v3]
+    paths:
+      - .github/workflows/urda-assemble-v3.yml
+      - render/urda/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: urda-assemble-v3
+  cancel-in-progress: true
+
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN: "40824487121"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - name: Wait for the render run to finish its frames
+        run: |
+          while true; do
+            s=$(gh run view "$RUN" --repo "$GITHUB_REPOSITORY" --json status,conclusion,jobs \
+                --jq '"\(.status) \(.conclusion) a=\([.jobs[] | select(.name=="assemble") | .status] | join(","))"')
+            echo "$(date -u +%H:%M) $s"
+            case "$s" in *cancelled*) exit 1;; esac
+            case "$s" in *a=in_progress*|*a=completed*) break;; esac
+            case "$s" in completed*) exit 1;; esac
+            sleep 120
+          done
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: frames-*
+          merge-multiple: true
+          path: frames
+          run-id: ${{ env.RUN }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: stills-*
+          merge-multiple: true
+          path: stills
+          run-id: ${{ env.RUN }}
+          github-token: ${{ github.token }}
+      - name: Assemble documentary
+        run: |
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          pip install -q pillow pyproj
+          for j in J1 J2 J3 J4 J5; do echo "$j $(ls frames/$j | wc -l)"; done
+          ls stills
+          python render/urda/assemble.py frames stills work urda_reconstruccion_v3_1080p.mp4
+          ls -la urda_reconstruccion_v3_1080p.mp4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: urda-video-v3-lento
+          path: urda_reconstruccion_v3_1080p.mp4
+          retention-days: 14
+          compression-level: 0
