@@ -75,9 +75,11 @@ def versus():
     return im
 
 
-def questions(lines, width=1500):
-    """The open questions, all on screen at once."""
-    f = font(50, True)
+def questions(lines):
+    """The open questions, all on screen at once, in a box sized to the longest line."""
+    f = font(46, True)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    width = min(W - 80, int(max(probe.textlength(ln, font=f) for ln in lines)) + 120)
     h = 40 + len(lines) * 92 + 20
     im = Image.new("RGBA", (width, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
