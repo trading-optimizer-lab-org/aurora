@@ -147,3 +147,13 @@ def test_gross_check(W) -> None:
     taken[0]["w"] = 2.5
     d = W.gross_check(taken, recs)
     assert d["over_2x_1545"] == 0.5 and d["over_2x_close"] == 1.0 and d["worst"] == pytest.approx(3.0)
+
+
+def test_three_year_paths() -> None:
+    from test_v24 import _script
+    H = _script("run_v47h", "run_v47h_under_test")
+    R = np.full((len(H.LEVELS), 500), 0.002)
+    out = H.three_years(R, 500)
+    assert [r["year"] for r in out] == [1, 2, 3] and H.R29.DAYS == 252
+    assert out[0]["med"] < out[1]["med"] < out[2]["med"] and out[2]["p_ruin"] == 0
+    assert out[0]["med"] == pytest.approx(2000 * 1.002 ** 252 - 6 * 12 / 252 * 252 * 1.15, rel=0.05)
