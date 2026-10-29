@@ -433,19 +433,29 @@ def still(sid, title, sub, dur, z0=1.0, z1=1.12, labels=False):
         lab = json.load(open(os.path.join(ST, f"{sid}.json"), encoding="utf-8"))
         d = ImageDraw.Draw(base, "RGBA")
         f = font(int(36 * sw / W), True)
-        for i, l in enumerate(lab):
+        boxes = []
+        # keep a margin so the slow push-in never crops a label
+        mx, my = sw * 0.08, sh * 0.08
+        for l in lab:
             x, y = l["x"] * sw, l["y"] * sh
-            ly = y + (-140 if i % 2 == 0 else 120) * sw / W
-            d.line([(x, y), (x, ly)], fill=(255, 255, 255, 230), width=4)
-            d.ellipse([x - 9, y - 9, x + 9, y + 9], fill=(255, 255, 255, 255))
             tw = d.textlength(l["text"], font=f)
-            lx = min(max(20, x - tw / 2), sw - tw - 20)
+            lx = min(max(mx, x - tw / 2), sw - tw - mx)
+            # first leader length whose label box clears the others and the frame
+            for off in (-140, 130, -260, 250, -380, 370, -500, 490):
+                ly = y + off * sw / W
+                box = (lx - 20, ly - f.size, lx + tw + 20, ly + f.size)
+                if box[1] > my and box[3] < sh * 0.78 and not any(
+                        box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in boxes):
+                    break
+            boxes.append(box)
+            d.line([(x, y), (min(max(x, lx), lx + tw), ly)], fill=(255, 255, 255, 230), width=4)
+            d.ellipse([x - 9, y - 9, x + 9, y + 9], fill=(255, 255, 255, 255))
             d.rounded_rectangle([lx - 14, ly - f.size / 2 - 12, lx + tw + 14, ly + f.size / 2 + 14], 10,
                                 fill=(0, 0, 0, 185))
             d.text((lx, ly - f.size / 2), l["text"], font=f, fill=WHITE)
         # direction of travel: +x in the scene is towards Sevilla, image right for the top view
-        d.text((sw - 60, 60), "Sentido Madrid → Sevilla", font=font(int(30 * sw / W), True),
-               fill=(255, 255, 255, 230), anchor="ra")
+        d.text((sw * 0.08, sh * 0.08), "Sentido Madrid → Sevilla", font=font(int(30 * sw / W), True),
+               fill=(255, 255, 255, 230), anchor="la")
     cap = caption_layer(title, sub)
     seg = Seg(sid)
     extra = sum(len(l["text"]) for l in lab) / CPS if labels else 0.0
