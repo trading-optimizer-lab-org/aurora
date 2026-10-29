@@ -1,6 +1,9 @@
-"""Edit the documentary: map, timeline, context stills, 3D shots and data cards into one MP4.
+"""Chronological documentary edit: every minute from 07:54 to 08:53 told over the 3D scene.
 
 python assemble.py <frames_dir> <stills_dir> <work_dir> <out.mp4>
+
+frames_dir holds the rendered sequences J1..J5 (v3) and SIG, ORB, CAB (v4 extra shots).
+A heads-up band (clock, both trains on a strip of the line, AVE speed) stays on screen until the impact.
 """
 import json
 import math
@@ -17,8 +20,8 @@ FR, ST, WORK, OUT = sys.argv[1:5]
 os.makedirs(WORK, exist_ok=True)
 W, H, FPS = 1920, 1080, 30
 DJ = "/usr/share/fonts/truetype/dejavu/"
-BG = (11, 13, 16)
 RED, WHITE, AMBER, GREY = (214, 40, 40), (245, 245, 245), (255, 196, 64), (170, 176, 186)
+IRYO_C, AVE_C = (226, 60, 70), (240, 240, 240)
 ENC = ["-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p", "-r", str(FPS)]
 LICENCE = ("Vídeo de libre uso con licencia CC BY 4.0: puedes compartirlo, recortarlo y reutilizarlo citando la"
            " fuente. Terreno y mapas © Instituto Geográfico Nacional (CC BY 4.0).")
@@ -61,25 +64,17 @@ def text_block(d, xy, text, f, width, fill=WHITE, gap=10, anchor_center=False):
     return y
 
 
-def caption_layer(title, sub):
-    """Lower third that always fits the frame."""
-    im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    ft, fs = font(46, True), font(36)
-    lines_t = wrap(d, title, ft, W - 160)
-    lines_s = wrap(d, sub, fs, W - 160) if sub else []
-    h = 40 + len(lines_t) * 57 + len(lines_s) * 46 + 24
-    d.rectangle([0, H - h, W, H], fill=(0, 0, 0, 120))
-    y = H - h + 26
-    for ln in lines_t:
-        d.text((80, y), ln, font=ft, fill=WHITE)
-        y += 57
-    y += 6
-    for ln in lines_s:
-        d.text((80, y), ln, font=fs, fill=(225, 225, 225))
-        y += 46
-    d.text((W - 36, 30), "RECONSTRUCCIÓN APROXIMADA", font=font(22), fill=(255, 255, 255, 170), anchor="ra")
-    return im
+def smooth(u):
+    u = min(1.0, max(0.0, u))
+    return u * u * (3 - 2 * u)
+
+
+def with_alpha(im, a):
+    if a >= 1:
+        return im
+    out = im.copy()
+    out.putalpha(im.getchannel("A").point(lambda v: int(v * max(0.0, a))))
+    return out
 
 
 class Seg:
@@ -88,19 +83,23 @@ class Seg:
 
     def __init__(self, name):
         Seg.n += 1
+        self.name = name
         self.path = os.path.join(WORK, f"{Seg.n:02d}_{name}.mp4")
         self.p = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
                                    "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-"] + ENC + [self.path],
                                   stdin=subprocess.PIPE)
-        SEGS.append(self.path)
+        self.k = 0
+        SEGS.append(self)
 
     def put(self, im):
         self.p.stdin.write(im.convert("RGB").tobytes())
+        self.k += 1
 
     def close(self):
         self.p.stdin.close()
         if self.p.wait():
             sys.exit(f"ffmpeg failed on {self.path}")
+        print(f"{self.name}: {self.k / FPS:.1f} s", flush=True)
 
 
 SEGS = []
@@ -113,212 +112,197 @@ def fade(im, k, n, fin=10, fout=10):
     return Image.blend(Image.new("RGB", im.size, (0, 0, 0)), im.convert("RGB"), max(0.0, a))
 
 
-# ------------------------------------------------------------------ cards
-def card(name, title, body, dur, bg=None, small=None):
-    seg = Seg(name)
-    base = (bg.copy() if bg is not None else Image.new("RGB", (W, H), BG)).convert("RGBA")
-    d = ImageDraw.Draw(base)
-    y = 200 if body else 470
-    y = text_block(d, (W / 2, y), title, font(72, True), 1500, gap=18, anchor_center=True) + 36
-    if small:
-        text_block(d, (W / 2, H - 160), small, font(28), 1600, fill=GREY, gap=8, anchor_center=True)
-    # body paragraphs appear one by one, each once the previous one has had time to be read
-    layers, t = [], 1.0 + len(title) / CPS
-    for para in body.split("\n") if body else []:
-        lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        y = text_block(ImageDraw.Draw(lay), (W / 2, y), para, font(44), 1500, fill=(230, 230, 230), gap=14,
-                       anchor_center=True) + 22
-        layers.append((t, lay))
-        t += len(para) / CPS + 0.8
-    n = int(max(dur, t + 2.5) * FPS)
-    for k in range(n):
-        im = base
-        for t0, lay in layers:
-            a = (k / FPS - t0) / 0.6
-            if a >= 1:
-                im = Image.alpha_composite(im, lay)
-            elif a > 0:
-                part = lay.copy()
-                part.putalpha(lay.getchannel("A").point(lambda v, a=a: int(v * a)))
-                im = Image.alpha_composite(im, part)
-        seg.put(fade(im, k, n, 15, 15))
-    seg.close()
+# ------------------------------------------------------------------ 3D backgrounds
+class Frames:
+    """A rendered PNG sequence played at a given speed, with optional holds on its first and last frames."""
+
+    def __init__(self, name, first=0, last=None, slow=1.0, hold_in=0.0):
+        d = os.path.join(FR, name)
+        self.files = sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".png")) if os.path.isdir(d) else []
+        if not self.files:
+            print("missing frames", name, flush=True)
+        self.files = self.files[first:last]
+        self.slow, self.hold_in = slow, hold_in
+        self.cache = {}
+
+    def motion(self):
+        return len(self.files) * self.slow / FPS
+
+    def _load(self, i):
+        i = min(max(0, i), len(self.files) - 1)
+        if i not in self.cache:
+            if len(self.cache) > 4:
+                self.cache.clear()
+            self.cache[i] = Image.open(self.files[i]).convert("RGB").resize((W, H), Image.BILINEAR)
+        return self.cache[i]
+
+    def at(self, t):
+        if not self.files:
+            return Image.new("RGB", (W, H), (20, 22, 26))
+        p = max(0.0, t - self.hold_in) * FPS / self.slow
+        i = int(p)
+        u = p - i
+        if self.slow > 1 and u > 0.01 and i + 1 < len(self.files):
+            return Image.blend(self._load(i), self._load(i + 1), u)
+        return self._load(i)
 
 
-# ------------------------------------------------------------------ maps (IGN WMS)
-TO_UTM = Transformer.from_crs("EPSG:4326", "EPSG:25830", always_xy=True)
+class Still:
+    """A large context still with a slow push-in."""
+
+    def __init__(self, sid, z0=1.0, z1=1.1, cx=0.5, cy=0.5, labels=False):
+        p = os.path.join(ST, f"{sid}.png")
+        self.ok = os.path.exists(p)
+        if not self.ok:
+            print("missing still", sid, flush=True)
+            return
+        self.base = Image.open(p).convert("RGB")
+        self.z0, self.z1, self.cx, self.cy = z0, z1, cx, cy
+        if labels:
+            self.draw_labels(sid)
+
+    def draw_labels(self, sid):
+        base = self.base
+        sw, sh = base.size
+        lab = json.load(open(os.path.join(ST, f"{sid}.json"), encoding="utf-8"))
+        d = ImageDraw.Draw(base, "RGBA")
+        f = font(int(38 * sw / W), True)
+        boxes = []
+        mx, my = sw * 0.08, sh * 0.08
+        for lb in lab:
+            x, y = lb["x"] * sw, lb["y"] * sh
+            tw = d.textlength(lb["text"], font=f)
+            lx = min(max(mx, x - tw / 2), sw - tw - mx)
+            # first leader length whose label box clears the others and the frame
+            for off in (-140, 130, -260, 250, -380, 370, -500, 490):
+                ly = y + off * sw / W
+                box = (lx - 20, ly - f.size, lx + tw + 20, ly + f.size)
+                if box[1] > my and box[3] < sh * 0.76 and not any(
+                        box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in boxes):
+                    break
+            boxes.append(box)
+            d.line([(x, y), (min(max(x, lx), lx + tw), ly)], fill=(255, 255, 255, 230), width=4)
+            d.ellipse([x - 9, y - 9, x + 9, y + 9], fill=(255, 255, 255, 255))
+            d.rounded_rectangle([lx - 14, ly - f.size / 2 - 12, lx + tw + 14, ly + f.size / 2 + 14], 10,
+                                fill=(0, 0, 0, 190))
+            d.text((lx, ly - f.size / 2), lb["text"], font=f, fill=WHITE)
+        # +x in the scene is towards Sevilla, image right for the top view
+        d.text((mx, my), "Sentido Madrid → Sevilla", font=font(int(32 * sw / W), True), fill=(255, 255, 255, 235))
+
+    def at(self, t, dur):
+        if not self.ok:
+            return Image.new("RGB", (W, H), (20, 22, 26))
+        sw, sh = self.base.size
+        z = self.z0 + (self.z1 - self.z0) * smooth(t / max(dur, 0.1))
+        cw, ch = sw / z, sh / z
+        cx = min(max(cw / 2, self.cx * sw), sw - cw / 2)
+        cy = min(max(ch / 2, self.cy * sh), sh - ch / 2)
+        return self.base.resize((W, H), Image.BILINEAR, box=(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2))
 
 
-def utm(lat, lon):
-    return TO_UTM.transform(lon, lat)
+# ------------------------------------------------------------------ text overlays
+MARK = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+ImageDraw.Draw(MARK).text((30, 10), "RECONSTRUCCIÓN APROXIMADA · DATOS PÚBLICOS A 29/10/2026",
+                          font=font(20), fill=(255, 255, 255, 150), anchor="la")
 
 
-def wms(url_base, layer, bbox, size, path):
-    q = (f"{url_base}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS={layer}&STYLES=&CRS=EPSG:25830"
-         f"&BBOX={bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}&WIDTH={size[0]}&HEIGHT={size[1]}"
-         f"&FORMAT=image/jpeg")
-    for attempt in range(6):
-        try:
-            req = urllib.request.Request(q, headers={"User-Agent": "urda-reconstruction/1.0"})
-            with urllib.request.urlopen(req, timeout=120) as r:
-                open(path, "wb").write(r.read())
-            return Image.open(path).convert("RGB")
-        except Exception as ex:  # noqa: BLE001 - public service, fall back to a plain map
-            print("wms retry", layer, ex, flush=True)
-            time.sleep(10 * (attempt + 1))
-    return Image.new("RGB", size, (228, 224, 214))
+def caption_layer(title, sub):
+    """Lower third that always fits the frame."""
+    im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    if not title:
+        return im
+    d = ImageDraw.Draw(im)
+    ft, fs = font(46, True), font(36)
+    lines_t = wrap(d, title, ft, W - 160)
+    lines_s = wrap(d, sub, fs, W - 160) if sub else []
+    h = 34 + len(lines_t) * 57 + len(lines_s) * 46 + 40
+    d.rectangle([0, H - h, W, H], fill=(0, 0, 0, 150))
+    y = H - h + 24
+    for ln in lines_t:
+        d.text((80, y), ln, font=ft, fill=WHITE)
+        y += 57
+    y += 6
+    for ln in lines_s:
+        d.text((80, y), ln, font=fs, fill=(228, 228, 228))
+        y += 46
+    return im
 
 
-def view(cx, cy, width):
-    h = width * H / W
-    return (cx - width / 2, cy - h / 2, cx + width / 2, cy + h / 2)
+def caption_height(title, sub):
+    d = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    if not title:
+        return 0
+    return 34 + len(wrap(d, title, font(46, True), W - 160)) * 57 + (
+        len(wrap(d, sub, font(36), W - 160)) * 46 if sub else 0) + 40
 
 
-def to_px(bb, x, y, size=(W, H)):
-    return ((x - bb[0]) / (bb[2] - bb[0]) * size[0], (bb[3] - y) / (bb[3] - bb[1]) * size[1])
+WHO = {"AVE": ("Maquinista del AVE", AVE_C), "IRYO": ("Maquinista del Iryo", IRYO_C),
+       "ATOCHA": ("Centro de control de Adif (Atocha)", AMBER), "NOTE": ("", GREY)}
 
 
-def crop_view(img, img_bb, bb):
-    """Render map bbox bb from a larger map image."""
-    x0, y0 = to_px(img_bb, bb[0], bb[3], img.size)
-    x1, y1 = to_px(img_bb, bb[2], bb[1], img.size)
-    x0, y0 = max(0.0, x0), max(0.0, y0)
-    x1, y1 = min(float(img.size[0]), x1), min(float(img.size[1]), y1)
-    return img.resize((W, H), Image.BILINEAR, box=(x0, y0, x1, y1))
+def bubble(who, text, width=1000):
+    """One line of the published control-room audio, as a speech panel."""
+    name, col = WHO[who]
+    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    lines = wrap(tmp, text, font(36, who != "NOTE"), width - 60)
+    h = 26 + (40 if name else 0) + len(lines) * 46 + 18
+    im = Image.new("RGBA", (width, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([0, 0, width - 1, h - 1], 16, fill=(8, 10, 14, 205))
+    d.rectangle([0, 10, 8, h - 10], fill=col + (255,))
+    y = 18
+    if name:
+        d.text((30, y), name, font=font(28, True), fill=col)
+        y += 40
+    for ln in lines:
+        d.text((30, y), ln, font=font(36, who != "NOTE"), fill=WHITE if who != "NOTE" else (225, 225, 225))
+        y += 46
+    return im
 
 
-def lerp_bb(a, b, u):
-    # geometric zoom: interpolate centre linearly and width logarithmically
-    wa, wb = a[2] - a[0], b[2] - b[0]
-    w = wa * (wb / wa) ** u
-    cx = (a[0] + a[2]) / 2 * (1 - u) + (b[0] + b[2]) / 2 * u
-    cy = (a[1] + a[3]) / 2 * (1 - u) + (b[1] + b[3]) / 2 * u
-    return view(cx, cy, w)
+def explainer(title, text, width=760):
+    """Plain-language box for a technical term."""
+    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    lines = wrap(tmp, text, font(32), width - 60)
+    h = 30 + 46 + len(lines) * 42 + 26
+    im = Image.new("RGBA", (width, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([0, 0, width - 1, h - 1], 16, fill=(20, 40, 70, 215), outline=(120, 170, 230, 255), width=3)
+    d.text((30, 24), title, font=font(34, True), fill=(170, 210, 255))
+    y = 24 + 50
+    for ln in lines:
+        d.text((30, y), ln, font=font(32), fill=WHITE)
+        y += 42
+    return im
 
 
-def marker(d, p, col, r=11, ring=0.0):
-    x, y = p
-    if ring > 0:
-        rr = r + 30 * ring
-        d.ellipse([x - rr, y - rr, x + rr, y + rr], outline=col + (int(255 * (1 - ring)),), width=4)
-    d.ellipse([x - r, y - r, x + r, y + r], fill=col, outline=(255, 255, 255), width=3)
+def centre_panel(title, body, width=1400):
+    tmp = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    paras = body.split("\n")
+    lines = [wrap(tmp, p, font(42), width - 120) for p in paras]
+    h = 60 + 90 + sum(len(ls) * 56 + 22 for ls in lines) + 40
+    im = Image.new("RGBA", (width, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([0, 0, width - 1, h - 1], 22, fill=(6, 8, 12, 200))
+    d.text((width / 2, 50), title, font=font(64, True), fill=WHITE, anchor="ma")
+    y = 150
+    layers = []
+    for ls in lines:
+        lay = Image.new("RGBA", (width, h), (0, 0, 0, 0))
+        dl = ImageDraw.Draw(lay)
+        for ln in ls:
+            dl.text((width / 2, y), ln, font=font(42), fill=(232, 232, 232), anchor="ma")
+            y += 56
+        y += 22
+        layers.append(lay)
+    return im, layers
 
 
-def label(d, p, text, f, dx=18, dy=-14, fill=WHITE):
-    x, y = p[0] + dx, p[1] + dy
-    tw = d.textlength(text, font=f)
-    if x + tw + 16 > W:
-        x = p[0] - dx - tw
-    d.rounded_rectangle([x - 10, y - 6, x + tw + 10, y + f.size + 10], 8, fill=(0, 0, 0, 170))
-    d.text((x, y), text, font=f, fill=fill)
-
-
-# LAV Madrid-Sevilla centreline around Urda from OpenStreetMap (ETRS89 UTM 30N, north to south), and the point
-# 25 km up the line from the crash where the AVE stood after the LZB failure (between Mora and Manzaneque)
-LAV_LOCAL = [(431105, 4394000), (431252, 4393000), (431411, 4391750), (431418, 4390750), (431208, 4388000),
-             (431384, 4387000), (431664, 4386000), (431729, 4385000), (431525, 4384000), (429941, 4380750),
-             (429676, 4379750), (429378, 4377500), (429088, 4375250), (428622, 4371500), (428511, 4370500),
-             (428602, 4369500), (428917, 4368500), (429512, 4367500), (429779, 4366500), (429809, 4365500),
-             (429606, 4364500), (429120, 4363250), (428704, 4362000), (428170, 4360750), (427414, 4359500),
-             (426672, 4358250), (424932, 4355000)]
-AVE_STOP = (431249, 4388750)
-
-
-def map_sequence(crash_utm):
-    P0 = crash_utm
-    stop = AVE_STOP
-    north = [(40.4066, -3.6907), (40.235, -3.700), (40.120, -3.800), (39.900, -3.780)]
-    south = [(39.200, -3.840), (38.982, -3.926), (38.690, -4.110), (38.650, -4.290), (38.400, -4.560),
-             (38.150, -4.700), (37.888, -4.789), (37.700, -5.100), (37.560, -5.450), (37.392, -5.975)]
-    route = [utm(*p) for p in north] + LAV_LOCAL + [utm(*p) for p in south]
-    v1 = view(380000, 4280000, 900000)
-    v1z = view(380000, 4280000, 840000)
-    # keep both markers above the lower third
-    c2 = ((stop[0] + P0[0]) / 2 + 3000, 4372300)
-    v2 = view(*c2, 68000)
-    v2b = view(*c2, 204000)
-    big1 = wms("https://www.ign.es/wms-inspire/ign-base", "IGNBaseTodo", v1, (3200, 1800), os.path.join(WORK, "m1.jpg"))
-    big2 = wms("https://www.ign.es/wms-inspire/ign-base", "IGNBaseTodo", v2b, (4000, 2250), os.path.join(WORK, "m2.jpg"))
-    madrid, sevilla = route[0], route[-1]
-    seg = Seg("map")
-    n1, nz, n2 = 12 * FPS, 4 * FPS, 18 * FPS
-    total = n1 + nz + n2
-    for k in range(total):
-        if k < n1:
-            bb = lerp_bb(v1, v1z, k / n1)
-            im = crop_view(big1, v1, bb)
-        elif k < n1 + nz:
-            u = (k - n1) / nz
-            u = u * u * (3 - 2 * u)
-            bb = lerp_bb(v1z, v2, u)
-            im = crop_view(big1, v1, bb)
-            if bb[2] - bb[0] <= v2b[2] - v2b[0]:
-                im = Image.blend(im, crop_view(big2, v2b, bb), min(1.0, (u - 0.57) / 0.23))
-        else:
-            bb = v2
-            im = crop_view(big2, v2b, v2)
-        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        d = ImageDraw.Draw(ov)
-        if k < n1 + nz:
-            u = min(1.0, max(0.0, (k - 15) / (6 * FPS)))
-            pts = [to_px(bb, *p) for p in route]
-            m = max(2, int(len(pts) * u) + 1)
-            seg_pts = pts[:m]
-            if u > 0 and len(seg_pts) > 1:
-                d.line(seg_pts, fill=(160, 40, 120, 230), width=7, joint="curve")
-            marker(d, to_px(bb, *madrid), (60, 60, 60))
-            label(d, to_px(bb, *madrid), "Madrid-Puerta de Atocha", font(28, True))
-            if u >= 1:
-                marker(d, to_px(bb, *sevilla), (60, 60, 60))
-                label(d, to_px(bb, *sevilla), "Sevilla-Santa Justa", font(28, True))
-            ring = ((k / FPS) % 1.2) / 1.2
-            marker(d, to_px(bb, *P0), RED, ring=ring)
-            label(d, to_px(bb, *P0), "Urda (Toledo) · PK 118", font(30, True))
-            cap = caption_layer("Línea de alta velocidad Madrid-Sevilla (1992)",
-                                "El Iryo 6076 sale de Madrid-Puerta de Atocha hacia Sevilla a las 07:54. El AVE 2080 sale"
-                                " seis minutos después, a las 08:00, con el mismo destino. Trazado aproximado")
-        else:
-            ps, pc = to_px(bb, *stop), to_px(bb, *P0)
-            d.line([to_px(bb, *p) for p in LAV_LOCAL], fill=(160, 40, 120, 200), width=6, joint="curve")
-            i0 = LAV_LOCAL.index((431208, 4388000))
-            d.line([ps] + [to_px(bb, *p) for p in LAV_LOCAL[i0:20]] + [pc], fill=AMBER + (255,), width=8,
-                   joint="curve")
-            mid = to_px(bb, *LAV_LOCAL[12])
-            label(d, mid, "≈ 25 km de vía", font(30, True), dx=24, dy=-20, fill=AMBER)
-            marker(d, ps, (230, 230, 230))
-            label(d, ps, "08:31 · AVE 2080 detenido por la caída del LZB", font(28, True))
-            ring = ((k / FPS) % 1.2) / 1.2
-            marker(d, pc, RED, ring=ring)
-            label(d, pc, "Iryo 6076 detenido ante la señal de entrada de Urda", font(28, True))
-            cap = caption_layer("Entre Mora y Urda (Toledo)",
-                                "Hacia las 08:30 un fallo informático en Urda tumba el sistema de seguridad LZB en"
-                                " unos 63-69 km de línea. Seis trenes se detienen automáticamente")
-        im = Image.alpha_composite(im.convert("RGBA"), ov)
-        im = Image.alpha_composite(im, cap)
-        seg.put(fade(im, k, total, 15, 12))
-    seg.close()
-
-
-# ------------------------------------------------------------------ timeline diagram
-EVENTS = [
-    (30.0, "08:30", "Un fallo informático en Urda tumba el sistema LZB. Seis trenes se detienen."),
-    (31.0, "08:31", "El maquinista del AVE avisa a Atocha: \"fallo de transmisión por bloqueo parcial\"."),
-    (36.0, "08:36", "Tras cinco minutos de dudas, Atocha ordena al AVE reanudar \"al amparo del BSL con marcha"
-                    " normal\". \"¿Con marcha normal?\", pregunta el maquinista. \"Sí\". El protocolo exigía marcha"
-                    " a la vista: máximo 40 km/h."),
-    (38.0, "08:38", "El Iryo 6076, que circulaba en BSL con velocidad meta 40, queda detenido ante la señal de"
-                    " entrada de Urda."),
-    (41.0, "08:41", "La maquinista del Iryo avisa: \"estoy detenida en la señal de entrada de Urda\". Atocha: \"no"
-                    " le autorizamos el rebase\", y acto seguido le ordena reanudar con marcha normal."),
-    (43.0, "08:43", "El AVE arranca, pasa una limitación temporal a 80 km/h en el km 93 y acelera hacia Urda."),
-    (48.0, "08:48", "El Iryo insiste: \"no me está permitiendo el tren reiniciar el sistema LZB\". Respuesta:"
-                    " \"cuando pueda, y si tiene problemas nos llama\". El AVE está a unos 17 km."),
-    (53.0, "08:53", "Alcance en el PK 118. No consta en los audios publicados ninguna orden al AVE para"
-                    " detenerse."),
-]
-# AVE speed profile (minute, km/h): stopped until 08:43, then the per-minute averages published from
-# Renfe position data (El Español: 145, 214, 236, 181) and about 200 km/h at impact (Ministerio)
+# ------------------------------------------------------------------ the line, the trains and the clock
+# minutes are counted from 08:00; km along the line from Madrid-Puerta de Atocha
+# AVE speed after the restart: 80 km/h restriction at km 92.95-94.05, then up to the official 200 km/h
 SPEED = [(43.0, 0), (44.0, 60), (45.0, 80), (46.3, 145), (47.3, 200), (52.3, 190), (53.0, 200)]
+IMPACT = 53.0
 
 
 def speed_at(m):
@@ -330,251 +314,363 @@ def speed_at(m):
     return SPEED[-1][1]
 
 
+def _dist(t):
+    s, x, step = 0.0, 43.0, 1 / 60
+    while x < t:
+        s += speed_at(x) * step / 60
+        x += step
+    return s
+
+
+_FULL = _dist(IMPACT)
+
+
 def ave_km(m):
-    # integrate the profile and scale it so the AVE covers the reported 25 km by 08:53
-    def dist(t):
-        s, x, step = 0.0, 43.0, 1 / 60
-        while x < t:
-            s += speed_at(x) * step / 60
-            x += step
-        return s
-    full = dist(53.0)
-    return 93.0 + 25.0 * dist(min(m, 53.0)) / full
+    if m < 0:
+        return 0.0
+    if m < 31:
+        u = m / 31
+        return 93.0 * (1 - (1 - u) ** 1.6)
+    if m < 43:
+        return 93.0
+    return 93.0 + 25.0 * _dist(min(m, IMPACT)) / _FULL
 
 
-def clock_keys():
-    # the clock runs between events and stops on each one long enough to read it
-    keys, t, m = [(0.0, 30.0)], 1.0, 30.0
-    for ev in EVENTS:
-        if ev[0] > m:
-            keys.append((t, m))
-            t += 1.0 + 0.6 * (ev[0] - m)
-            m = ev[0]
-        t += read_time(ev[2], base=1.5)
-        keys.append((t, m))
-    return keys
+def ave_speed(m):
+    if 0 <= m < 29:
+        return 200.0 if m > 6 else 200.0 * m / 6
+    if 29 <= m < 31:
+        return 200.0 * (31 - m) / 2
+    return speed_at(m) if m < IMPACT else 0.0
 
 
-def clock_at(keys, t):
-    for (ta, ma), (tb, mb) in zip(keys, keys[1:]):
-        if t <= tb:
-            u = (t - ta) / (tb - ta) if tb > ta else 1.0
-            return ma + (mb - ma) * u * u * (3 - 2 * u)
-    return keys[-1][1]
+def iryo_km(m):
+    # left at 07:54, running in BSL at 40 km/h from the LZB failure until the Urda entry signal at 08:38
+    if m < -6:
+        return 0.0
+    if m < 30:
+        return 112.7 * (m + 6) / 36
+    if m < 38:
+        return 112.7 + 5.3 * (m - 30) / 8
+    return 118.0
 
 
-def timeline():
-    seg = Seg("timeline")
-    keys = clock_keys()
-    n = int((keys[-1][0] + 1.5) * FPS)
-    x0, x1, km0, km1 = 140, 1780, 88.0, 121.0
-    X = lambda km: x0 + (km - km0) / (km1 - km0) * (x1 - x0)  # noqa: E731
-    for k in range(n):
-        m = clock_at(keys, k / FPS)
-        im = Image.new("RGB", (W, H), BG)
-        d = ImageDraw.Draw(im)
-        d.text((80, 60), "Cronología · miércoles 28 de octubre de 2026", font=font(44, True), fill=WHITE)
-        hh, mm = 8, int(m)
-        ss = int((m - mm) * 60)
-        d.text((W - 80, 52), f"{hh:02d}:{mm:02d}:{ss:02d}", font=font(64, True), fill=AMBER, anchor="ra")
-        # track
-        ty = 330
-        d.line([(x0, ty), (x1, ty)], fill=(120, 126, 136), width=6)
-        for km in range(90, 121, 5):
-            d.line([(X(km), ty - 12), (X(km), ty + 12)], fill=(120, 126, 136), width=3)
-            d.text((X(km), ty + 22), f"km {km}", font=font(22), fill=GREY, anchor="ma")
-        d.text((x0, ty - 150), "← Madrid", font=font(26, True), fill=GREY)
-        d.text((x1, ty - 150), "Sevilla →", font=font(26, True), fill=GREY, anchor="ra")
-        # Urda entry signal
-        sx = X(118.1)
-        d.line([(sx, ty - 60), (sx, ty - 14)], fill=WHITE, width=4)
-        d.ellipse([sx - 11, ty - 82, sx + 11, ty - 60], fill=RED)
-        d.text((sx, ty + 56), "Señal de entrada de Urda · PK 118", font=font(24, True), fill=WHITE, anchor="ma")
-        # Iryo, shown from 08:38
-        if m >= 38.0:
-            d.rounded_rectangle([X(118.0) - 0, ty - 34, X(118.0) + 64, ty - 12], 8, fill=(190, 20, 30))
-            d.text((X(118.0) + 64, ty - 96), "Iryo 6076", font=font(26, True), fill=(255, 120, 120), anchor="la")
-        # AVE
-        a = ave_km(m)
-        ax = X(a)
-        d.rounded_rectangle([ax - 64, ty - 34, ax, ty - 12], 8, fill=(240, 240, 240))
-        d.text((ax, ty - 96), "AVE 2080", font=font(26, True), fill=WHITE, anchor="ra")
-        v = speed_at(m)
-        d.text((ax - 32, ty + 100), f"≈ {v:.0f} km/h" if v >= 20 else ("arrancando" if v > 0 else "detenido"),
-               font=font(30, True),
-               fill=AMBER, anchor="ma")
-        gap = 118.0 - a
-        if gap > 0.05 and m >= 38.0:
-            d.line([(ax + 6, ty + 160), (X(118.0) - 6, ty + 160)], fill=(255, 255, 255), width=2)
-            d.text(((ax + X(118.0)) / 2, ty + 170), f"{gap:.1f} km", font=font(26), fill=WHITE, anchor="ma")
-        # events
-        shown = [e for e in EVENTS if e[0] <= m + 1e-6]
-        y = 600
-        for ev in shown[-4:]:
-            last = ev is shown[-1]
-            col = WHITE if last else (150, 156, 166)
-            d.text((80, y), ev[1], font=font(34, True), fill=AMBER if last else col)
-            y = text_block(d, (230, y + 2), ev[2], font(32, last), 1600, fill=col, gap=8) + 18
-        d.text((W - 80, H - 46), "Velocidad aproximada: datos de posición de Renfe (elDiario.es, El Español) y tope de 200 km/h "
-                                 "del Ministerio. Posiciones aproximadas.", font=font(20), fill=GREY, anchor="ra")
-        if 36.0 <= m < 43.0:
-            text_block(d, (980, 128), "A 200 km/h un tren de alta velocidad necesita unos 4 km para detenerse",
-                       font(26, True), 620, fill=AMBER)
-        seg.put(fade(im, k, n, 15, 12))
-    seg.close()
+def clock_text(m):
+    hh = 8 + math.floor(m / 60)
+    mm = int(m - 60 * (hh - 8))
+    ss = int((m - math.floor(m)) * 60)
+    return f"{hh % 24:02d}:{mm:02d}:{ss:02d}"
 
 
-# ------------------------------------------------------------------ stills with a slow push-in
-def still(sid, title, sub, dur, z0=1.0, z1=1.12, labels=False):
-    p = os.path.join(ST, f"{sid}.png")
-    if not os.path.exists(p):
-        print("missing still", sid, flush=True)
-        return
-    base = Image.open(p).convert("RGB")
-    sw, sh = base.size
-    if labels:
-        lab = json.load(open(os.path.join(ST, f"{sid}.json"), encoding="utf-8"))
-        d = ImageDraw.Draw(base, "RGBA")
-        f = font(int(36 * sw / W), True)
-        boxes = []
-        # keep a margin so the slow push-in never crops a label
-        mx, my = sw * 0.08, sh * 0.08
-        for l in lab:
-            x, y = l["x"] * sw, l["y"] * sh
-            tw = d.textlength(l["text"], font=f)
-            lx = min(max(mx, x - tw / 2), sw - tw - mx)
-            # first leader length whose label box clears the others and the frame
-            for off in (-140, 130, -260, 250, -380, 370, -500, 490):
-                ly = y + off * sw / W
-                box = (lx - 20, ly - f.size, lx + tw + 20, ly + f.size)
-                if box[1] > my and box[3] < sh * 0.78 and not any(
-                        box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in boxes):
-                    break
-            boxes.append(box)
-            d.line([(x, y), (min(max(x, lx), lx + tw), ly)], fill=(255, 255, 255, 230), width=4)
-            d.ellipse([x - 9, y - 9, x + 9, y + 9], fill=(255, 255, 255, 255))
-            d.rounded_rectangle([lx - 14, ly - f.size / 2 - 12, lx + tw + 14, ly + f.size / 2 + 14], 10,
-                                fill=(0, 0, 0, 185))
-            d.text((lx, ly - f.size / 2), l["text"], font=f, fill=WHITE)
-        # direction of travel: +x in the scene is towards Sevilla, image right for the top view
-        d.text((sw * 0.08, sh * 0.08), "Sentido Madrid → Sevilla", font=font(int(30 * sw / W), True),
-               fill=(255, 255, 255, 230), anchor="la")
+def hud(m):
+    """Top band: clock, both trains on a strip of the line, AVE speed."""
+    im = Image.new("RGBA", (W, 220), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    for y in range(220):
+        d.line([(0, y), (W, y)], fill=(0, 0, 0, int(200 * (1 - y / 220) ** 0.7)))
+    d.text((W - 60, 26), clock_text(m), font=font(66, True), fill=AMBER, anchor="ra")
+    d.text((W - 60, 104), "hora aproximada", font=font(22), fill=GREY, anchor="ra")
+    z = smooth((m - 30) / 1.5)
+    k0, k1 = 0 + 86 * z, 125 - 4 * z
+    x0, x1, ty = 60, 1300, 112
+    X = lambda km: x0 + (km - k0) / (k1 - k0) * (x1 - x0)  # noqa: E731
+    d.line([(x0, ty), (x1, ty)], fill=(150, 156, 166, 255), width=6)
+    step = 25 if z < 0.5 else 5
+    km = math.ceil(k0 / step) * step
+    while km <= k1:
+        d.line([(X(km), ty - 9), (X(km), ty + 9)], fill=(150, 156, 166, 255), width=3)
+        d.text((X(km), ty + 16), f"km {km}", font=font(20), fill=GREY, anchor="ma")
+        km += step
+    places = [(0, "Madrid"), (93, "Mora"), (118, "Urda")]
+    for km, name in places:
+        if k0 - 0.5 <= km <= k1:
+            d.text((X(km), ty + 34), name, font=font(28, True), fill=WHITE, anchor="ma")
+    sx = X(118.1)
+    d.line([(sx, ty - 46), (sx, ty - 8)], fill=WHITE, width=3)
+    d.ellipse([sx - 9, ty - 64, sx + 9, ty - 46], fill=RED)
+    close = abs(X(iryo_km(m)) - X(ave_km(m))) < 330
+    for km, col, name in ((iryo_km(m), IRYO_C, "Iryo 6076"), (ave_km(m), AVE_C, "AVE 2080")):
+        if m < (-6 if name.startswith("Iryo") else 0):
+            continue
+        x = X(km)
+        d.rounded_rectangle([x - 54, ty - 26, x, ty - 8], 7, fill=col + (255,))
+        if name.startswith("Iryo"):
+            if m >= 37:
+                d.text((sx + 18, ty - 44), name + " · parado", font=font(28, True), fill=col, anchor="la")
+            else:
+                d.text((x - 27, ty - 62), name, font=font(28, True), fill=col, anchor="ma")
+        else:
+            v = ave_speed(m)
+            tag = f"{name} · ≈ {v:.0f} km/h" if v >= 20 else (f"{name} · arrancando" if v > 0 else f"{name} · parado")
+            if m >= 37:
+                left = x - 66 - d.textlength(tag, font=font(28, True)) > 20
+                d.text((x - 66 if left else x + 14, ty - 44), tag, font=font(28, True), fill=col,
+                       anchor="ra" if left else "la")
+            else:
+                d.text((x - 27, ty - (94 if close else 62)), tag, font=font(28, True), fill=col, anchor="ma")
+    gap = iryo_km(m) - ave_km(m)
+    if m >= 38 and gap > 0.05:
+        a, b = X(ave_km(m)), X(118.0) - 54
+        txt = f"{gap:.1f} km entre los dos trenes"
+        cx = min((a + b) / 2, x1 - d.textlength(txt, font=font(24, True)) / 2)
+        d.line([(a + 4, ty + 78), (b - 4, ty + 78)], fill=(255, 255, 255, 200), width=2)
+        d.text((cx, ty + 81), txt, font=font(24, True), fill=WHITE, anchor="ma")
+    return im
+
+
+# ------------------------------------------------------------------ chapters
+def chapter(name, bg, title="", sub="", clock=None, items=(), explain=None, panel=None, min_dur=0.0,
+            show_hud=True, realtime=None, fout=10, extra=None, hold_end=False):
+    """One step of the story over a 3D background.
+
+    bg: Frames or Still. items: [(who, text)] shown one after another. explain: (term, text).
+    clock: (m0, m1) minutes from 08:00, interpolated over the chapter. realtime: seconds of footage that
+    must play at its own speed (holds are added in front of it).
+    """
     cap = caption_layer(title, sub)
-    seg = Seg(sid)
-    extra = sum(len(l["text"]) for l in lab) / CPS if labels else 0.0
-    n = int(max(dur, read_time(title, sub) + extra) * FPS)
+    capt_h = caption_height(title, sub)
+    t = 0.6 + read_time(title, sub, base=0.5)
+    shown = []
+    for who, text in items:
+        shown.append((t, bubble(who, text)))
+        t += read_time(text, base=1.2)
+    ex = None
+    if explain:
+        ex = (t, explainer(*explain))
+        t += read_time(*explain, base=1.2)
+    pan = None
+    if panel:
+        im, layers = centre_panel(*panel)
+        pan = [im, []]
+        tt = 0.8 + len(panel[0]) / CPS
+        for lay, p in zip(layers, panel[1].split("\n")):
+            pan[1].append((tt, lay))
+            tt += len(p) / CPS + 0.9
+        t = max(t, tt + 1.5)
+    dur = max(min_dur, t + 1.0)
+    if realtime is not None:
+        dur = max(dur, realtime)
+    if isinstance(bg, Frames) and realtime is None and bg.files:
+        bg.slow = max(1.0, dur * FPS / len(bg.files))
+    elif isinstance(bg, Frames) and realtime is not None:
+        bg.hold_in = 0.0 if hold_end else max(0.0, dur - bg.motion())
+    n = int(dur * FPS)
+    seg = Seg(name)
+    top = 236 if show_hud else 60
     for k in range(n):
-        u = k / max(1, n - 1)
-        z = z0 + (z1 - z0) * (u * u * (3 - 2 * u))
-        cw, ch = sw / z, sh / z
-        cx, cy = sw / 2, sh / 2
-        im = base.resize((W, H), Image.BILINEAR, box=(cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2))
-        im = Image.alpha_composite(im.convert("RGBA"), cap)
-        seg.put(fade(im, k, n, 12, 12))
+        tk = k / FPS
+        im = (bg.at(tk, dur) if isinstance(bg, Still) else bg.at(tk)).convert("RGBA")
+        if extra:
+            im = extra(im, tk, dur)
+        if show_hud and clock:
+            m = clock[0] + (clock[1] - clock[0]) * smooth(tk / dur)
+            im.alpha_composite(hud(m), (0, 0))
+        # the last three lines of dialogue stay on screen, older ones give way
+        y = top
+        for t0, b in [x for x in shown if x[0] < tk][-3:]:
+            im.alpha_composite(with_alpha(b, (tk - t0) / 0.4), (60, y))
+            y += b.height + 14
+        if ex and tk > ex[0]:
+            im.alpha_composite(with_alpha(ex[1], (tk - ex[0]) / 0.4), (W - ex[1].width - 60, H - capt_h - ex[1].height - 30))
+        if pan:
+            px, py = (W - pan[0].width) // 2, max(top, (H - capt_h - pan[0].height) // 2)
+            im.alpha_composite(pan[0], (px, py))
+            for t0, lay in pan[1]:
+                a = (tk - t0) / 0.5
+                if a > 0:
+                    im.alpha_composite(with_alpha(lay, a), (px, py))
+        im = Image.alpha_composite(im, cap)
+        im = Image.alpha_composite(im, MARK)
+        seg.put(fade(im, k, n, 10, fout))
     seg.close()
 
 
-# ------------------------------------------------------------------ rendered 3D shots
-CAPS = {
-    "J1": ("08:52 · El AVE 2080 se aproxima a Urda a unos 200 km/h",
-           "Circula por la misma vía en la que el Iryo lleva 15 minutos detenido"),
-    "J2": ("08:53 · El Iryo 6076 sigue parado ante la señal de entrada",
-           "Lleva 147 pasajeros, entre ellos un bebé, y 5 tripulantes. El AVE lleva 397 pasajeros"),
-    "J3": ("08:53 · Alcance en el PK 118 de la línea Madrid-Sevilla",
-           "Unos 200 km/h según el Ministerio. La velocidad exacta la darán las cajas negras"),
-    "J4": ("Repetición a cámara lenta ×6",
-           "La cabeza del AVE destroza la cola del Iryo, se separa del tren y cae por el talud contrario"),
-    "J5": ("Tres coches del Iryo caen por el terraplén. El resto del AVE descarrila hacia la vía contigua",
-           "Un carril roto atraviesa el coche 3 del AVE"),
-}
+def darken(a):
+    def f(im, tk, dur):
+        return Image.blend(Image.new("RGBA", im.size, (0, 0, 0, 255)), im, a)
+    return f
 
 
-def shot(j, slow=1, hold_out=0.0):
-    """Play a rendered shot; hold its first frame until the caption can be read, slow it by frame doubling."""
-    d = os.path.join(FR, j)
-    files = sorted(f for f in os.listdir(d) if f.endswith(".png")) if os.path.isdir(d) else []
-    if not files:
-        print("missing shot", j, flush=True)
-        return
-    capp = os.path.join(WORK, f"cap_{j}.png")
-    caption_layer(*CAPS[j]).save(capp)
-    motion = len(files) * slow / FPS
-    hold_in = max(1.0, read_time(*CAPS[j]) - motion - hold_out)
-    paths = [os.path.abspath(os.path.join(d, f)) for f in files]
-    entries = [(paths[0], hold_in)] + [(p, slow / FPS) for p in paths] + [(paths[-1], max(hold_out, 1 / FPS))]
-    lst = os.path.join(WORK, f"{j}.txt")
-    with open(lst, "w") as fh:
-        for p, du in entries:
-            fh.write(f"file '{p}'\nduration {du:.6f}\n")
-        fh.write(f"file '{paths[-1]}'\n")  # concat demuxer ignores the duration of the last entry
-    n = int(round((hold_in + motion + hold_out) * FPS))
-    Seg.n += 1
-    out = os.path.join(WORK, f"{Seg.n:02d}_{j}.mp4")
-    blend = ",tmix=frames=2" if slow > 1 else ""
-    fc = (f"[0:v]fps={FPS}{blend},noise=alls=3:allf=t[v];[v][1:v]overlay=0:0,"
-          f"fade=in:0:8,fade=out:{max(0, n - 8)}:8[o]")
-    r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst,
-                        "-i", capp, "-filter_complex", fc, "-map", "[o]", "-frames:v", str(n)] + ENC + [out])
-    if r.returncode:
-        sys.exit(f"ffmpeg failed on {j}")
-    SEGS.append(out)
-    print(j, n, "frames", flush=True)
+# ------------------------------------------------------------------ Spain map inset (IGN WMS)
+TO_UTM = Transformer.from_crs("EPSG:4326", "EPSG:25830", always_xy=True)
 
 
-# ------------------------------------------------------------------ edit
-card("title", "Choque de trenes en Urda (Toledo)",
-     "Reconstrucción 3D del alcance entre el AVE 2080 de Renfe y el Iryo 6076\n"
-     "Miércoles 28 de octubre de 2026 · 08:53", 5,
-     small="Recreación aproximada basada en información pública. No es una grabación real.")
-map_sequence((429599.0, 4364593.0))
-still("S_wide", "La recta de Urda, a los pies de los Montes de Toledo",
-      "Terreno, olivares y vegetación a partir de la ortofoto PNOA y el modelo de elevaciones MDT05 del IGN", 6)
-timeline()
-still("S_iryo", "08:38-08:53 · El Iryo 6076 espera ante la señal de entrada de Urda",
-      "Su maquinista avisa al centro de control de Adif a las 08:41 y a las 08:48", 6, 1.0, 1.08)
-shot("J1")
-shot("J2")
-shot("J3")
-shot("J4", slow=2)
-shot("J5", hold_out=4.0)
-still("S_top", "Posición final aproximada de los coches",
-      "Según las imágenes aéreas de la Guardia Civil y lo publicado por RTVE, 20minutos y el ingeniero Gareth Dennis",
-      10, 1.0, 1.04, labels=True)
-still("S_close", "Zona del impacto",
-      "La cabina trasera del Iryo queda desintegrada. La cabeza del AVE acaba fuera de la vía, en el talud contrario", 7)
-bgp = os.path.join(ST, "S_wide.png")
-bg = None
-if os.path.exists(bgp):
-    bg = Image.open(bgp).convert("RGB").resize((W, H)).filter(ImageFilter.GaussianBlur(18))
-    bg = Image.blend(Image.new("RGB", (W, H), (0, 0, 0)), bg, 0.35)
-card("balance", "Balance provisional",
-     "Al menos 68 fallecidos: 44 en el Iryo y 24 en el AVE\n"
-     "110 heridos hospitalizados en Castilla-La Mancha: 53 siguen ingresados, 15 en estado crítico\n"
-     "Más de 80 heridos atendidos además en hospitales de Madrid\n"
-     "544 pasajeros en los dos trenes: 397 en el AVE y 147 en el Iryo", 8, bg,
-     small="Junta de Castilla-La Mancha, Comunidad de Madrid y Gobierno, 28-29 de octubre de 2026. Las cifras pueden"
-           " cambiar.")
-card("investigacion", "La investigación",
-     "Juzgado de Instrucción n.º 2 de Orgaz, con secreto de sumario, y una investigación técnica independiente\n"
-     "Claves: las cajas negras de los dos trenes y los audios entre el centro de control de Adif en Atocha y los"
-     " maquinistas\n"
-     "La Guardia Civil ya ha tomado declaración al operador de Atocha y a la maquinista del Iryo\n"
-     "El Ministerio habla de error humano: tras la caída del LZB el protocolo obligaba a ir a 40 km/h como máximo",
-     9, bg, small="Fuentes: Ministerio de Transportes, TSJ de Castilla-La Mancha, El País, elDiario.es, Cadena SER, EFE.")
-card("contexto", "Contexto",
-     "El LZB se instaló en 1992 y solo sigue en servicio en la Madrid-Sevilla, en sustitución por el ERTMS europeo\n"
-     "Es el segundo accidente mortal en esta línea en 2026, tras el de Adamuz (Córdoba) en enero, con 46 muertos\n"
-     "Y el más grave en España desde Angrois (Santiago de Compostela, 2013), con 80 muertos\n"
-     "El Gobierno ha decretado tres días de luto oficial, del 29 al 31 de octubre", 9, bg)
-card("end", "En memoria de las víctimas",
-     "Recreación ilustrativa con datos publicados hasta el 29/10/2026 (Ministerio de Transportes, Adif, RTVE, "
-     "El País, elDiario.es, El Confidencial, El Español, La Vanguardia, 20minutos, Guardia Civil) y el análisis de "
-     "imágenes aéreas de Gareth Dennis.\nTerreno: IGN/CNIG (PNOA, MDT05). Mapas: IGN Base. Posiciones, velocidades y "
-     "daños son aproximados. Las causas las determinará la investigación oficial.", 9, small=LICENCE)
-# closing card for the short cut, kept out of the full edit
-card("end_short", "En memoria de las víctimas",
-     "Recreación ilustrativa con datos publicados hasta el 29/10/2026. Posiciones, velocidades y daños son"
-     " aproximados. Las causas las determinará la investigación oficial.", 6, small=LICENCE)
+def utm(lat, lon):
+    return TO_UTM.transform(lon, lat)
+
+
+def wms(bbox, size, path):
+    q = ("https://www.ign.es/wms-inspire/ign-base?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=IGNBaseTodo"
+         f"&STYLES=&CRS=EPSG:25830&BBOX={bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
+         f"&WIDTH={size[0]}&HEIGHT={size[1]}&FORMAT=image/jpeg")
+    for attempt in range(6):
+        try:
+            req = urllib.request.Request(q, headers={"User-Agent": "urda-reconstruction/1.0"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                open(path, "wb").write(r.read())
+            return Image.open(path).convert("RGB")
+        except Exception as ex:  # noqa: BLE001 - public service, fall back to a plain map
+            print("wms retry", ex, flush=True)
+            time.sleep(10 * (attempt + 1))
+    return Image.new("RGB", size, (228, 224, 214))
+
+
+def map_inset():
+    """Madrid-Sevilla line and Urda, as a small framed map."""
+    w, h = 620, 560
+    cx, cy, span = 405000, 4240000, 520000
+    bb = (cx - span / 2, cy - span * h / w / 2, cx + span / 2, cy + span * h / w / 2)
+    m = wms(bb, (w, h), os.path.join(WORK, "inset.jpg")).convert("RGBA")
+    d = ImageDraw.Draw(m)
+    P = lambda p: ((p[0] - bb[0]) / (bb[2] - bb[0]) * w, (bb[3] - p[1]) / (bb[3] - bb[1]) * h)  # noqa: E731
+    route = [(40.4066, -3.6907), (40.235, -3.700), (40.120, -3.800), (39.900, -3.780), (39.6458, -3.8013),
+             (39.40, -3.86), (39.200, -3.840), (38.982, -3.926), (38.690, -4.110), (38.650, -4.290),
+             (38.400, -4.560), (38.150, -4.700), (37.888, -4.789), (37.700, -5.100), (37.560, -5.450),
+             (37.392, -5.975)]
+    pts = [P(utm(*p)) for p in route]
+    d.line(pts, fill=(160, 40, 120, 255), width=6, joint="curve")
+    for p, name, col in ((pts[0], "Madrid", (40, 40, 40)), (pts[-1], "Sevilla", (40, 40, 40)),
+                         (P(utm(39.4085, -3.7149)), "Urda", RED)):
+        d.ellipse([p[0] - 9, p[1] - 9, p[0] + 9, p[1] + 9], fill=col, outline=(255, 255, 255), width=3)
+        tw = d.textlength(name, font=font(26, True))
+        d.rounded_rectangle([p[0] + 14, p[1] - 18, p[0] + 34 + tw, p[1] + 18], 8, fill=(0, 0, 0, 180))
+        d.text((p[0] + 24, p[1] - 14), name, font=font(26, True), fill=WHITE)
+    d.rectangle([0, 0, w - 1, h - 1], outline=(255, 255, 255, 230), width=3)
+    d.text((10, h - 26), "Línea de alta velocidad Madrid-Sevilla · Mapa © IGN", font=font(18), fill=(30, 30, 30))
+    return m
+
+
+def with_inset(inset):
+    def f(im, tk, dur):
+        im.alpha_composite(with_alpha(inset, tk / 0.8), (W - inset.width - 60, 230))
+        return im
+    return f
+
+
+def cab_overlay(im, tk, dur, bg):
+    # distance left to the Iryo, from the remaining footage at about 200 km/h
+    left = max(0.0, (len(bg.files) - max(0.0, tk - bg.hold_in) * FPS / bg.slow) / FPS * 200 / 3.6)
+    d = ImageDraw.Draw(im)
+    d.rounded_rectangle([W / 2 - 230, 300, W / 2 + 230, 400], 16, fill=(0, 0, 0, 170))
+    d.text((W / 2, 314), f"Iryo parado a ≈ {left:.0f} m", font=font(44, True), fill=IRYO_C, anchor="ma")
+    return im
+
+
+# ------------------------------------------------------------------ the edit
+wide = Still("S_wide", 1.0, 1.25, 0.55, 0.55)
+chapter("title", wide, show_hud=False,
+        panel=("Choque de trenes en Urda (Toledo)",
+               "Miércoles 28 de octubre de 2026\nReconstrucción en 3D, minuto a minuto, con datos públicos"),
+        min_dur=7)
+chapter("resumen", Still("S_wide", 1.25, 1.45, 0.55, 0.55), show_hud=False,
+        panel=("Qué pasó",
+               "Un AVE de Renfe chocó por detrás, a gran velocidad, contra un tren de Iryo que estaba parado en la"
+               " misma vía\nAntes, un fallo informático había apagado el sistema que frena los trenes de forma"
+               " automática\nAl menos 68 personas murieron"))
+inset = map_inset()
+chapter("salida", Still("S_wide", 1.0, 1.2, 0.5, 0.45),
+        "07:54 y 08:00 · Dos trenes salen de Madrid hacia Sevilla, por la misma vía",
+        "Primero el Iryo 6076, con 147 pasajeros. Seis minutos después, el AVE 2080, con 397",
+        clock=(-6.0, 29.0), extra=with_inset(inset), min_dur=12)
+chapter("lzb", Frames("SIG"),
+        "08:30 · Un fallo informático en Urda apaga el sistema de seguridad LZB",
+        "Afecta a unos 65 km de vía. Seis trenes se detienen o reducen la marcha, entre ellos el AVE y el Iryo",
+        clock=(30.0, 31.0),
+        explain=("¿Qué es el LZB?", "Un sistema que vigila cada tren desde la vía y lo frena solo si va demasiado"
+                                    " rápido o si tiene otro tren delante. Sin él, el maquinista solo cuenta con"
+                                    " las señales luminosas junto a la vía."))
+chapter("orden", Still("S_wide", 1.2, 1.4, 0.45, 0.5),
+        "08:31-08:36 · El AVE, parado en Mora, pide instrucciones al centro de control",
+        "Audios publicados de las conversaciones con el centro de control de Adif en Atocha (Madrid)",
+        clock=(31.0, 36.0),
+        items=[("AVE", "«Me ha dado fallo por bloqueo parcial»"),
+               ("NOTE", "Durante cinco minutos el operador duda y consulta a sus compañeros"),
+               ("ATOCHA", "«Desconecte y vuelva a conectar el LZB y reanude marcha al amparo del BSL con marcha"
+                          " normal»"),
+               ("AVE", "«¿Con marcha normal?»"),
+               ("ATOCHA", "«Sí»")],
+        explain=("Marcha normal o marcha a la vista", "«Marcha normal» permite ir hasta 200 km/h. Sin el LZB, el"
+                                                     " protocolo exigía «marcha a la vista»: un máximo de 40 km/h"
+                                                     " para poder frenar ante cualquier obstáculo."))
+chapter("iryo_para", Frames("ORB", 0, 180),
+        "08:38 · El Iryo se detiene ante la señal de entrada de Urda, en rojo",
+        "Queda parado en la misma vía por la que llegará el AVE, 25 km por detrás",
+        clock=(36.0, 38.5))
+chapter("iryo_llama", Frames("ORB", 180),
+        "08:41 · La maquinista del Iryo avisa a Atocha",
+        "", clock=(40.5, 41.5),
+        items=[("IRYO", "«He tenido una pérdida de transmisión… Estoy detenida en la señal de entrada de Urda»"),
+               ("ATOCHA", "«No le autorizamos el rebase»"),
+               ("NOTE", "Y acto seguido le da la misma orden que al AVE: reanudar con marcha normal")])
+chapter("ave_arranca", Still("S_iryo", 1.0, 1.12),
+        "08:43 · El AVE arranca y acelera hacia Urda",
+        "Pasa una limitación a 80 km/h en el km 93 y sube hasta unos 200 km/h. Delante, en la misma vía, está"
+        " el Iryo",
+        clock=(42.5, 47.5), min_dur=12)
+chapter("iryo_insiste", Still("S_iryo", 1.12, 1.25, 0.6, 0.5),
+        "08:48 · El Iryo vuelve a llamar: sigue parado",
+        "Nadie avisa al AVE, que está a unos 17 km y se acerca a unos 200 km/h",
+        clock=(48.0, 51.5),
+        items=[("IRYO", "«No me está permitiendo el tren reiniciar el sistema LZB, y por eso estoy todavía"
+                        " detenida ante la señal de entrada»"),
+               ("ATOCHA", "«Vale, conforme. Pues nada, cuando pueda. Y si tiene problemas, nos llama»")])
+j1 = Frames("J1")
+chapter("aproximacion", j1,
+        "08:52 · El AVE llega a la recta de Urda a unos 200 km/h",
+        "El Iryo está parado unos cientos de metros más adelante",
+        clock=(52.6, 52.8), realtime=j1.motion())
+cab = Frames("CAB", 150)
+chapter("cabina", cab,
+        "Los últimos segundos, desde el frontal del AVE",
+        "Recreación. Con el LZB apagado, nada frena el tren de forma automática",
+        clock=(52.8, IMPACT), realtime=cab.motion(), fout=4,
+        extra=lambda im, tk, dur: cab_overlay(im, tk, dur, cab))
+j3 = Frames("J3")
+chapter("impacto", j3,
+        "08:53 · El AVE choca contra la cola del Iryo en el PK 118",
+        "A unos 200 km/h según el Ministerio. La velocidad exacta la darán las cajas negras",
+        show_hud=False, realtime=j3.motion())
+j4 = Frames("J4", slow=2.0)
+chapter("repeticion", j4,
+        "Repetición a cámara lenta ×6",
+        "La cabeza del AVE destroza el último coche del Iryo, se separa de su tren y cae por el talud contrario",
+        show_hud=False, realtime=j4.motion())
+j5 = Frames("J5")
+chapter("despues", j5,
+        "Tres coches del Iryo caen por el terraplén. El resto del AVE descarrila hacia la vía de al lado",
+        "Un carril roto atraviesa el coche 3 del AVE",
+        show_hud=False, realtime=j5.motion() + 3.0, hold_end=True)
+chapter("posicion", Still("S_top", 1.0, 1.04, labels=True), "Así quedaron los dos trenes",
+        "Según las imágenes aéreas de la Guardia Civil y lo publicado por RTVE, 20minutos y el ingeniero"
+        " Gareth Dennis", show_hud=False, min_dur=8 + 70 / CPS)
+chapter("balance", Still("S_close", 1.0, 1.12), show_hud=False, extra=darken(0.45),
+        panel=("Balance provisional",
+               "Al menos 68 personas murieron: 44 en el Iryo y 24 en el AVE\n"
+               "110 heridos hospitalizados en Castilla-La Mancha: 53 siguen ingresados, 15 en estado crítico\n"
+               "Más de 80 heridos atendidos además en hospitales de Madrid"),
+        title="", sub="")
+chapter("investigacion", Still("S_top", 1.05, 1.2), show_hud=False, extra=darken(0.4),
+        panel=("La investigación",
+               "Juzgado de Instrucción n.º 2 de Orgaz, con secreto de sumario, y una investigación técnica"
+               " independiente\nClaves: las cajas negras de los dos trenes y los audios del centro de control\n"
+               "La Guardia Civil ya ha tomado declaración al operador de Atocha y a la maquinista del Iryo\n"
+               "El Ministerio de Transportes habla de error humano: la orden de «marcha normal» con el LZB apagado"))
+chapter("contexto", Still("S_wide", 1.3, 1.5, 0.5, 0.55), show_hud=False, extra=darken(0.4),
+        panel=("Contexto",
+               "El LZB se instaló en 1992 y solo sigue en servicio en la Madrid-Sevilla, donde se está"
+               " sustituyendo por el sistema europeo ERTMS\nEs el segundo accidente mortal en esta línea en 2026,"
+               " tras el de Adamuz (Córdoba) en enero, con 46 muertos, y el más grave en España desde Angrois"
+               " (2013), con 80\nEl Gobierno ha decretado tres días de luto oficial, del 29 al 31 de octubre"))
+chapter("fin", Still("S_wide", 1.5, 1.6, 0.5, 0.55), show_hud=False, extra=darken(0.3),
+        panel=("En memoria de las víctimas",
+               "Recreación aproximada con datos publicados hasta el 29/10/2026: Ministerio de Transportes, Adif,"
+               " RTVE, El País, elDiario.es, Cadena SER, El Mundo, El Español, 20minutos, Guardia Civil y el"
+               " análisis de imágenes aéreas de Gareth Dennis\nTerreno: IGN/CNIG (PNOA, MDT05). Las causas las"
+               " determinará la investigación oficial\n" + LICENCE), fout=20)
+chapter("fin_corto", Still("S_wide", 1.5, 1.6, 0.5, 0.55), show_hud=False, extra=darken(0.3),
+        panel=("En memoria de las víctimas",
+               "Recreación aproximada con datos públicos a 29/10/2026. Las causas las determinará la investigación"
+               " oficial\n" + LICENCE), fout=20)
 END_SHORT = SEGS.pop()
 
 
@@ -582,15 +678,24 @@ def concat(segs, out):
     lst = out + ".txt"
     with open(lst, "w") as fh:
         for s in segs:
-            fh.write(f"file '{os.path.abspath(s)}'\n")
+            fh.write(f"file '{os.path.abspath(s.path)}'\n")
     r = subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy",
                         "-movflags", "+faststart", out])
     if r.returncode:
         sys.exit("concat failed")
-    print("OK", out, len(segs), "segments", flush=True)
+    print("OK", out, f"{sum(s.k for s in segs) / FPS:.1f} s", flush=True)
 
 
 concat(SEGS, OUT)
-# short cut under the 2:20 limit of non-Premium X accounts: title, the five shots, wreck map and toll
-keep = ("title", "J1", "J2", "J3", "J4", "J5", "S_top", "balance")
-concat([s for s in SEGS if os.path.basename(s)[3:-4] in keep] + [END_SHORT], OUT.replace(".mp4", "_corto.mp4"))
+# short cut under the 2:20 limit of non-Premium X accounts
+keep = ["title", "resumen", "orden", "iryo_insiste", "aproximacion", "cabina", "impacto", "repeticion", "despues",
+        "balance"]
+short = [s for s in SEGS if s.name in keep] + [END_SHORT]
+while sum(s.k for s in short) / FPS > 139 and len(short) > 3:
+    for drop in ("iryo_insiste", "resumen", "balance"):
+        if any(s.name == drop for s in short):
+            short = [s for s in short if s.name != drop]
+            break
+    else:
+        break
+concat(short, OUT.replace(".mp4", "_corto.mp4"))

@@ -1,0 +1,87 @@
+name: urda-assemble-v4
+
+# Chronological edit: v3 sequences + v4 extra shots (SIG, ORB, CAB) -> full and short documentary.
+
+on:
+  push:
+    branches: [render/urda-chrono-v4]
+    paths:
+      - .github/workflows/urda-assemble-v4.yml
+      - render/urda/assemble.py
+  workflow_dispatch:
+    inputs:
+      extra_run:
+        description: urda-chrono-v4 run id holding the xframes-* artifacts
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: urda-assemble-v4
+  cancel-in-progress: true
+
+jobs:
+  assemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          sparse-checkout: render/urda
+          persist-credentials: false
+      - name: Locate extra shots run
+        run: |
+          R="${{ inputs.extra_run }}"
+          if [ -z "$R" ]; then
+            R=$(gh run list -R "$GITHUB_REPOSITORY" --workflow urda-chrono-v4.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          test -n "$R" && echo "EXTRA_RUN=$R" >> "$GITHUB_ENV" && echo "extra run $R"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: frames-*
+          merge-multiple: true
+          path: frames
+          run-id: 40824487121
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: frames-late-*
+          merge-multiple: true
+          path: frames
+          run-id: 40831984982
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: xframes-*
+          merge-multiple: true
+          path: frames
+          run-id: ${{ env.EXTRA_RUN }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: stills-*
+          merge-multiple: true
+          path: stills
+          run-id: 40824487121
+          github-token: ${{ github.token }}
+      - name: Assemble documentary
+        run: |
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+          pip install -q pillow pyproj
+          for j in J1 J3 J4 J5 SIG ORB CAB; do echo "$j $(ls frames/$j | wc -l)"; done
+          ls stills
+          python render/urda/assemble.py frames stills work urda_reconstruccion_v4_1080p.mp4
+          ls -la urda_reconstruccion_v4_1080p*.mp4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: urda-video-v4
+          path: urda_reconstruccion_v4_1080p*.mp4
+          retention-days: 14
+          compression-level: 0
