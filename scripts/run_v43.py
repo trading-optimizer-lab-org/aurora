@@ -213,14 +213,15 @@ def _first(mask: np.ndarray) -> int:
 # ---------------------------------------------------------------- one trade
 
 def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill: str, exe=None, xmask=None,
-           half: bool = False, stopf=None, pmx=None) -> dict | None:
+           half: bool = False, stopf=None, pmx=None, xclose: int | None = None) -> dict | None:
     """The trade walked minute by minute: its sessions, gross return a session and minute marks (gain since the
     last close, part open, market value, all per unit of weight on the entry price); None when it does not fill.
     v44's hooks: ``exe(it, m, e, es)`` -> (e, es) or None re-prices the entry; ``xmask(B, u, j, e)`` -> a mask over
     the 960 steps of an emergency cover set off at a bar's close; ``half`` covers half at an open entry's first
     close. v46's hooks: a close entry's ``exe`` may return an after-hours step (0-239 of the next session's
     timeline) as its entry step; ``stopf(it, m, e, es, S)`` -> the stop level; ``pmx(B, u, j, e, ref, lo)`` -> the step
-    (lo to 569) of a cover set off before the open of a carried session, or None."""
+    (lo to 569) of a cover set off before the open of a carried session, or None. v47's hook: ``xclose`` sends a
+    cover at a close as a market order set off the minute before that step instead of the closing auction."""
     D = _G["D"]
     O, C, new = D["O"], D["C"], D["new"]
     T = C.shape[0]
@@ -354,7 +355,11 @@ def replay(it: dict, m: dict, rule: tuple, fill: str, part: float | None, efill:
             cut = q if i == len(sess) - 1 else min(fr[i], q)
             if half and i == 0 and kind == "open":
                 cut = min(q, max(cut, 0.5))
-            if cut > 0:
+            if cut > 0 and xclose is not None:
+                how = "next_open" if fill == "slip" else fill
+                ev += [(s, p * cut, px) for s, p, px in market(B, xclose - 1, LAST, None, how, n_sh * cut, part,
+                                                               (LAST, c_u))]
+            elif cut > 0:
                 ev.append((LAST, cut, c_u))
         # the marks
         Q = np.zeros(960)
