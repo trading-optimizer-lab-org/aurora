@@ -67,6 +67,7 @@ def account(items: list[dict], recs: list[dict], max_new: int) -> np.ndarray:
     D = R43._G["D"]
     _, taken = A.joint(items, D["dates"], R33.GROSS, R33.MAX_OPEN, max_new, "move", "none", "tzi", 0.0, 0.0,
                        None, None, None)
+    R43._G["taken"] = {m: sum(it["member"] == m for it in taken) for m in MEMBERS}
     return R43.liquidate(taken, recs, len(D["dates"]), V.LIQ, V.PART)
 
 
@@ -115,6 +116,11 @@ def _boot(Rs: list[np.ndarray], samples: tuple[str, ...]) -> dict:
     return R43.boot(np.stack(Rs[1:]), {k: idx[k] for k in samples})
 
 
+def _boot_job(job: tuple) -> tuple:
+    key, Rs, samples = job
+    return key, _boot(Rs, samples)
+
+
 # ---------------------------------------------------------------- run
 
 def _job(job: tuple) -> tuple:
@@ -129,7 +135,9 @@ def _job(job: tuple) -> tuple:
             R43._G["count"] = {}
             out[(mn, s)] = account([it for it in items if not dropped(it, s)], recs, mn)[R43._G["pos"]]
             if s == 0 and level == LEVEL and task == "base":
-                count[mn] = {"candidates": len(items), **R43._G["count"]}
+                tk = R43._G["taken"]
+                count[mn] = {"candidates": len(items), "taken": sum(tk.values()), **R43._G["count"],
+                             **{m.split(":")[-1]: [sum(it["member"] == m for it in items), tk[m]] for m in MEMBERS}}
     halves = {}
     if level == LEVEL and task == "base":
         for mn in NEWS:
@@ -150,13 +158,13 @@ def cmd_run(args) -> int:
     R = {(lv, t, mn, s): r for (lv, t), out, _, _ in got for (mn, s), r in out.items()}
     count = {mn: c for (_, _, cnt, _) in got for mn, c in cnt.items()}
     halves = {mn: h for (_, _, _, hv) in got for mn, h in hv.items()}
+    jobs = [((mn, t, s), [R[(lv, t, mn, s)] for lv in lv2], ("all", "early", "late") if t in ENS_TASKS else ("all",))
+            for mn in NEWS for t in TASKS for s in (SEEDS if t in ENS_TASKS else (0,))]
+    with mp.get_context("fork").Pool(args.procs) as pool:
+        B = dict(pool.map(_boot_job, jobs, chunksize=1))
     books = {}
     for mn in NEWS:
-        res = {}
-        for t in TASKS:
-            seeds = SEEDS if t in ENS_TASKS else (0,)
-            samples = ("all", "early", "late") if t in ENS_TASKS else ("all",)
-            res[t] = {str(s): _boot([R[(lv, t, mn, s)] for lv in lv2], samples) for s in seeds}
+        res = {t: {str(s): B[(mn, t, s)] for s in (SEEDS if t in ENS_TASKS else (0,))} for t in TASKS}
         idx = R32._sub_idx(R43._G["cal"])
         two = R43.boot(np.stack([R[(lv, "base", mn, 0)] for lv in lv2]), {"all": idx["all"]}, E2K, np.r_[E2K, LEVELS])
         books[book_id(ds, ns, ru, mn)] = {"sizes": [ds, ns, ru, mn], "res": res, "two_k": two["all"],
@@ -221,8 +229,9 @@ def cmd_api(args) -> int:
             V._G["o1"][(lv, t)] = (oi, om)
     with mp.get_context("fork").Pool(args.procs) as pool:
         got = dict(pool.map(_api_job, jobs, chunksize=1))
-    res = {t: {str(s): _boot([got[(lv, t)][s] for lv in lv2], ("all", "early", "late")) for s in SEEDS}
-           for t in ENS_TASKS}
+        B = dict(pool.map(_boot_job, [((t, s), [got[(lv, t)][s] for lv in lv2], ("all", "early", "late"))
+                                      for t in ENS_TASKS for s in SEEDS], chunksize=1))
+    res = {t: {str(s): B[(t, s)] for s in SEEDS} for t in ENS_TASKS}
     out = {"which": args.which, "book": book_id(ds, ns, ru, int(mn)), "res": res, "sec": round(time.time() - t0)}
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / f"api_{args.which}.json").write_text(json.dumps(out, default=float), encoding="utf-8")
