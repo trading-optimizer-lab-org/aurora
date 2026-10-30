@@ -20,13 +20,13 @@ reglas reales que van en contra, y la ruina del 1% está en el borde de un escal
 ## Bloqueantes
 
 1. **Contrato.** Un bot desatendido con el PC apagado necesita autorización escrita de TradeZero.
-2. **Préstamo overnight (verificado).** La simulación cobra el préstamo una sola vez por trade: 1% en HTB y 3% en
-   HOT, sin importar cuántas noches dura (`scripts/run_v29.py:165-170`, `scripts/run_v28_after.py:342-344`; el
-   préstamo por noche existe pero se pasa a 0). TradeZero cobra una comisión variable cada noche, en lotes de 100
-   acciones, tres noches los jueves, más un interés de margen de alrededor del 9%. Su página de locates dice que el
-   locate normal es solo intradía; su blog dice que pasada la noche se convierte en préstamo overnight con cuota
-   diaria. Hay que confirmarlo por escrito. DS1 y RU mantienen hasta 20 sesiones nombres que suelen ser caros de
-   prestar: a 300% anual, 10 sesiones cuestan un 8% del trade frente al 3% fijo.
+2. **Préstamo overnight (corregido tras verificar).** La simulación cobra el locate una vez por trade (1% HTB, 3%
+   HOT; `scripts/run_v29.py:165-170`) y además el préstamo por noche a la tasa de celda del modelo, como mínimo
+   100% anual (`research/v19_grid.py:425-440`). Lo que falta: cuenta sesiones y no días naturales, así que los fines
+   de semana salen gratis, y no hay interés de margen. TradeZero cobra cada noche natural hasta que liquida la
+   cobertura, tres noches desde el jueves, en lotes de 100 acciones, y puede cobrar margen de alrededor del 9%. Su
+   página de locates dice que el locate normal es solo intradía; su blog dice que pasada la noche se convierte en
+   préstamo overnight con cuota diaria. Hay que confirmarlo por escrito. v49 mide el efecto.
 3. **Datos.** Los datos del backtest son Alpaca SIP, de pago. La API de TradeZero no da precios. IEX gratis cubrió
    solo el 62% de los trades en v29. La decisión de las 15:50 necesita precio en tiempo real.
 
