@@ -43,7 +43,7 @@ def load_daily(inputs: Path) -> dict:
         return pickle.load(f)
 
 
-def superset(D: dict) -> np.ndarray:
+def superset(D: dict, first: pd.Timestamp = FIRST, last: pd.Timestamp | None = None) -> np.ndarray:
     """Event days (session x column): a rise of 20% over the prior close at the high, a fall of 15% at the low, or a
     high 2.5 times the five-session low; prior raw close $0.50-$20 and $500k prior 20-day dollar volume. Every setup's
     trigger, at any minute, lies inside it (the high and low bound every price of the session)."""
@@ -54,7 +54,9 @@ def superset(D: dict) -> np.ndarray:
         ev = (H / pc >= UP) | (L / pc <= DOWN) | (H >= RUN * low5)
     P1, DV1 = np.asarray(D["P1"], float), np.asarray(D["DV1"], float)
     ok = D["valid"] & D["valid1"] & (P1 >= P_MIN) & (P1 <= P_MAX) & (DV1 >= DV_MIN)
-    ok &= np.asarray(D["dates"] >= FIRST)[:, None]
+    ok &= np.asarray(D["dates"] >= first)[:, None]
+    if last is not None:
+        ok &= np.asarray(D["dates"] <= last)[:, None]
     return ev & ok
 
 
@@ -79,14 +81,14 @@ def cmd_census(args) -> int:
             with open(p, "rb") as f:
                 x = pickle.load(f)
             print(name, json.dumps(sorted(map(str, x)) if isinstance(x, dict) else str(type(x))), flush=True)
-    ev = superset(D)
+    ev = superset(D, pd.Timestamp(args.first), pd.Timestamp(args.last) if args.last else None)
     years = pd.Series(np.asarray(D["dates"].year)[np.nonzero(ev)[0]]).value_counts().sort_index()
     out = {"events": int(ev.sum()), "per_year": {str(k): int(v) for k, v in years.items()}}
     for hold in HOLDS:
         need = need_days(D, ev, hold)
         n = sum(len(s) for s in need.values())
         out[f"symbol_days_h{hold}"] = n
-        if n * KB_PER_DAY / 1e6 <= BUDGET_GB or hold == HOLDS[-1]:
+        if n * args.kb / 1e6 <= args.budget or hold == HOLDS[-1]:
             out["hold"] = hold
             break
     args.out.mkdir(parents=True, exist_ok=True)
@@ -152,6 +154,10 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("census")
     c.add_argument("--inputs", type=Path, default=Path("outputs/v18"))
+    c.add_argument("--first", default=str(FIRST.date()))
+    c.add_argument("--last", default="", help="last event day (v52's holdout ends 2017-12-29)")
+    c.add_argument("--budget", type=float, default=BUDGET_GB, help="GB the minute bars may take")
+    c.add_argument("--kb", type=float, default=KB_PER_DAY, help="KB a symbol-day (v51 measured 6.1)")
     sub.add_parser("minutes")
     for p in sub.choices.values():
         p.add_argument("--out", type=Path, default=Path("outputs/v51"))
