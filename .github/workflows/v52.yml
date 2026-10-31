@@ -1,0 +1,225 @@
+name: "v52: v51's CRASH-long book on the 2016-2017 holdout"
+
+# scripts/gen_v52_wf.py writes this file (V52_PREREGISTRATION.md). Trades and prices pass between jobs only in caches
+# keyed by this run; artifacts hold aggregate statistics only.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v52.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v52
+  cancel-in-progress: false
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+
+jobs:
+  factory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["CRASH-long", "RUN200-short", "STRONG-short", "GAPDN-long", "RUNUP-short", "RUN40-short", "GAPUP-short", "RUN60-short", "RUN100-short", "RUN40-long", "FADE-short", "STRONG-long", "GAPDN-short", "RUN60-long", "FADE-long", "RUNUP-long", "RUN100-long", "GAPUP-long", "RUN200-long"]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-39825946914-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52
+          key: v52-min-41219555974-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_v52.py factory --group ${{ matrix.shard }} --procs 4 --out outputs/v52w/fac/${{ matrix.shard }}
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/${{ matrix.shard }}
+          key: v52-fac-${{ github.run_id }}-${{ matrix.shard }}
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v52-fac-${{ matrix.shard }}
+          path: outputs/v52w/fac/${{ matrix.shard }}/report.json
+          retention-days: 90
+
+  book:
+    needs: [factory]
+    if: always() && needs.factory.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/CRASH-long
+          key: v52-fac-${{ github.run_id }}-CRASH-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN200-short
+          key: v52-fac-${{ github.run_id }}-RUN200-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/STRONG-short
+          key: v52-fac-${{ github.run_id }}-STRONG-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPDN-long
+          key: v52-fac-${{ github.run_id }}-GAPDN-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUNUP-short
+          key: v52-fac-${{ github.run_id }}-RUNUP-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN40-short
+          key: v52-fac-${{ github.run_id }}-RUN40-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPUP-short
+          key: v52-fac-${{ github.run_id }}-GAPUP-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN60-short
+          key: v52-fac-${{ github.run_id }}-RUN60-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN100-short
+          key: v52-fac-${{ github.run_id }}-RUN100-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN40-long
+          key: v52-fac-${{ github.run_id }}-RUN40-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/FADE-short
+          key: v52-fac-${{ github.run_id }}-FADE-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/STRONG-long
+          key: v52-fac-${{ github.run_id }}-STRONG-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPDN-short
+          key: v52-fac-${{ github.run_id }}-GAPDN-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN60-long
+          key: v52-fac-${{ github.run_id }}-RUN60-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/FADE-long
+          key: v52-fac-${{ github.run_id }}-FADE-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUNUP-long
+          key: v52-fac-${{ github.run_id }}-RUNUP-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN100-long
+          key: v52-fac-${{ github.run_id }}-RUN100-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPUP-long
+          key: v52-fac-${{ github.run_id }}-GAPUP-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN200-long
+          key: v52-fac-${{ github.run_id }}-RUN200-long
+          fail-on-cache-miss: true
+      - run: python scripts/run_v52.py book --factory outputs/v52w/fac --shard ${{ matrix.shard }} --shards 22 --procs 4 --out outputs/v52w/runs
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v52-book-${{ matrix.shard }}
+          path: outputs/v52w/runs
+          retention-days: 90
+
+  final:
+    needs: [book]
+    if: always() && needs.book.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v52-fac-*
+          path: outputs/v52w/facrep
+          merge-multiple: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v52-book-*
+          path: outputs/v52w/runs
+          merge-multiple: false
+      - run: |
+          python scripts/run_v52.py final --factory outputs/v52w/facrep --runs outputs/v52w/runs --out outputs/v52w/final
+          cat outputs/v52w/final/V52_REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v52-report
+          path: outputs/v52w/final
+          retention-days: 90
