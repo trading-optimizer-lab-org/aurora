@@ -225,9 +225,10 @@ def _trigger(tl: Timeline, day: int, kind: str, side: int) -> int:
 
 
 def runner_minute(tl: Timeline, thr: float) -> int:
-    """The first session minute (09:30-15:49) whose high reaches the prior close x (1 + thr), or -1."""
+    """The first regular-session minute whose high reaches the prior close x (1 + thr), or -1 (the entries that need
+    time after it check it themselves)."""
     with np.errstate(invalid="ignore"):
-        hit = np.nan_to_num(tl.h[0, OPEN:M1550] >= tl.pc * (1 + thr), nan=0).astype(bool)
+        hit = np.nan_to_num(tl.h[0, OPEN:LAST + 1] >= tl.pc * (1 + thr), nan=0).astype(bool)
     k = _first(hit)
     return OPEN + k if k >= 0 else -1
 
@@ -685,8 +686,9 @@ def account(tr: Trades, order: np.ndarray, size: np.ndarray, level: float, max_n
         E, M = 1.0, 0.0
         for p in live:
             k, w = taken[p]
-            i = u - int(tr.t_in[k]) + int(tr.off[k])
-            E += w * tr.adv[i]
+            o = int(tr.off[k])
+            i = u - int(tr.t_in[k]) + o
+            E += w * (tr.mark[o:i].sum() + tr.adv[i])  # the open loss so far, then the session's extreme
             M += w * tr.hi[i] if int(tr.side[k]) < 0 else 0.0
         if M > 0 and E <= THETA * M:
             for p in live:

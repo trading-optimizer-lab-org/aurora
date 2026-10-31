@@ -268,7 +268,8 @@ def _pass1(ix: np.ndarray) -> dict:
     EV = _G["EV"]
     n, Q = len(ix), len(_G["entries"])
     out = {"code": np.full((n, Q), 8, np.int8), "sb": np.full((n, Q), -1, np.int8), "de": np.zeros((n, Q), np.int8),
-           "me": np.zeros((n, Q), np.int16), "R": np.full((n, Q, E.NX), np.nan, np.float32)}
+           "me": np.zeros((n, Q), np.int16), "tc": np.zeros((n, Q), np.int8),
+           "R": np.full((n, Q, E.NX), np.nan, np.float32)}
     t = EV["t"][ix]
     frames = _frames(range(int(t.min()), int(t.max()) + _G["H"] + 1), EV["j"][ix])
     for r, i in enumerate(ix):
@@ -280,7 +281,7 @@ def _pass1(ix: np.ndarray) -> dict:
             en = _entry(tl, i, q, sb1549, tau)
             out["code"][r, q], out["sb"][r, q] = en[0], en[1]
             if en[0] in (0, 4):
-                out["de"][r, q], out["me"][r, q] = en[2], en[3]
+                out["de"][r, q], out["me"][r, q], out["tc"][r, q] = en[2], en[3], en[7]
                 out["R"][r, q] = _returns(tl, i, en)[0]
     return out
 
@@ -341,7 +342,8 @@ def _map(fn, jobs: list, procs: int) -> list:
 def _cells(q: int, codes: tuple = (0,)) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     P, EV, G = _G["P1"], _G["EV"], _G["G"]
     ev = np.flatnonzero(np.isin(P["code"][:, q], codes))
-    cells = E.cell_of(EV["pb"][ev], P["sb"][ev, q], EV["db"][ev], EV["ob"][ev], EV["tier0"][ev], EV["ab"][ev])
+    # the borrow tier at the entry: the signal day's, and the entry day's once its open is known
+    cells = E.cell_of(EV["pb"][ev], P["sb"][ev, q], EV["db"][ev], EV["ob"][ev], P["tc"][ev, q], EV["ab"][ev])
     per = np.clip(G["year"][EV["t"][ev] + P["de"][ev, q]] - Y0, 0, NPER - 1)
     return ev, cells, per
 
@@ -429,6 +431,14 @@ def cmd_factory(args) -> int:
               folder=args.data / "minutes")
     print(json.dumps({"group": args.group, "events": len(EV["t"]), "hold": _G["H"], "entries": len(entries)}),
           flush=True)
+    args.out.mkdir(parents=True, exist_ok=True)
+    np.save(args.out / "dn.npy", G["dn"])
+    if not len(EV["t"]):
+        (args.out / "report.json").write_text(json.dumps(
+            {"group": args.group, "events": 0, "hold": _G["H"], "counts": {}, "n_scored": 0, "n_pass": 0,
+             "entries": {}, "configs": [], "sec": round(time.time() - t0)}), encoding="utf-8")
+        save_trades(args.out / "trades.npz", [], [])
+        return 0
     parts = _map(_pass1, _chunks(EV["t"]), args.procs)
     order = np.concatenate(_chunks(EV["t"]))
     P = {k: np.empty((len(order),) + parts[0][k].shape[1:], parts[0][k].dtype) for k in parts[0]}
@@ -479,7 +489,6 @@ def cmd_factory(args) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "report.json").write_text(json.dumps(report), encoding="utf-8")
     save_trades(args.out / "trades.npz", trades, configs)
-    np.save(args.out / "dn.npy", G["dn"])
     print(json.dumps({"kept": [(c["entry"], c["exit"], c["filter"], c["score"], c.get("n"), c.get("pf_d"))
                                for c in configs]}), flush=True)
     return 0
@@ -587,7 +596,8 @@ def _dropped(S: dict, ids: np.ndarray, seed: int) -> np.ndarray:
     if seed == 0:
         return np.zeros(len(ids), bool)
     A = S["A"]
-    return np.array([E.unit(seed, A["sym"][k], int(A["t_ev"][k]), int(A["cfg"][k]), "51drop") < DROP for k in ids])
+    return np.array([E.unit(seed, A["sym"][k], int(A["t_ev"][k]), int(A["cfg"][k]), "51drop") < DROP for k in ids],
+                    dtype=bool)
 
 
 def _half(sym: str) -> int:
@@ -619,7 +629,7 @@ def book_returns(S: dict, members: list, mn: int, seed: int, loc_hot: float = E.
     ok = (A["side"][ids] > 0) | (A["lu"][ids] >= rate)
     ok &= ~_dropped(S, ids, seed)
     if half is not None:
-        ok &= np.array([_half(s) == half for s in A["sym"][ids]])
+        ok &= np.array([_half(s) == half for s in A["sym"][ids]], dtype=bool)
     ids, rank = ids[ok], rank[ok]
     order = ids[np.lexsort((rank, A["m_in"][ids], A["t_in"][ids]))]
     return np.stack([E.account(TR, order, size, lv, mn, MAX_OPEN, S["T"], loc_hot, borrow)[S["pos"]]
@@ -709,9 +719,10 @@ def cmd_books(args) -> int:
 
 def cmd_pick2(args) -> int:
     res = _read_json(args.runs, "books-*.json")
-    ok = sorted((b for b in res if _eligible(res[b]["res"])), key=lambda b: -res[b]["res"]["base"]["early"]["med"])
-    rest = sorted((b for b in res if b not in set(ok)), key=lambda b: -res[b]["res"]["base"]["early"]["med"])
-    top = [res[b]["book"] for b in (ok + rest)[:CONFIRM]]
+    by_med = sorted(res, key=lambda b: -res[b]["res"]["base"]["early"]["med"])
+    ok = [b for b in by_med if _eligible(res[b]["res"])]
+    # the 50 best by design median, and the 50 best of those eligible at 6 seeds (the answer must be eligible)
+    top = [res[b]["book"] for b in dict.fromkeys(by_med[:CONFIRM] + ok[:CONFIRM])]
     configs = json.loads((args.sel / "configs.json").read_text(encoding="utf-8"))
     v50 = v50_members(configs)
     confirm = [{"book": b, "kind": "top"} for b in top]
@@ -770,7 +781,7 @@ def _f(x, k: int = 2) -> str:
 
 
 def choose(conf: dict) -> str | None:
-    ok = [k for k, z in conf.items() if z.get("kind") == "top" and _eligible(z["res"])]
+    ok = [k for k, z in conf.items() if z.get("kind") in ("top", "v50") and _eligible(z["res"])]
     return max(ok, key=lambda k: conf[k]["res"]["base"]["early"]["med"]) if ok else None
 
 

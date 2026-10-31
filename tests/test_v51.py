@@ -300,3 +300,13 @@ def test_pipeline_end_to_end(M, MD, tmp_path, monkeypatch) -> None:
     out = tmp_path / "final"
     assert M.cmd_final(ns(factory=fac, sel=sel, picks=picks, runs=runs / "conf", out=out, procs=1)) == 0
     assert "# v51 report" in (out / "V51_REPORT.md").read_text(encoding="utf-8")
+
+
+def test_liquidation_counts_the_open_loss() -> None:
+    """A short that triples on its first session and squeezes further on the next: the second session's extreme alone
+    would not liquidate, the loss carried from the first does."""
+    squeeze = (np.array([-2.0, -0.2]), np.array([-2.0, -0.6]), np.array([3.0, 3.6]))
+    tr = _trades([_row(5, 6, mk=squeeze)])
+    R = E.account(tr, np.arange(1), np.array([0.4]), 10_000.0, 5, 10, 20)
+    w = 800 * 5.0 / 10_000
+    assert R[6] == pytest.approx(w * -0.6)

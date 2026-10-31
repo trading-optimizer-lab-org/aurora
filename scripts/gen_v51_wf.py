@@ -1,6 +1,6 @@
 """Writes .github/workflows/v51.yml (run from the repo root): V51_PREREGISTRATION.md section 4, every stage in one run.
 
-  factory (20: one per setup and side) -> select -> account (300) -> pick -> books (300) -> pick2 -> confirm (51) -> final
+  factory (20: one per setup and side) -> select -> account (300) -> pick -> books (300) -> pick2 -> confirm (101) -> final
 Trades and prices pass between jobs only in caches keyed by the run; artifacts hold aggregate statistics only.
 """
 import sys
@@ -14,7 +14,7 @@ from aurora.research.v51_engine import SETUPS  # noqa: E402
 DATA_RUN = "41206767350"  # v51-data: the event superset and its one-minute bars
 SAVE = "actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809"
 GROUPS = [f"{s}-{d}" for s in SETUPS for d in ("short", "long")]
-SHARDS, HALF, CONFIRM = 300, 150, 51
+SHARDS, HALF, CONFIRM = 300, 150, 101  # confirm: up to 100 books and v50
 RUN = "${{ github.run_id }}"
 W = "outputs/v51w"
 

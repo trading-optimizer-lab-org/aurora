@@ -102,3 +102,15 @@ as **setup x side x entry x exit x filters** on one engine:
   with locates never failing and failing half as often.
 - No SEC filing tags in the grid filters; listing age stands for IPO age; issuer country is not modelled.
 - Daily bars after H sessions; no 20:00-04:00 session; the closing auction is not used.
+
+## 6. Amendments before any return (2026-10-31, after a code review, before the run)
+
+- Confirmation takes the 50 best books by design median **and** the 50 best of those eligible at 6 seeds (up to 100
+  books), plus v50's book; the answer rule is unchanged and v50's book can be the answer.
+- RUN setups: the trigger may come at any regular-session minute; entries that need time after it (1, 16 or 61
+  minutes later, 15:55, the high-of-day fail) still need it before 15:50 or 15:55.
+- The borrow-tier filter uses the tier at the entry: the signal day's, and the entry day's once its open is known.
+- Forced liquidation counts the loss an open position carries from its earlier sessions.
+- Definitions fixed in code: the long high-of-day trigger is a 10% bounce off a low of -20% or more; a market exit
+  with no trade from its minute to 15:59 fills at the official close; a triggered stop-limit is marketable and pays
+  the half-spread.
