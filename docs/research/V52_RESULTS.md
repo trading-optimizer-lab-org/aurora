@@ -362,3 +362,11 @@ Pre-registered in V52_PREREGISTRATION.md. One-year paths drawn from the sessions
 | 190 | RUNUP-short c_open d5c/t0.50/s0.00 [price0-4 str2 dv1 so:all tier:all age:all] v50:DS1 | 2.22 | 1.97 | 30 | 4.38 | 16.0% | -51.8% |
 | 191 | RUNUP-short c_open d10c/t0.50/s0.00 [price0-4 str2 dv1 so:all tier:all age:all] v50:RU | 2.67 | 3.45 | 30 | 7.60 | 20.0% | -38.1% |
 | 192 | FADE-short c_1555 d3c/t0.00/s0.00 [price2-2 str0 dv1 so:all tier:all age:all] v50:NS | 3.36 | 2.13 | 19 | 2.20 | 3.6% | -14.2% |
+
+## Addendum: CRASH-long without the extreme trades (run 41223604912, `data/v52_trim.json`)
+
+Score (PF - 1) x trades a year for selection 6 (CRASH-long c_1555 d1pm/t0.25/s1.00 [$1M]), as is / without the top and
+bottom 1% of trades / returns capped at +-25%: 2018-2022 1,020 / 631 (PF 1.53) / 566; 2023+ 668 / 460 (PF 1.24) / 423;
+2016-2017 2,516 / **-19 (PF 0.96)** / -13. The median trade is +1.4% in 2018-2022, +1.3% in 2023+ and **-0.5%** in
+2016-2017; selections 0, 4 and 9 give the same picture. The edge is broad, not outlier-driven, from 2018 on, and absent
+in 2016-2017: either a change of regime after 2017 or something in the 2018+ data; two clean years cannot tell which.
