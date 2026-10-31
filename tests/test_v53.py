@@ -93,3 +93,21 @@ def test_walk_forward_pipeline(W, MD, tmp_path, monkeypatch) -> None:
     assert "# v53 report" in (out / "V53_REPORT.md").read_text(encoding="utf-8")
     summ = json.loads((out / "v53_summary.json").read_text(encoding="utf-8"))
     assert set(summ["grades"]) == set(W.procedures())
+    # v53b: the same books at smaller sizes; scale 1 repeats v53's returns, smaller scales shrink them
+    B = _script("run_v53b", "run_v53b_under_test")
+    for k, v in {"SCALES": (1.0, 0.5), "W": W, "V": V}.items():
+        monkeypatch.setattr(B, k, v)
+    nb = len(chosen["books"])
+    for s in range(3):
+        assert B.cmd_oos(ns(sel=sel, choose=ch, shard=s, shards=3, out=runs / "oosb", procs=1)) == 0
+    assert len(list((runs / "oosb").glob("oos-*.npz"))) == 2 * nb
+    for b in range(nb):
+        full, half, ref = (np.load(runs / p) for p in (f"oosb/oos-{b}-1.00.npz", f"oosb/oos-{b}-0.50.npz",
+                                                          f"oos/oos-{b}.npz"))
+        assert np.allclose(full["base"], ref["base"])
+        assert np.abs(half["base"]).sum() < np.abs(full["base"]).sum()
+    outb = tmp_path / "finalb"
+    assert B.cmd_final(ns(choose=ch, oos=runs / "oosb", out=outb, procs=1)) == 0
+    sb = json.loads((outb / "v53b_summary.json").read_text(encoding="utf-8"))
+    assert len(sb["grades"]) == 2 * len(W.procedures())
+    assert sb["grades"]["exp/raw/r25@1.00"]["base"] == summ["grades"]["exp/raw/r25"]["base"]
