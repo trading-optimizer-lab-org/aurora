@@ -284,6 +284,38 @@ def cmd_diag(args) -> int:
     return 0
 
 
+def _trim_rows(r: np.ndarray, years: float) -> dict:
+    """PF, mean, median and score (PF - 1) x trades a year, as is and without the extreme trades."""
+    out = {}
+    lo, hi = (np.percentile(r, [1, 99]) if len(r) else (0.0, 0.0))
+    for name, x in (("all", r), ("drop_top_bottom_1pct", r[(r >= lo) & (r <= hi)]), ("drop_over_50pct", r[r <= 0.5]),
+                    ("cap_25pct", np.clip(r, -0.25, 0.25))):
+        pf = float(V._pf(x[x > 0].sum(), -x[x < 0].sum())) if len(x) else float("nan")
+        out[name] = {"n": int(len(x)), "pf": round(pf, 3), "mean": round(float(x.mean()), 5) if len(x) else None,
+                     "median": round(float(np.median(x)), 5) if len(x) else None,
+                     "score": round((pf - 1) * len(x) / years, 1)}
+    return out
+
+
+def cmd_trim(args) -> int:
+    """Aggregates only: the frozen configurations with the extreme trades removed, 2018-22, 2023+ and 2016-17."""
+    fr = load_frozen(args.frozen)
+    A51, _ = V.load_trades(args.sel / "trades.npz")
+    S = load_holdout(args.factory, fr["configs"])
+    A = S["A"]
+    out = {}
+    for c in args.ids:
+        m = (A51["cfg"] == c) & (A51["code"] == 0)
+        y = A51["year"][m]
+        h = (A["cfg"] == c) & (A["code"] == 0)
+        out[c] = {"2018-22": _trim_rows(A51["r"][m][y < 2023], 5.0), "2023+": _trim_rows(A51["r"][m][y >= 2023], 3.8),
+                  "2016-17": _trim_rows(A["r"][h], 1.9)}
+        print(json.dumps({c: out[c]}), flush=True)
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "trim.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -299,6 +331,10 @@ def main() -> int:
     c = sub.add_parser("diag")
     c.add_argument("--factory", type=Path, required=True)
     c.add_argument("--ids", type=int, nargs="+", required=True)
+    c = sub.add_parser("trim")
+    c.add_argument("--factory", type=Path, required=True)
+    c.add_argument("--sel", type=Path, required=True)
+    c.add_argument("--ids", type=int, nargs="+", required=True)
     c = sub.add_parser("final")
     c.add_argument("--factory", type=Path, required=True)
     c.add_argument("--runs", type=Path, required=True)
@@ -307,7 +343,7 @@ def main() -> int:
         p.add_argument("--out", type=Path, required=True)
         p.add_argument("--procs", type=int, default=4)
     args = ap.parse_args()
-    return {"factory": cmd_factory, "book": cmd_book, "diag": cmd_diag, "final": cmd_final}[args.cmd](args)
+    return {"factory": cmd_factory, "book": cmd_book, "diag": cmd_diag, "trim": cmd_trim, "final": cmd_final}[args.cmd](args)
 
 
 if __name__ == "__main__":

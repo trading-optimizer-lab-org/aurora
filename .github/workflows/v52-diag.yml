@@ -1,7 +1,7 @@
 name: "v52 diag: trade returns against the account on the holdout"
 
 # Aggregates only (quantiles and sums of v52 run 41220426939's holdout trades); trades stay in the cache.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
@@ -120,6 +120,12 @@ jobs:
           path: outputs/v52w/fac/RUN200-long
           key: v52-fac-41220426939-RUN200-long
           fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v51w/sel
+          key: v51-sel-41213703767
+          fail-on-cache-miss: true
+      - run: python scripts/run_v52.py trim --factory outputs/v52w/fac --sel outputs/v51w/sel --ids 0 4 6 9 --out outputs/v52w/diag
       - run: python scripts/run_v52.py diag --factory outputs/v52w/fac --ids 6 9 0 60 88 --out outputs/v52w/diag
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
