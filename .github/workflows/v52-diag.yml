@@ -1,0 +1,129 @@
+name: "v52 diag: trade returns against the account on the holdout"
+
+# Aggregates only (quantiles and sums of v52 run 41220426939's holdout trades); trades stay in the cache.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v52-diag.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/CRASH-long
+          key: v52-fac-41220426939-CRASH-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN200-short
+          key: v52-fac-41220426939-RUN200-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/STRONG-short
+          key: v52-fac-41220426939-STRONG-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPDN-long
+          key: v52-fac-41220426939-GAPDN-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUNUP-short
+          key: v52-fac-41220426939-RUNUP-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN40-short
+          key: v52-fac-41220426939-RUN40-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPUP-short
+          key: v52-fac-41220426939-GAPUP-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN60-short
+          key: v52-fac-41220426939-RUN60-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN100-short
+          key: v52-fac-41220426939-RUN100-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN40-long
+          key: v52-fac-41220426939-RUN40-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/FADE-short
+          key: v52-fac-41220426939-FADE-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/STRONG-long
+          key: v52-fac-41220426939-STRONG-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPDN-short
+          key: v52-fac-41220426939-GAPDN-short
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN60-long
+          key: v52-fac-41220426939-RUN60-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/FADE-long
+          key: v52-fac-41220426939-FADE-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUNUP-long
+          key: v52-fac-41220426939-RUNUP-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN100-long
+          key: v52-fac-41220426939-RUN100-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/GAPUP-long
+          key: v52-fac-41220426939-GAPUP-long
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52w/fac/RUN200-long
+          key: v52-fac-41220426939-RUN200-long
+          fail-on-cache-miss: true
+      - run: python scripts/run_v52.py diag --factory outputs/v52w/fac --ids 6 9 0 60 88 --out outputs/v52w/diag
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v52-diag
+          path: outputs/v52w/diag
+          retention-days: 90

@@ -254,6 +254,36 @@ def cmd_final(args) -> int:
     return 0
 
 
+def cmd_diag(args) -> int:
+    """Aggregates only: why a frozen configuration's trade returns and its account disagree."""
+    fr = load_frozen(args.frozen)
+    S = load_holdout(args.factory, fr["configs"])
+    A = S["A"]
+    out = {}
+    for c in args.ids:
+        k = S["by_cfg"][c]
+        ok = k[A["code"][k] == 0]
+        r = A["r"][ok]
+        msum = np.array([A["mark"][int(A["off"][i]):int(A["off"][i]) + int(A["t_out"][i] - A["t_in"][i]) + 1].sum()
+                         for i in ok])
+        q = [1, 10, 50, 90, 99]
+        top = np.sort(r)[::-1]
+        z = {"n": int(len(ok)), "r_q": np.percentile(r, q).round(4).tolist(), "mark_q": np.percentile(msum, q).round(4).tolist(),
+             "r_sum": float(r.sum()), "mark_sum": float(msum.sum()), "top1pct_share": float(top[:max(1, len(r) // 100)].sum() / r.sum()),
+             "price_q": np.percentile(A["price"][ok], q).round(3).tolist(), "dv1_q": np.percentile(A["dv1"][ok], q).round(0).tolist(),
+             "in_pos": float(np.isin(A["t_in"][ok], S["pos"]).mean()), "same_day": float((A["t_out"][ok] == A["t_in"][ok]).mean())}
+        for s_ in (0.1, 0.3):
+            Rb = V.book_returns(S, [(c, s_)], 3, 0)
+            lv = list(E.LEVELS).index(5_000.0)
+            z[f"acc_sum_{s_}"] = float(Rb[lv].sum())
+            z[f"acc_days_nonzero_{s_}"] = int((Rb[lv] != 0).sum())
+        out[c] = z
+        print(json.dumps({c: z}), flush=True)
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "diag.json").write_text(json.dumps(out), encoding="utf-8")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -266,6 +296,9 @@ def main() -> int:
     c.add_argument("--factory", type=Path, required=True)
     c.add_argument("--shard", type=int, default=0)
     c.add_argument("--shards", type=int, default=1)
+    c = sub.add_parser("diag")
+    c.add_argument("--factory", type=Path, required=True)
+    c.add_argument("--ids", type=int, nargs="+", required=True)
     c = sub.add_parser("final")
     c.add_argument("--factory", type=Path, required=True)
     c.add_argument("--runs", type=Path, required=True)
@@ -274,7 +307,7 @@ def main() -> int:
         p.add_argument("--out", type=Path, required=True)
         p.add_argument("--procs", type=int, default=4)
     args = ap.parse_args()
-    return {"factory": cmd_factory, "book": cmd_book, "final": cmd_final}[args.cmd](args)
+    return {"factory": cmd_factory, "book": cmd_book, "diag": cmd_diag, "final": cmd_final}[args.cmd](args)
 
 
 if __name__ == "__main__":
