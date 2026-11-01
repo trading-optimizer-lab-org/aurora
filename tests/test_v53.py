@@ -111,3 +111,15 @@ def test_walk_forward_pipeline(W, MD, tmp_path, monkeypatch) -> None:
     sb = json.loads((outb / "v53b_summary.json").read_text(encoding="utf-8"))
     assert len(sb["grades"]) == 2 * len(W.procedures())
     assert sb["grades"]["exp/raw/r25@1.00"]["base"] == summ["grades"]["exp/raw/r25"]["base"]
+    # v53c: each year's scale from the procedure's earlier years only; the first year takes START
+    C = _script("run_v53c", "run_v53c_under_test")
+    for k, v in {"B": B, "W": W, "V": V, "E": W.E, "START": 0.5, "HIST_SEEDS": (0,)}.items():
+        monkeypatch.setattr(C, k, v)
+    outc = tmp_path / "finalc"
+    assert C.cmd_final(ns(choose=ch, oos=runs / "oosb", out=outc)) == 0
+    sc = json.loads((outc / "v53c_summary.json").read_text(encoding="utf-8"))
+    assert len(sc["grades"]) == 2 * len(W.procedures())
+    for proc in W.procedures():
+        s = sc["scales"][f"{proc}/safe"]
+        assert s["2022"] == (0.5 if chosen["chosen"][proc]["2022"] else None)
+        assert s["2023"] in (None, 1.0, 0.5)
