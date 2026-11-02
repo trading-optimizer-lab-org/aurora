@@ -19,6 +19,7 @@ import run_v54d as D  # noqa: E402
 
 V, E = D.V, D.E
 RULES = {"asis": None, "through1": 0.0, "vol3k1": 3 * 1_000.0, "vol3k5": 3 * 5_000.0}  # dollar volume needed
+RULES.update({f"{k}o": v for k, v in list(RULES.items()) if v is not None})  # v54s2: the open's improvement kept
 THROUGH = 0.01
 TIMES = ("d1pm", "d1o")
 POOL = tuple(range(2021, 2027))
@@ -36,7 +37,7 @@ def _frames(days, js) -> dict:
     return out
 
 
-def _strict(need: float):
+def _strict(need: float, improve: bool):
     def limit(tl, day, m0, m1, lim, side):
         """A resting limit filled at ``lim`` once bars 1% through it hold ``need`` dollars of volume."""
         if day >= tl.K or not np.isfinite(lim):
@@ -49,13 +50,16 @@ def _strict(need: float):
         k = E._first(hit & (cum >= need))
         if k < 0:
             return None
+        o = float(tl.o[day, m0 + k])
+        if improve and np.isfinite(o):
+            return day, m0 + k, (max(lim, o) if side < 0 else min(lim, o)), E.L_PASS
         return day, m0 + k, float(lim), E.L_PASS
     return limit
 
 
 def set_rule(rule: str) -> None:
     need = RULES[rule]
-    E._limit = _orig["limit"] if need is None else _strict(need)
+    E._limit = _orig["limit"] if need is None else _strict(need, rule.endswith("o"))
     V._frames = _frames
 
 
@@ -109,7 +113,8 @@ def survives(M: dict) -> tuple[bool, dict]:
 
 
 def cmd_final(args) -> int:
-    R = {r: json.loads((args.res / f"minute-{r}.json").read_text(encoding="utf-8")) for r in RULES}
+    R = {r: json.loads((args.res / f"minute-{r}.json").read_text(encoding="utf-8")) for r in RULES
+         if (args.res / f"minute-{r}.json").exists()}
     yrs = [str(y) for y in range(2016, 2027)] + ["2021-2026"]
     c = R["asis"]["c_1555 d1pm/t0.00/s0.00"].get(CHECK[0], {"n": 0})
     check = bool(c["n"]) and c["n"] == CHECK[1] and round(c["pf"], 2) == CHECK[2] and round(c["pf_trim"], 2) == CHECK[3]

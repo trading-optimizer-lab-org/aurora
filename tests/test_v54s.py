@@ -40,6 +40,7 @@ def test_v54s_rules(tmp_path, monkeypatch) -> None:
     for y, v in share["asis"].items():
         assert share["through1"].get(y, 0) <= v and share["vol3k1"].get(y, 0) <= share["through1"].get(y, 0)
     assert all(v == 0 for v in share["vol3k5"].values())
+    assert share["through1o"] == share["through1"]  # same trigger, only the price differs
     monkeypatch.setattr(S, "CHECK", ("2099", 0, 0.0, 0.0))
     assert S.cmd_final(ns(res=tmp_path / "res", out=tmp_path / "final")) == 0
     assert "# v54s report" in (tmp_path / "final" / "V54S_REPORT.md").read_text(encoding="utf-8")
