@@ -1,0 +1,129 @@
+name: "v54d: CRASH-long by year, market or data"
+
+# scripts/gen_v54d_wf.py writes this file (V54D_PREREGISTRATION.md). Artifacts hold aggregates only.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/v54d.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: v54d
+  cancel-in-progress: false
+
+env:
+  V14_UNLOCK_SEALED: yes-the-owner-asked
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+
+jobs:
+  daily:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-39825946914-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_v54d.py daily --out outputs/v54dw/res
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v54d-daily
+          path: outputs/v54dw/res
+          retention-days: 90
+
+  minute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v18
+          key: v18-inputs-39433812183-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            outputs/v28/inputs
+            outputs/v28/pmstore
+          key: v28-inputs2-39825946914-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v51
+          key: v51-min-41206767350-1
+          fail-on-cache-miss: true
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/v52
+          key: v52-min-41219555974-1
+          fail-on-cache-miss: true
+      - run: python scripts/run_v53.py merge --src outputs/v51 outputs/v52 --move --out outputs/v53
+      - run: python scripts/run_v54d.py minute --procs 4 --out outputs/v54dw/res
+      - run: python scripts/run_v54d.py cover --procs 4 --out outputs/v54dw/res
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v54d-minute
+          path: outputs/v54dw/res
+          retention-days: 90
+
+  final:
+    needs: [daily, minute]
+    if: always() && needs.daily.result == 'success' && needs.minute.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip && python -m pip install -e .
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: v54d-*
+          path: outputs/v54dw/res
+          merge-multiple: true
+      - run: |
+          python scripts/run_v54d.py final --res outputs/v54dw/res --out outputs/v54dw/final
+          cat outputs/v54dw/final/V54D_REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: v54d-report
+          path: outputs/v54dw/final
+          retention-days: 90
