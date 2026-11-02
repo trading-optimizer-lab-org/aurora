@@ -24,7 +24,7 @@ Two of the "data" conditions hold:
 - **Where the profit is**: the premarket limit (close + 3%, else the open) captures the early part of the bounce.
   It needs premarket trades through the limit; those were sparse before 2021. The c_1555 d1pm cells are flat in
   2016-2019 (trimmed PF 0.88-1.08) and positive from 2020 (1.16-1.77, 0.92 in 2026); 2018-2022's PF of 1.53 in v52
-  came mostly from 2020. c_ah0 d1pm (after-hours limit at the close) is positive in every year but 2019, 2016-2017
+  came mostly from 2020. c_ah0 d1pm (after-hours limit at the close) has a trimmed PF above 1 in every year (1.08-2.19), 2016-2017
   included (trimmed 1.74, 1.89), on half the trades because the after-hours limit fills only about half the time.
 - Daily and minute closes agree (median gap 0.2-0.4%, over 2% in 3-13% of events) and so do the opens (over 2% in
   under 1%): the bars are consistent with the daily panel; the difference is how much trading the extended sessions
