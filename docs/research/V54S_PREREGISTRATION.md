@@ -37,3 +37,15 @@ a thin print cannot satisfy.
 - One-minute bars hold no quotes and no trade-by-trade prints: the volume rule is a proxy for queue position, and
   it may still be optimistic (volume through the limit is not volume for us) or pessimistic (an order can fill
   on a bar that trades exactly at the limit).
+
+## 5. Addendum, v54s2 (2026-11-02, after v54s's numbers, before v54s2's)
+
+v54s's strict rules filled at the limit and never better. That also took away a fill a resting order does get:
+when the bar that fills it opens beyond the limit (a premarket gap far above close +3%, an after-hours drop below
+the close), the order fills near that opening print. v54s therefore mixed two changes, the stricter trigger and
+the lost price improvement, and its "does not survive" cannot tell which one did it.
+
+- **v54s2** reruns the three strict rules with the engine's price, the limit or the filling bar's open if better:
+  **through1o**, **vol3k1o**, **vol3k5o** (same trigger and volume as through1, vol3k1, vol3k5), plus asis.
+- Same cells, same decision rule (section 3) and the same reading, applied to the "o" rules. v54s's verdicts stay
+  as they are in the record.
