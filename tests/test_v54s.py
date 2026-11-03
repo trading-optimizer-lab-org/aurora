@@ -70,3 +70,22 @@ def test_v54m_margin(tmp_path, monkeypatch) -> None:
     assert s["margin"][s["v49"]] is False
     assert s["pick"] == M.W.book_id(0.20, 0.40, 0.15, 5)
     assert "# v54m report" in (out / "V54M_REPORT.md").read_text(encoding="utf-8")
+
+
+def test_v54dd(tmp_path, monkeypatch) -> None:
+    Dd = _script("run_v54dd", "run_v54dd_under_test")
+    M = Dd.M
+    monkeypatch.setattr(M.R29, "PATHS", 200)
+    monkeypatch.setattr(M, "SEEDS", (0,))
+    monkeypatch.setattr(M, "STRESS_SEEDS", (0,))
+    years = np.repeat(np.arange(2018, 2027), 60)
+    up = np.full(len(years), 0.01)
+    crash = up.copy()
+    crash[np.flatnonzero(years == 2025)[10]] = -0.5
+    _write(tmp_path / "runs", years, {M.BOOKS.index(Dd.BOOKS["v49"]): crash,
+                                      M.BOOKS.index(Dd.BOOKS["margin"]): up}, M)
+    assert Dd.cmd_final(argparse.Namespace(runs=tmp_path / "runs", out=tmp_path / "out")) == 0
+    s = json.loads((tmp_path / "out" / "v54dd_summary.json").read_text(encoding="utf-8"))
+    assert s["margin"]["history"]["dd"] < 0.01
+    assert 0.5 <= s["v49"]["history"]["dd"] < 0.52
+    assert s["v49"]["base|lock"]["dd_p99"] >= 0.5
