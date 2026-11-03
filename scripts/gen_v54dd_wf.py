@@ -27,7 +27,7 @@ final = (SETUP + f"""      - uses: {DOWN}
 head = """name: "v54dd: maximum drawdown of the fixed daily books"
 
 # scripts/gen_v54dd_wf.py writes this file. Artifacts hold aggregates only.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]

@@ -86,6 +86,12 @@ def test_v54dd(tmp_path, monkeypatch) -> None:
                                       M.BOOKS.index(Dd.BOOKS["margin"]): up}, M)
     assert Dd.cmd_final(argparse.Namespace(runs=tmp_path / "runs", out=tmp_path / "out")) == 0
     s = json.loads((tmp_path / "out" / "v54dd_summary.json").read_text(encoding="utf-8"))
-    assert s["margin"]["history"]["dd"] < 0.01
-    assert 0.5 <= s["v49"]["history"]["dd"] < 0.52
-    assert s["v49"]["base|lock"]["dd_p99"] >= 0.5
+    assert s["margin"]["history|equity"]["dd"] < 0.01
+    assert 0.5 <= s["v49"]["history|equity"]["dd"] < 0.52
+    assert s["v49"]["equity|base|lock"]["dd_p99"] >= 0.5
+    # sized on the high, the -50% day after a high is the same; a second loss would hit twice as hard
+    assert s["v49"]["history|peak"]["dd"] >= s["v49"]["history|equity"]["dd"] - 1e-9
+    R = np.array([[0.0, -0.5, -0.5]])
+    _, dd_e, _ = Dd.dd_paths(np.repeat(R, len(M.R43.LEVELS), 0), np.arange(3)[None, :])
+    _, dd_p, low_p = Dd.dd_paths(np.repeat(R, len(M.R43.LEVELS), 0), np.arange(3)[None, :], True)
+    assert dd_e[0] > 0.74 and dd_p[0] == 1.0 and low_p[0] == 0.0

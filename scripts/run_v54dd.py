@@ -1,7 +1,8 @@
 """v54dd: the maximum drawdown of v49's fixed book and v54m's margin pick, on v54's daily account returns.
 
   final  one-year paths from $5,000 (v54's bootstrap and costs) with each path's largest fall from its own high,
-         and the single 2019-2026 sequence; V54DD_REPORT.md and v54dd_summary.json
+         and the single 2019-2026 sequence, sized on the equity (as traded) or on the account's highest value so far
+         (a fall keeps the positions of the high); V54DD_REPORT.md and v54dd_summary.json
 Descriptive only: no choice is made here. Aggregates only.
 """
 from __future__ import annotations
@@ -18,22 +19,28 @@ import run_v54 as M  # noqa: E402
 
 BOOKS = {"v49": (0.20, 0.40, 0.20, 5), "margin": (0.00, 0.40, 0.15, 5)}
 SAMPLES = {"all": M.TEST_YEARS, "lock": M.LOCK_YEARS}
+SIZING = ("equity", "peak")
 
 
-def dd_paths(R: np.ndarray, idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """v32's paths (FREE fixed cost, size level by equity), returning the end equity and the largest fall from the
-    path's own high."""
+def dd_paths(R: np.ndarray, idx: np.ndarray, peak_size: bool = False) -> tuple[np.ndarray, ...]:
+    """v32's paths (FREE fixed cost, size level by equity), returning the end equity, the largest fall from the
+    path's own high and the lowest equity. With ``peak_size`` the positions are those of the high: the high's level
+    and its returns scaled by high / equity (linear in size, before margin and volume caps)."""
     lv, e0 = M.R43.LEVELS, M.R29.E0
     eq = np.full(idx.shape[0], e0)
-    peak, mdd = eq.copy(), np.zeros(idx.shape[0])
+    peak, low, mdd = eq.copy(), eq.copy(), np.zeros(idx.shape[0])
     daily = M.R35.FIXED * 12 / 252
     for s in range(idx.shape[1]):
-        k = np.clip(np.searchsorted(lv, eq, side="right") - 1, 0, len(lv) - 1)
+        base = peak if peak_size else eq
+        k = np.clip(np.searchsorted(lv, base, side="right") - 1, 0, len(lv) - 1)
         r = R[k, idx[:, s]]
+        if peak_size:
+            r = r * np.where(eq > 0, peak / np.maximum(eq, 1e-9), 1.0)
         eq = np.where(eq > 0, np.maximum(eq * (1 + np.maximum(r, -1.0)) - daily, 0.0), 0.0)
         peak = np.maximum(peak, eq)
+        low = np.minimum(low, eq)
         mdd = np.maximum(mdd, 1 - eq / peak)
-    return eq, mdd
+    return eq, mdd, low
 
 
 def cmd_final(args) -> int:
@@ -48,29 +55,35 @@ def cmd_final(args) -> int:
     out = {}
     for name, z in Z.items():
         out[name] = {}
-        for t in M.TASKS:
-            for smp, keep in SAMPLES.items():
-                ix = M.draws(years, keep)
-                eq, dd = map(np.concatenate, zip(*(dd_paths(z[f"{M.MAIN}|{t}"][s], ix) for s in range(len(M.SEEDS)))))
-                out[name][f"{t}|{smp}"] = {"med": float(np.median(eq)), "dd_med": float(np.median(dd)),
-                                           "dd_p90": float(np.quantile(dd, 0.9)), "dd_p99": float(np.quantile(dd, 0.99))}
-        seq = np.flatnonzero(np.isin(years, M.TEST_YEARS))[None, :]
-        eq, dd = dd_paths(z[f"{M.MAIN}|base"][0], seq)
-        out[name]["history"] = {"end": float(eq[0]), "dd": float(dd[0])}
+        for sz in SIZING:
+            for t in M.TASKS:
+                for smp, keep in SAMPLES.items():
+                    ix = M.draws(years, keep)
+                    eq, dd, low = map(np.concatenate, zip(*(dd_paths(z[f"{M.MAIN}|{t}"][s], ix, sz == "peak")
+                                                            for s in range(len(M.SEEDS)))))
+                    out[name][f"{sz}|{t}|{smp}"] = {
+                        "med": float(np.median(eq)), "ruin": float((low <= M.R29.RUIN * M.R29.E0).mean()),
+                        "dd_med": float(np.median(dd)), "dd_p90": float(np.quantile(dd, 0.9)),
+                        "dd_p99": float(np.quantile(dd, 0.99))}
+            seq = np.flatnonzero(np.isin(years, M.TEST_YEARS))[None, :]
+            eq, dd, _ = dd_paths(z[f"{M.MAIN}|base"][0], seq, sz == "peak")
+            out[name][f"history|{sz}"] = {"end": float(eq[0]), "dd": float(dd[0])}
     _d = M.F._d
     L = ["# v54dd report: maximum drawdown of the fixed daily books", "",
          "One-year paths from $5,000 drawn from the sample's sessions, 31 seeds pooled. Drawdown: the largest fall "
          "of the account from its own highest value so far.", "",
-         "| book | set | sample | median end | median max drawdown | 1 year in 10 worse than | 1 year in 100 worse than |",
-         "|---|---|---|---|---|---|---|"]
+         "| book | sized on | set | sample | median end | ruin | median max drawdown | 1 year in 10 worse than | "
+         "1 year in 100 worse than |", "|---|---|---|---|---|---|---|---|---|"]
     for name, g in out.items():
         for k, v in g.items():
-            if k != "history":
-                t, smp = k.split("|")
-                L.append(f"| {name} | {t} | {smp} | {_d(v['med'])} | {v['dd_med']:.0%} | {v['dd_p90']:.0%} | "
+            if not k.startswith("history"):
+                sz, t, smp = k.split("|")
+                L.append(f"| {name} | {sz} | {t} | {smp} | {_d(v['med'])} | {v['ruin']:.1%} | {v['dd_med']:.0%} | "
+                         f"{v['dd_p90']:.0%} | "
                          f"{v['dd_p99']:.0%} |")
     L += ["", "Single sequence 2019-2026 from $5,000:", ""]
-    L += [f"- {name}: end {_d(g['history']['end'])}, max drawdown {g['history']['dd']:.0%}" for name, g in out.items()]
+    L += [f"- {name}, sized on {sz}: end {_d(g[f'history|{sz}']['end'])}, max drawdown {g[f'history|{sz}']['dd']:.0%}"
+          for name, g in out.items() for sz in SIZING]
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "V54DD_REPORT.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     (args.out / "v54dd_summary.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
