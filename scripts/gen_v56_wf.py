@@ -19,7 +19,7 @@ out = """name: "v56: the locate fill rate for 150% a year at 5% ruin"
 
 # scripts/gen_v56_wf.py writes this file (docs/research/V56_PREREGISTRATION.md). Market data stays in the Actions
 # cache; the jobs upload strategy returns only.
-# run: 1
+# run: 2
 on:
   push:
     branches: [research/stock-catalog]
