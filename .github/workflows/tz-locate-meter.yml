@@ -1,0 +1,53 @@
+name: "TradeZero locate meter"
+
+# scripts/tz_locate_meter.py: twice a trading day, a TradeZero locate quote on the day's top gainers and the prior
+# session's, cancelled and never accepted. Records stay in the Actions cache (keys tzloc-*); the summary shows
+# aggregates only. Runs only once the secrets TZ_API_KEY_ID and TZ_API_SECRET_KEY exist.
+on:
+  schedule:
+    - cron: "50 13,14 * * 1-5"  # 09:50 New York in summer and in winter; the script keeps the one inside its window
+    - cron: "25 19,20 * * 1-5"  # 15:25 New York
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Measure now even outside the windows"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tzloc
+  cancel-in-progress: false
+
+jobs:
+  meter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      TZ_API_KEY_ID: ${{ secrets.TZ_API_KEY_ID }}
+      TZ_API_SECRET_KEY: ${{ secrets.TZ_API_SECRET_KEY }}
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/tzloc
+          key: tzloc-none
+          restore-keys: tzloc-
+      - run: python scripts/tz_locate_meter.py run ${{ inputs.force && '--force' || '' }}
+      - if: hashFiles('outputs/tzloc/changed') != ''
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/tzloc
+          key: tzloc-${{ github.run_id }}-${{ github.run_attempt }}
+      - if: always()
+        run: if [ -f outputs/tzloc/REPORT.md ]; then cat outputs/tzloc/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
