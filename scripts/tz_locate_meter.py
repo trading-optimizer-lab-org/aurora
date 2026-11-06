@@ -74,10 +74,12 @@ def outcome(rows: list[dict]) -> str:
     st = [r.get("locateStatus") for r in rows]
     if not rows:
         return "no answer"
-    if 65 in st or 50 in st:
+    if 65 in st or 50 in st or any(r.get("locateStatus") == 67 and r.get("locatePrice") for r in rows):
         return "offered"
     if 56 in st:
         return "rejected"
+    if 67 in st:
+        return "expired"
     return "no shares"
 
 
@@ -96,9 +98,18 @@ def measure(tz: TZ, acct: str, sym: str, qty: int) -> dict:
             break
     keep = [{k: r.get(k) for k in ("quoteReqID", "locateStatus", "locateType", "locatePrice", "locateError", "text")}
             for r in rows.values()]
+    out = {"outcome": outcome(keep), "rows": keep, "qid": qid}
     if any(r.get("locateStatus") in (54, 65) for r in rows.values()):
         tz.delete(f"/v1/api/accounts/locates/cancel/accounts/{acct}/quoteReqID/{qid}")
-    return {"outcome": outcome(keep), "rows": keep, "qid": qid}
+        out["cancel"] = "unconfirmed"
+        for _ in range(POLLS):  # the cancel is asynchronous: only history confirms it
+            tz.sleep(1.0)
+            hist = tz.get(f"/v1/api/accounts/{acct}/locates/history").get("locateHistory", [])
+            live = [r for r in hist if r.get("quoteReqID") in rows and r.get("locateStatus") in (54, 65)]
+            if not live:
+                out["cancel"] = "confirmed"
+                break
+    return out
 
 
 def check_nothing_filled(tz: TZ, acct: str, qids: set[str]) -> None:
@@ -155,15 +166,17 @@ def report(recs: list[dict]) -> str:
          f"{len({r['date'] for r in recs})} sessions, {len(recs)} quotes. Quote size: about ${NOTIONAL:,.0f} of "
          "stock, at least 100 shares. Price: cost per share of the cheapest offered row, as a share of the stock "
          "price.", "",
-         "| window | group | quotes | easy to borrow | offered | no shares | rejected | errors | median price |",
-         "|---|---|---|---|---|---|---|---|---|"]
+         "| window | group | quotes | easy to borrow | offered | no shares | rejected | expired | no answer | errors | "
+         "median price |",
+         "|---|---|---|---|---|---|---|---|---|---|---|"]
     for slot in WINDOWS:
         for name, _ in BUCKETS:
             g = [r for r in recs if r["slot"] == slot and bucket(r) == name]
             if not g:
                 continue
             n = len(g)
-            c = {k: sum(r["outcome"] == k for r in g) for k in ("easy to borrow", "offered", "no shares", "rejected")}
+            c = {k: sum(r["outcome"] == k for r in g) for k in ("easy to borrow", "offered", "no shares", "rejected",
+                                    "expired", "no answer")}
             err = sum(r["outcome"] == "error" for r in g)
             px = [min(x["locatePrice"] for x in r["rows"] if x.get("locateStatus") in (50, 65) and x.get("locatePrice"))
                   / r["price"] for r in g if r["outcome"] == "offered"
@@ -171,6 +184,10 @@ def report(recs: list[dict]) -> str:
             med = f"{statistics.median(px):.2%}" if px else "-"
             L.append(f"| {slot} | {name} | {n} | " + " | ".join(f"{c[k] / n:.0%}" for k in c)
                      + f" | {err / n:.0%} | {med} |")
+    forced = sum(r["slot"] not in WINDOWS for r in recs)
+    open_ = sum(r.get("cancel") == "unconfirmed" for r in recs)
+    L += ["", f"Forced quotes outside the windows, left out of the table: {forced}. "
+          f"Cancels not confirmed by history, left to expire after 30 s: {open_}."]
     return "\n".join(L) + "\n"
 
 
@@ -190,7 +207,7 @@ def _alpaca_get(url: str, params: dict) -> dict:
 
 def cmd_run(args) -> int:
     now = datetime.now(NY)
-    slot = slot_of(now) or ("close" if args.force else None)
+    slot = slot_of(now) or ("forced" if args.force else None)
     if slot is None or now.weekday() >= 5:
         print(f"outside the measuring windows ({now:%a %H:%M} New York): nothing to do", flush=True)
         return 0

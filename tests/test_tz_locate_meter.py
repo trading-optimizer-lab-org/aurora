@@ -29,7 +29,7 @@ class _R:
 
 
 class FakeTZ:
-    """ETB for AAA; BBB offered as Single Use only; CCC no shares; DDD restricted."""
+    """ETB for AAA; BBB offered as Single Use only; CCC expired; DDD restricted; EEE no shares; FFF silent."""
 
     def __init__(self):
         self.calls, self.quotes, self.hist = [], {}, []
@@ -56,12 +56,20 @@ class FakeTZ:
                           {"quoteReqID": q + ".SU", "locateStatus": 65, "locateType": 4, "locatePrice": 0.02}]
         elif s == "CCC":
             self.hist += [{"quoteReqID": q, "locateStatus": 67, "text": "Quote expired."}]
+        elif s == "EEE":
+            self.hist += [{"quoteReqID": q, "locateStatus": 54, "text": "11 No shares available."}]
+        elif s == "FFF":
+            pass
         else:
             self.hist += [{"quoteReqID": q, "locateStatus": 56, "text": "R06: This symbol is restricted"}]
         return _R({"locateQuoteSent": "true"})
 
     def delete(self, url, **kw):
         self.calls.append(("delete", url))
+        q = url.rsplit("/", 1)[1]
+        for r in self.hist:
+            if r["quoteReqID"] in (q, q + ".SU") and r["locateStatus"] in (54, 65):
+                r["locateStatus"] = 52
         return _R({"locateCancelSent": "true"})
 
 
@@ -71,12 +79,15 @@ def test_meter_measures_and_cancels(tmp_path) -> None:
     tz = M.TZ("k", "s", http=fake, sleep=lambda s: None)
     acct = M.live_account(tz)
     assert acct == "2TZ9"
-    got = {s: M.measure(tz, acct, s, 100) for s in ("AAA", "BBB", "CCC", "DDD")}
+    got = {s: M.measure(tz, acct, s, 100) for s in ("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")}
     assert {s: g["outcome"] for s, g in got.items()} == {
-        "AAA": "easy to borrow", "BBB": "offered", "CCC": "no shares", "DDD": "rejected"}
+        "AAA": "easy to borrow", "BBB": "offered", "CCC": "expired", "DDD": "rejected",
+        "EEE": "no shares", "FFF": "no answer"}
     assert not any("accept" in u for _, u in fake.calls)
     dels = [u for m, u in fake.calls if m == "delete"]
-    assert len(dels) == 1 and dels[0].endswith(got["BBB"]["qid"])  # only the live offer needs a cancel
+    # only live quotes need a cancel, and history confirms each one
+    assert all(any(u.endswith(got[s]["qid"]) for u in dels) for s in ("BBB", "EEE")) and len(dels) == 2
+    assert got["BBB"]["cancel"] == got["EEE"]["cancel"] == "confirmed" and "cancel" not in got["CCC"]
     M.check_nothing_filled(tz, acct, {g["qid"] for g in got.values() if g.get("qid")})
     fake.hist.append({"quoteReqID": got["CCC"]["qid"], "locateStatus": 50})
     with pytest.raises(SystemExit):
@@ -108,5 +119,5 @@ def test_meter_candidates_and_report() -> None:
             {"date": "2026-11-06", "slot": "close", "src": "prior", "pct": None, "price": 2.0, "outcome": "no shares",
              "rows": []}]
     text = M.report(recs)
-    assert "| close | up 100%+ | 1 | 0% | 100% | 0% | 0% | 0% | 2.00% |" in text
+    assert "| close | up 100%+ | 1 | 0% | 100% | 0% | 0% | 0% | 0% | 0% | 2.00% |" in text
     assert "| close | prior day gainer | 1 | 0% | 0% | 100% |" in text
