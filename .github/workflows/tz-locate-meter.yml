@@ -1,8 +1,8 @@
 name: "TradeZero locate meter"
 
 # scripts/tz_locate_meter.py: twice a trading day, a TradeZero locate quote on the day's top gainers and the prior
-# session's, cancelled and never accepted. Records stay in the Actions cache (keys tzloc-*); the summary shows
-# aggregates only. Runs only once the secrets TZ_API_KEY_ID and TZ_API_SECRET_KEY exist.
+# session's, cancelled and never accepted. Records stay in the Actions cache (keys tzloc-*); nothing goes to the
+# public summary, only an artifact encrypted to the owner's key (.github/tzloc-report.pub.asc). Runs only once the secrets TZ_API_KEY_ID and TZ_API_SECRET_KEY exist.
 on:
   schedule:
     - cron: "50 13,14 * * 1-5"  # 09:50 New York in summer and in winter; the script keeps the one inside its window
@@ -49,5 +49,14 @@ jobs:
         with:
           path: outputs/tzloc
           key: tzloc-${{ github.run_id }}-${{ github.run_attempt }}
-      - if: always()
-        run: if [ -f outputs/tzloc/REPORT.md ]; then cat outputs/tzloc/REPORT.md >> "$GITHUB_STEP_SUMMARY"; fi
+      # The repository is public: records and report leave the runner only encrypted to the owner's key.
+      - if: hashFiles('outputs/tzloc/changed') != ''
+        run: |
+          gpg --batch --quiet --import .github/tzloc-report.pub.asc
+          tar czf - -C outputs tzloc | gpg --batch --trust-model always --encrypt             --recipient 3A439088B19222C64C00BA286E1157EC3AB4941F -o tzloc.tgz.gpg
+      - if: hashFiles('tzloc.tgz.gpg') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: tzloc-encrypted
+          path: tzloc.tgz.gpg
+          retention-days: 30
