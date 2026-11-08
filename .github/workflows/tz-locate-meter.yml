@@ -43,6 +43,9 @@ jobs:
           path: outputs/tzloc
           key: tzloc-none
           restore-keys: tzloc-
+      # Free proxy (IB public file, Alpaca flags) until the TradeZero keys exist; it must not block the real meter.
+      - run: python scripts/borrow_proxy_meter.py run ${{ inputs.force && '--force' || '' }}
+        continue-on-error: true
       - run: python scripts/tz_locate_meter.py run ${{ inputs.force && '--force' || '' }}
       - if: hashFiles('outputs/tzloc/changed') != ''
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
