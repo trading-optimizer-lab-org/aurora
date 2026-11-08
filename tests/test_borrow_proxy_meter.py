@@ -32,10 +32,10 @@ def test_proxy_meter_states_and_report() -> None:
     got = {r["symbol"]: r for r in M.measure(cands, ib, lambda s: flags.get(s, {}))}
     assert got["AAA"]["qty"] == 1000  # about $2,000 at $2, in hundreds
     assert {s: r["ib"] for s, r in got.items()} == {"AAA": "enough", "BBB": "some", "CCC": "none", "DDD": "none"}
-    assert got["BBB"]["al_short"] and not got["BBB"]["al_etb"] and not got["DDD"]["al_short"]
+    assert got["BBB"]["al_short"] and not got["BBB"]["al_etb"] and got["DDD"]["al_error"]
     recs = [{"date": "2026-11-09", "slot": "close", **r} for r in got.values()]
     recs.append({**recs[0], "slot": "forced"})
     text = M.report(recs)
-    assert "| close | up 100%+ | 2 | 50% | 50% | 0% | 42.9% | 100% | 50% |" in text
-    assert "| close | up 50-100% | 2 | 0% | 0% | 100% | - | 0% | 0% |" in text
+    assert "| close | up 100%+ | 2 | 50% | 50% | 0% | 42.9% | 100% | 50% | 0 |" in text
+    assert "| close | up 50-100% | 2 | 0% | 0% | 100% | - | - | - | 2 |" in text
     assert "left out of the table: 1." in text

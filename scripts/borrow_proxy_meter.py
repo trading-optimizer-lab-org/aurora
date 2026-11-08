@@ -11,7 +11,7 @@ so this is a proxy for how often hot stocks can be borrowed at all. Records stay
 from __future__ import annotations
 
 import argparse
-import ftplib
+import ftplib  # nosec B402: IB serves this public file over plain FTP only (no TLS), no secret is sent
 import io
 import json
 import os
@@ -32,7 +32,7 @@ MANY = 10_000_001  # IB writes ">10000000"
 
 def ib_fetch() -> str:
     buf = io.BytesIO()
-    with ftplib.FTP(IB_HOST, timeout=60) as f:
+    with ftplib.FTP(IB_HOST, timeout=60) as f:  # nosec B321: anonymous read of a public file
         f.login(IB_USER, "")
         f.retrbinary(f"RETR {IB_FILE}", buf.write)
     return buf.getvalue().decode("utf-8", "replace")
@@ -61,8 +61,8 @@ def ib_state(ib: dict, sym: str, qty: int) -> dict:
 
 
 def alpaca_asset(get, sym: str) -> dict:
-    a = get(sym)
-    return {"al_short": bool(a.get("shortable")), "al_etb": bool(a.get("easy_to_borrow"))}
+    a = get(sym)  # {} when the lookup failed
+    return {"al_short": bool(a.get("shortable")), "al_etb": bool(a.get("easy_to_borrow")), "ok": bool(a)}
 
 
 def _alpaca_asset_get():
@@ -80,7 +80,7 @@ def report(recs: list[dict]) -> str:
          f"{len({r['date'] for r in recs})} sessions, {len(recs)} stocks. Needed: about ${T.NOTIONAL:,.0f} of stock, "
          "at least 100 shares. IB fee: annual borrow rate.", "",
          "| window | group | stocks | IB enough | IB some | IB none | IB median fee | Alpaca shortable | "
-         "Alpaca easy |", "|---|---|---|---|---|---|---|---|---|"]
+         "Alpaca easy | Alpaca unknown |", "|---|---|---|---|---|---|---|---|---|---|"]
     for slot in T.WINDOWS:
         for name, _ in T.BUCKETS:
             g = [r for r in recs if r["slot"] == slot and T.bucket(r) == name]
@@ -89,9 +89,12 @@ def report(recs: list[dict]) -> str:
             n = len(g)
             fees = [r["ib_fee"] for r in g if r["ib"] != "none" and r["ib_fee"] is not None]
             med = f"{statistics.median(fees):.1f}%" if fees else "-"
+            ok = [r for r in g if not r.get("al_error")]
+            al = (" | ".join(f"{sum(r[k] for r in ok) / len(ok):.0%}" for k in ("al_short", "al_etb")) if ok
+                  else "- | -")
             L.append(f"| {slot} | {name} | {n} | " + " | ".join(f"{sum(r['ib'] == k for r in g) / n:.0%}"
                                                              for k in ("enough", "some", "none"))
-                     + f" | {med} | {sum(r['al_short'] for r in g) / n:.0%} | {sum(r['al_etb'] for r in g) / n:.0%} |")
+                     + f" | {med} | {al} | {n - len(ok)} |")
     forced = sum(r["slot"] not in T.WINDOWS for r in recs)
     L += ["", f"Forced samples outside the windows, left out of the table: {forced}."]
     return "\n".join(L) + "\n"
@@ -103,7 +106,10 @@ def measure(cands: list[dict], ib: dict, asset) -> list[dict]:
         qty = T.quantity(c["price"])
         try:
             al = alpaca_asset(asset, c["symbol"])
+            al_ok = al.pop("ok")
         except requests.RequestException:
+            al_ok = False
+        if not al_ok:
             al = {"al_short": False, "al_etb": False, "al_error": True}
         out.append({**c, "qty": qty, **ib_state(ib, c["symbol"], qty), **al})
     return out
