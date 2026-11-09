@@ -141,7 +141,7 @@ def try_save(out: Path, name: str, fn, log: list[str], gz: bool = False) -> None
 
 # ---------------------------------------------------------------- report
 
-def report(recs: list[dict], audits: list[dict]) -> str:
+def report(recs: list[dict], audits: list[dict], cash=None) -> str:
     q = [r for r in recs if r.get("slot", "").startswith("q") and r.get("outcome") not in (None, "busy")]
     L = ["# Borrow logger", "", f"Last {len({r['date'] for r in recs})} sessions, {len(recs)} stock snapshots, "
          f"{len(q)} TradeZero quotes (about ${T.NOTIONAL:,.0f} each).", "",
@@ -184,9 +184,9 @@ def report(recs: list[dict], audits: list[dict]) -> str:
             if g:
                 L.append(f"| {k} | {len(g)} | "
                          f"{sum(r['outcome'] in ('offered', 'easy to borrow') for r in g) / len(g):.0%} |")
-    L += ["", "## Money check", ""]
+    L += ["", "## Money check", ""] + ([f"- cash now: {cash}"] if cash is not None else [])
     for a in audits[-10:]:
-        L.append(f"- {a['date']} {a['time']}: cash {a.get('cash')}, {', '.join(a['spent']) or 'no positions, orders or locates'}")
+        L.append(f"- {a['date']} {a['time']}: {', '.join(a['spent']) or 'no positions, orders or locates'}")
     return "\n".join(L) + "\n"
 
 
@@ -246,7 +246,8 @@ def cmd_snap(args) -> int:
         if acct:
             acc = tz_account(tz, acct)
             save(out, "account.json", acc)
-            audits_new = [{"date": today, "time": f"{now:%H:%M}", "cash": cash_of(acc), "spent": spent(acc)}]
+            # the cache is not encrypted: it keeps whether money moved, never the balance or the account number
+            audits_new = [{"date": today, "time": f"{now:%H:%M}", "spent": spent(acc)}]
             append(args.state / "audits.jsonl", audits_new)
             audits += audits_new
             etb = etb_all(tz, acct, syms)
@@ -303,7 +304,9 @@ def cmd_daily(args) -> int:
         if acct:
             try_save(out, "locate_history.json", lambda: tz.get(f"/v1/api/accounts/{acct}/locates/history"), log)
             try_save(out, "account.json", lambda: tz_account(tz, acct), log)
-    text = report(recs, audits)
+    acc_file = out / "account.json"
+    cash = cash_of(json.loads(acc_file.read_text())) if acc_file.exists() else None
+    text = report(recs, audits, cash)
     save(out, "REPORT.md", text)
     save(args.out, "REPORT.md", text)
     if log:
@@ -321,7 +324,11 @@ def main() -> int:
     ap.add_argument("--force-quotes", action="store_true", help="quote even outside the quote slots")
     args = ap.parse_args()
     t0 = time.time()
-    rc = {"snap": cmd_snap, "daily": cmd_daily}[args.cmd](args)
+    try:
+        rc = {"snap": cmd_snap, "daily": cmd_daily}[args.cmd](args)
+    except Exception as e:  # the log is public and an error message can hold the account number in a URL
+        print(f"failed: {type(e).__name__}", flush=True)
+        return 1
     print(f"took {time.time() - t0:.0f} s", flush=True)
     return rc
 

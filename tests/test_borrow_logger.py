@@ -108,7 +108,7 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     assert gzip.decompress((snap / "ib_usa.txt.gz").read_bytes()).startswith(b"BBB")
     assert json.loads((snap / "account.json").read_text())["pnl"]["availableCash"] == 585.0
     audits = L.T.load(args.state / "audits.jsonl")
-    assert audits[0]["cash"] == 585.0 and audits[0]["spent"] == []
+    assert audits[0] == {"date": today, "time": audits[0]["time"], "spent": []}  # no balance in the cache
     assert L.spent({"positions": {"positions": [{"symbol": "X"}]}, "orders": {"orders": []}}) == ["positions"]
     text = L.report(list(recs.values()), audits)
     assert "| qforced |" not in text  # forced quotes stay out of the slot table
@@ -116,7 +116,8 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     text = L.report(recs2, audits)
     assert "| q1550 | 2 | 0% | 100% | 50% | 0% | 50% | 0% | 0% | 1.75% |" in text
     assert "Pre-Borrow offered on 0, Single Use on 1." in text
-    assert "no positions, orders or locates" in text
+    assert "no positions, orders or locates" in text and "cash now" not in text
+    assert "- cash now: 585.0" in L.report(recs2, audits, 585.0)
 
 
 def test_logger_daily_files_and_failures(tmp_path, monkeypatch) -> None:
@@ -137,3 +138,15 @@ def test_logger_daily_files_and_failures(tmp_path, monkeypatch) -> None:
     assert {"nasdaq_threshold.txt", "nyse_threshold.txt", "nasdaqlisted.txt.gz", "halts.xml", "REPORT.md"} <= names
     assert "finra_short_volume.txt" in (day / "daily" / "errors.txt").read_text()
     assert (tmp_path / "out" / "REPORT.md").exists()
+
+
+def test_errors_keep_the_account_out_of_the_public_log(monkeypatch, capsys) -> None:
+    L = _script("borrow_logger", "borrow_logger_under_test3")
+
+    def boom(args):
+        raise RuntimeError("500 Server Error for url: https://webapi.tradezero.com/v1/api/account/SECRET123")
+    monkeypatch.setattr(L, "cmd_snap", boom)
+    monkeypatch.setattr("sys.argv", ["borrow_logger.py", "snap"])
+    assert L.main() == 1
+    out = capsys.readouterr().out
+    assert "failed: RuntimeError" in out and "SECRET123" not in out

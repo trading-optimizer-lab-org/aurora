@@ -265,7 +265,11 @@ def main() -> int:
     ap.add_argument("--report", type=Path, default=Path("outputs/tzloc/REPORT.md"))
     ap.add_argument("--force", action="store_true", help="measure now even outside the windows")
     args = ap.parse_args()
-    return {"run": cmd_run, "report": cmd_report}[args.cmd](args)
+    try:
+        return {"run": cmd_run, "report": cmd_report}[args.cmd](args)
+    except Exception as e:  # the log is public and an error message can hold the account number in a URL
+        print(f"failed: {type(e).__name__}", flush=True)
+        return 1
 
 
 if __name__ == "__main__":
