@@ -74,17 +74,22 @@ def spent(acc: dict) -> list[str]:
     """Account activity that commits money: open positions, orders today, locate inventory (the owner's or a bug)."""
     def rows(x) -> list:
         return [v for v in (x.values() if isinstance(x, dict) else [x]) if isinstance(v, list) and v]
-    return [k for k in ("positions", "orders", "inventory") if rows(acc.get(k) or {})]
+    ks = ("positions", "orders", "inventory")
+    return ([k for k in ks if rows(acc.get(k) or {})]
+            + [f"{k} unchecked" for k in ks if not isinstance(acc.get(k), dict) or "error" in acc[k]])
 
 
-def snap_records(cands: list[dict], ib: dict, etb: dict, quotes: dict, stamp: dict) -> list[dict]:
+def snap_records(cands: list[dict], ib: dict | None, etb: dict, quotes: dict, stamp: dict) -> list[dict]:
+    """ib None: the IB file could not be read, so its state is unknown, not "none"."""
     out = []
     for c in cands:
         qty = T.quantity(c["price"])
-        r = {**stamp, **c, "qty": qty, "notional": T.NOTIONAL, **P.ib_state(ib, c["symbol"], qty),
-             "etb": etb.get(c["symbol"])}
+        ibs = P.ib_state(ib, c["symbol"], qty) if ib is not None else {"ib": None, "ib_avail": None, "ib_fee": None}
+        r = {**stamp, **c, "qty": qty, "notional": T.NOTIONAL, **ibs, "etb": etb.get(c["symbol"])}
         q = quotes.get(c["symbol"])
-        if q is not None:
+        if q is None and stamp["slot"].startswith("q") and r["etb"]:
+            r["outcome"] = "easy to borrow"  # not quoted because TradeZero has it easy to borrow
+        elif q is not None:
             r.update(q)
             r.update(kinds(q.get("rows", [])))
         out.append(r)
@@ -147,7 +152,7 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
          f"{len(q)} TradeZero quotes (about ${T.NOTIONAL:,.0f} each).", "",
          "## Quotes by time of day", "",
          "| slot | quotes | easy to borrow | offered | regular offered | Pre-Borrow offered | Single Use only | "
-         "no shares | rejected | median price |", "|---|---|---|---|---|---|---|---|---|---|"]
+         "no shares | rejected | no answer, expired or error | median price |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for slot in QUOTE_SLOTS:
         g = [r for r in q if r["slot"] == slot]
         if not g:
@@ -160,7 +165,8 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
         px = [min(v for v in o.values() if v) / r["price"] for r, o in zip(g, off) if any(o.values())]
         L.append(f"| {slot} | {n} | " + " | ".join(f"{x / n:.0%}" for x in (
             sum(r["outcome"] == "easy to borrow" for r in g), sum(r["outcome"] == "offered" for r in g), reg, pb, su,
-            sum(r["outcome"] == "no shares" for r in g), sum(r["outcome"] == "rejected" for r in g)))
+            sum(r["outcome"] == "no shares" for r in g), sum(r["outcome"] == "rejected" for r in g),
+            sum(r["outcome"] not in ("easy to borrow", "offered", "no shares", "rejected") for r in g)))
             + f" | {f'{statistics.median(px):.2%}' if px else '-'} |")
     rej = Counter(x.get("text", "")[:40] for r in q if r["outcome"] == "rejected" for x in r.get("rows", []))
     L += ["", "Rejection reasons: " + ("; ".join(f"{k} x{v}" for k, v in rej.most_common(6)) or "none") + "."]
@@ -212,12 +218,41 @@ def cash_of(acc: dict):
     return pnl.get("availableCash", pnl.get("accountValue"))
 
 
+def tz_snap(args, now: datetime, today: str, cands: list[dict], syms: list[str], recs: list[dict],
+            audits: list[dict], log: list[str], out: Path) -> tuple[dict, dict, str]:
+    """TradeZero part of a snapshot: account audit, easy-to-borrow flags and, once per quote slot, locate quotes."""
+    key, secret = os.environ.get("TZ_API_KEY_ID"), os.environ.get("TZ_API_SECRET_KEY")
+    if not (key and secret):
+        return {}, {}, "snap"
+    tz = T.TZ(key, secret)
+    acct = T.live_account(tz)
+    if not acct:
+        return {}, {}, "snap"
+    acc = tz_account(tz, acct)
+    save(out, "account.json", acc)
+    # the cache is not encrypted: it keeps whether money moved, never the balance or the account number
+    audits_new = [{"date": today, "time": f"{now:%H:%M}", "spent": spent(acc)}]
+    append(args.state / "audits.jsonl", audits_new)
+    audits += audits_new
+    if audits_new[0]["spent"]:
+        log.append("account activity: " + ", ".join(audits_new[0]["spent"]))
+    etb = etb_all(tz, acct, syms)
+    slot = quote_slot(now) or ("qforced" if args.force_quotes else "snap")
+    if slot != "qforced" and any(r["date"] == today and r["slot"] == slot for r in recs):
+        slot = "snap"  # one quote batch per slot and day, whichever cron runs first
+    quotes = quote_all(tz, acct, [c for c in cands if not etb.get(c["symbol"])]) if slot.startswith("q") else {}
+    return etb, quotes, slot
+
+
 def cmd_snap(args) -> int:
     now = datetime.now(T.NY)
     if not args.force and (now.weekday() >= 5 or not SNAP[0] <= minute(now) < SNAP[1]):
         print(f"outside the session ({now:%a %H:%M} New York): nothing to do", flush=True)
         return 0
     today, log = f"{now:%Y-%m-%d}", list[str]()
+    if args.force:  # on a weekend or before the open, use the latest session the screener has
+        movers = T._alpaca_get(f"{T.DATA}/v1beta1/screener/stocks/movers", {"top": T.TOP})
+        today = str(movers.get("last_updated", ""))[:10] or today
     recs, prior, audits = load_state(args.state)
     days = sorted(d for d in prior if d < today)
     cands = T.candidates(T._alpaca_get, today, prior.get(days[-1], []) if days else [])
@@ -237,25 +272,14 @@ def cmd_snap(args) -> int:
         save(out, "ib_usa.txt", ib_text, gz=True)
     except Exception as e:
         log.append(f"ib: {type(e).__name__}")
-    ib = P.ib_parse(ib_text)
-    etb, quotes, slot = {}, {}, "snap"
-    key, secret = os.environ.get("TZ_API_KEY_ID"), os.environ.get("TZ_API_SECRET_KEY")
-    if key and secret:
-        tz = T.TZ(key, secret)
-        acct = T.live_account(tz)
-        if acct:
-            acc = tz_account(tz, acct)
-            save(out, "account.json", acc)
-            # the cache is not encrypted: it keeps whether money moved, never the balance or the account number
-            audits_new = [{"date": today, "time": f"{now:%H:%M}", "spent": spent(acc)}]
-            append(args.state / "audits.jsonl", audits_new)
-            audits += audits_new
-            etb = etb_all(tz, acct, syms)
-            slot = quote_slot(now) or ("qforced" if args.force_quotes else "snap")
-            if slot.startswith("q"):
-                quotes = quote_all(tz, acct, [c for c in cands if not etb.get(c["symbol"])])
-            if audits_new[0]["spent"]:
-                log.append("account activity: " + ", ".join(audits_new[0]["spent"]))
+    ib = P.ib_parse(ib_text) if ib_text else None
+    etb: dict = {}
+    quotes: dict = {}
+    slot = "snap"
+    try:
+        etb, quotes, slot = tz_snap(args, now, today, cands, syms, recs, audits, log, out)
+    except Exception as e:  # TradeZero down must not lose the free files of this run
+        log.append(f"tradezero: {type(e).__name__}")
     stamp = {"date": today, "time": f"{now:%H:%M:%S}", "slot": slot}
     new = snap_records(cands, ib, etb, quotes, stamp)
     save(out, "records.json", new)
@@ -265,6 +289,17 @@ def cmd_snap(args) -> int:
         save(out, "errors.txt", "\n".join(log))
     print(f"{today} {now:%H:%M} {slot}: {len(new)} stocks, {len(quotes)} quotes, {len(log)} source errors", flush=True)
     return 0
+
+
+def alpaca_base(h: dict) -> str:
+    """Live or paper Alpaca host for these keys; a failed probe only loses the asset flags."""
+    for b in P.ALPACA:
+        try:
+            if requests.get(f"{b}/v2/account", headers=h, timeout=15).ok:
+                return b
+        except requests.RequestException:
+            pass
+    return P.ALPACA[0]
 
 
 def cmd_daily(args) -> int:
@@ -289,7 +324,7 @@ def cmd_daily(args) -> int:
     syms = sorted({r["symbol"] for r in recs if r["date"] == f"{day:%Y-%m-%d}"})
     if os.environ.get("APCA_API_KEY_ID"):
         h = {"APCA-API-KEY-ID": os.environ["APCA_API_KEY_ID"], "APCA-API-SECRET-KEY": os.environ["APCA_API_SECRET_KEY"]}
-        base = next((b for b in P.ALPACA if requests.get(f"{b}/v2/account", headers=h, timeout=15).ok), P.ALPACA[0])
+        base = alpaca_base(h)
         try_save(out, "alpaca_assets.json", lambda: requests.get(
             f"{base}/v2/assets", headers=h, params={"status": "active", "asset_class": "us_equity"}, timeout=60).json(),
             log, gz=True)
@@ -300,7 +335,11 @@ def cmd_daily(args) -> int:
     key, secret = os.environ.get("TZ_API_KEY_ID"), os.environ.get("TZ_API_SECRET_KEY")
     if key and secret:
         tz = T.TZ(key, secret)
-        acct = T.live_account(tz)
+        acct = None
+        try:
+            acct = T.live_account(tz)
+        except Exception as e:  # TradeZero down must not lose the free files of this run
+            log.append(f"tradezero: {type(e).__name__}")
         if acct:
             try_save(out, "locate_history.json", lambda: tz.get(f"/v1/api/accounts/{acct}/locates/history"), log)
             try_save(out, "account.json", lambda: tz_account(tz, acct), log)

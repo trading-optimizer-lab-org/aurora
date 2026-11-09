@@ -99,7 +99,7 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     assert L.cmd_snap(args) == 0
     assert not any("accept" in u or "/order" in u and m != "get" for m, u in fake.calls)
     recs = {r["symbol"]: r for r in L.T.load(args.state / "records.jsonl")}
-    assert recs["AAA"]["etb"] is True and "outcome" not in recs["AAA"]  # easy to borrow: no quote needed
+    assert recs["AAA"]["etb"] is True and recs["AAA"]["outcome"] == "easy to borrow"  # counted, not quoted
     assert recs["BBB"]["outcome"] == "offered" and recs["BBB"]["offer"]["regular"] == 0.05 and recs["BBB"]["ib"] == "enough"
     assert recs["CCC"]["threshold"] and recs["CCC"]["offer"] == {"regular": None, "pb": None, "su": 0.02}
     assert recs["DDD"]["outcome"] == "busy"
@@ -109,15 +109,23 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     assert json.loads((snap / "account.json").read_text())["pnl"]["availableCash"] == 585.0
     audits = L.T.load(args.state / "audits.jsonl")
     assert audits[0] == {"date": today, "time": audits[0]["time"], "spent": []}  # no balance in the cache
-    assert L.spent({"positions": {"positions": [{"symbol": "X"}]}, "orders": {"orders": []}}) == ["positions"]
+    ok = {"orders": {"orders": []}, "inventory": {"locates": []}}
+    assert L.spent({**ok, "positions": {"positions": [{"symbol": "X"}]}}) == ["positions"]
+    assert L.spent({**ok, "positions": {"error": "Timeout"}}) == ["positions unchecked"]  # a failed check is not clean
+    assert L.snap_records([{"symbol": "Z", "price": 2.0}], None, {}, {}, {"slot": "snap"})[0]["ib"] is None
     text = L.report(list(recs.values()), audits)
     assert "| qforced |" not in text  # forced quotes stay out of the slot table
     recs2 = [{**r, "slot": "q1550"} for r in recs.values()]
     text = L.report(recs2, audits)
-    assert "| q1550 | 2 | 0% | 100% | 50% | 0% | 50% | 0% | 0% | 1.75% |" in text
+    assert "| q1550 | 3 | 33% | 67% | 33% | 0% | 33% | 0% | 0% | 0% | 1.75% |" in text
     assert "Pre-Borrow offered on 0, Single Use on 1." in text
     assert "no positions, orders or locates" in text and "cash now" not in text
     assert "- cash now: 585.0" in L.report(recs2, audits, 585.0)
+    monkeypatch.setattr(L, "quote_slot", lambda now: "q1100")
+    args.force_quotes = False
+    assert L.cmd_snap(args) == 0 and L.cmd_snap(args) == 0
+    slots = [r["slot"] for r in L.T.load(args.state / "records.jsonl")]
+    assert slots == ["qforced"] * 4 + ["q1100"] * 4 + ["snap"] * 4  # a second run in the same slot does not quote
 
 
 def test_logger_daily_files_and_failures(tmp_path, monkeypatch) -> None:
