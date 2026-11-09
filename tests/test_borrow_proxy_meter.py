@@ -35,7 +35,8 @@ def test_proxy_meter_states_and_report() -> None:
     assert got["BBB"]["al_short"] and not got["BBB"]["al_etb"] and got["DDD"]["al_error"]
     recs = [{"date": "2026-11-09", "slot": "close", **r} for r in got.values()]
     recs.append({**recs[0], "slot": "forced"})
+    recs.append({k: v for k, v in recs[0].items() if k != "notional"})  # old $2,000 record
     text = M.report(recs)
     assert "| close | up 100%+ | 2 | 50% | 50% | 0% | 42.9% | 100% | 50% | 0 |" in text
     assert "| close | up 50-100% | 2 | 0% | 0% | 100% | - | - | - | 2 |" in text
-    assert "left out of the table: 1." in text
+    assert "left out of the table: 1." in text and "another size, left out: 1." in text
