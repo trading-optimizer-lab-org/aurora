@@ -109,7 +109,7 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     assert json.loads((snap / "account.json").read_text())["pnl"]["availableCash"] == 585.0
     audits = L.T.load(args.state / "audits.jsonl")
     assert audits[0] == {"date": today, "time": audits[0]["time"], "spent": []}  # no balance in the cache
-    ok = {"orders": {"orders": []}, "inventory": {"locates": []}}
+    ok: dict = {"orders": {"orders": []}, "inventory": {"locates": []}}
     assert L.spent({**ok, "positions": {"positions": [{"symbol": "X"}]}}) == ["positions"]
     assert L.spent({**ok, "positions": {"error": "Timeout"}}) == ["positions unchecked"]  # a failed check is not clean
     assert L.snap_records([{"symbol": "Z", "price": 2.0}], None, {}, {}, {"slot": "snap"})[0]["ib"] is None
