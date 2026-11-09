@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       notional:
-        description: "Dollars of stock per locate quote (default 2000)"
+        description: "Dollars of stock per locate quote (default 500, fits the account cash)"
         type: string
         default: ""
 

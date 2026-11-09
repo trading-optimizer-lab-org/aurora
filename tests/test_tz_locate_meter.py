@@ -112,7 +112,7 @@ def test_meter_candidates_and_report() -> None:
     c = M.candidates(get, "2026-11-06", ["AAA", "EEE"])
     assert [(x["symbol"], x["src"]) for x in c] == [("AAA", "today"), ("DDD", "today"), ("EEE", "prior")]
     assert M.candidates(get, "2026-11-07", []) is None
-    assert M.quantity(3.0) == 700 and M.quantity(50.0) == 100
+    assert M.quantity(3.0) == 200 and M.quantity(50.0) == 100
     assert M.slot_of(datetime(2026, 11, 6, 15, 20)) == "close" and M.slot_of(datetime(2026, 11, 6, 12, 0)) is None
     recs = [{"date": "2026-11-06", "slot": "close", "src": "today", "pct": 120.0, "price": 2.0, "outcome": "offered",
              "rows": [{"locateStatus": 65, "locatePrice": 0.04}]},
