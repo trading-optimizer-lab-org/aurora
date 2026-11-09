@@ -13,6 +13,10 @@ on:
         description: "Measure now even outside the windows"
         type: boolean
         default: false
+      notional:
+        description: "Dollars of stock per locate quote (default 500, fits the account cash)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -27,6 +31,7 @@ jobs:
     timeout-minutes: 40
     env:
       TZ_API_KEY_ID: ${{ secrets.TZ_API_KEY_ID }}
+      TZLOC_NOTIONAL: ${{ inputs.notional }}
       TZ_API_SECRET_KEY: ${{ secrets.TZ_API_SECRET_KEY }}
       APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
       APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}

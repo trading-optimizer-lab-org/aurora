@@ -76,6 +76,8 @@ def _alpaca_asset_get():
 
 
 def report(recs: list[dict]) -> str:
+    other = sum(r.get("notional", 2_000.0) != T.NOTIONAL for r in recs)  # records before this field were $2,000
+    recs = [r for r in recs if r.get("notional", 2_000.0) == T.NOTIONAL]
     L = ["# Borrow proxy meter (Interactive Brokers public file, Alpaca flags)", "",
          f"{len({r['date'] for r in recs})} sessions, {len(recs)} stocks. Needed: about ${T.NOTIONAL:,.0f} of stock, "
          "at least 100 shares. IB fee: annual borrow rate.", "",
@@ -96,7 +98,8 @@ def report(recs: list[dict]) -> str:
                                                              for k in ("enough", "some", "none"))
                      + f" | {med} | {al} | {n - len(ok)} |")
     forced = sum(r["slot"] not in T.WINDOWS for r in recs)
-    L += ["", f"Forced samples outside the windows, left out of the table: {forced}."]
+    L += ["", f"Forced samples outside the windows, left out of the table: {forced}. "
+          f"Samples at another size, left out: {other}."]
     return "\n".join(L) + "\n"
 
 
@@ -111,7 +114,7 @@ def measure(cands: list[dict], ib: dict, asset) -> list[dict]:
             al_ok = False
         if not al_ok:
             al = {"al_short": False, "al_etb": False, "al_error": True}
-        out.append({**c, "qty": qty, **ib_state(ib, c["symbol"], qty), **al})
+        out.append({**c, "qty": qty, "notional": T.NOTIONAL, **ib_state(ib, c["symbol"], qty), **al})
     return out
 
 

@@ -28,7 +28,7 @@ BASE = "https://webapi.tradezero.com"
 DATA = "https://data.alpaca.markets"
 NY = ZoneInfo("America/New_York")
 WINDOWS = {"open": (9 * 60 + 45, 10 * 60 + 30), "close": (15 * 60 + 15, 15 * 60 + 55)}
-NOTIONAL, MIN_PRICE, TOP = 2_000.0, 0.50, 50
+NOTIONAL, MIN_PRICE, TOP = float(os.environ.get("TZLOC_NOTIONAL") or 500), 0.50, 50
 DONE = {50, 52, 56, 65, 67}  # filled, canceled, rejected, offered, expired
 POLLS = 10
 BUCKETS = (("prior day gainer", None), ("up 100%+", 100), ("up 50-100%", 50), ("up 20-50%", 20), ("up <20%", -1e9))
@@ -162,6 +162,8 @@ def bucket(r: dict) -> str:
 
 
 def report(recs: list[dict]) -> str:
+    other = sum(r.get("notional", 2_000.0) != NOTIONAL for r in recs)  # records before this field were $2,000
+    recs = [r for r in recs if r.get("notional", 2_000.0) == NOTIONAL]
     L = ["# TradeZero locate meter", "",
          f"{len({r['date'] for r in recs})} sessions, {len(recs)} quotes. Quote size: about ${NOTIONAL:,.0f} of "
          "stock, at least 100 shares. Price: cost per share of the cheapest offered row, as a share of the stock "
@@ -187,7 +189,8 @@ def report(recs: list[dict]) -> str:
     forced = sum(r["slot"] not in WINDOWS for r in recs)
     open_ = sum(r.get("cancel") == "unconfirmed" for r in recs)
     L += ["", f"Forced quotes outside the windows, left out of the table: {forced}. "
-          f"Cancels not confirmed by history, left to expire after 30 s: {open_}."]
+          f"Cancels not confirmed by history, left to expire after 30 s: {open_}. "
+          f"Quotes at another size, left out: {other}."]
     return "\n".join(L) + "\n"
 
 
@@ -237,7 +240,7 @@ def cmd_run(args) -> int:
             res = measure(tz, acct, c["symbol"], qty)
         except requests.RequestException as e:
             res = {"outcome": "error", "rows": [], "error": type(e).__name__}
-        new.append({"date": today, "slot": slot, "time": f"{datetime.now(NY):%H:%M:%S}", **c, "qty": qty, **res})
+        new.append({"date": today, "slot": slot, "time": f"{datetime.now(NY):%H:%M:%S}", **c, "qty": qty, "notional": NOTIONAL, **res})
     check_nothing_filled(tz, acct, {r["qid"] for r in new if r.get("qid")})
     args.store.parent.mkdir(parents=True, exist_ok=True)
     with args.store.open("a", encoding="utf-8") as f:
