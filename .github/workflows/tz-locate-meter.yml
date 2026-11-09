@@ -67,4 +67,4 @@ jobs:
         with:
           name: tzloc-encrypted
           path: tzloc.tgz.gpg
-          retention-days: 30
+          retention-days: 90

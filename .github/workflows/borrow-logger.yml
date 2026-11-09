@@ -1,0 +1,72 @@
+name: "Borrow logger"
+
+# scripts/borrow_logger.py: every 30 minutes of a trading day, free data on borrowing the stocks the book would short
+# (Alpaca movers and snapshots, Interactive Brokers' shortable file, TradeZero easy-to-borrow flags and locate
+# quotes that are cancelled, never accepted), and after the session the Reg SHO threshold lists, FINRA short volume,
+# halts and asset flags. The repository is public: everything leaves the runner only encrypted to the owner's key
+# (.github/tzloc-report.pub.asc), as one artifact per run kept 90 days. Compact records stay in the Actions cache.
+on:
+  schedule:
+    - cron: "5,35 12-21 * * 1-5"  # snapshots; the script keeps 08:00-16:15 New York in summer and winter
+    - cron: "45 19,20 * * 1-5"  # 15:45 New York, the book's decision time, for the last quote slot
+    - cron: "30 4 * * 2-6"  # after the session: daily files and the report
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "snap or daily"
+        type: choice
+        options: [snap, daily]
+        default: snap
+      force:
+        description: "Snap and quote now even outside the session and the quote slots"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: borrowlog
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      TZ_API_KEY_ID: ${{ secrets.TZ_API_KEY_ID }}
+      TZ_API_SECRET_KEY: ${{ secrets.TZ_API_SECRET_KEY }}
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+      MODE: ${{ inputs.mode || (github.event.schedule == '30 4 * * 2-6' && 'daily' || 'snap') }}
+      FORCE: ${{ inputs.force && '--force --force-quotes' || '' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/borrowlog/state
+          key: borrowlog-none
+          restore-keys: borrowlog-
+      - run: python scripts/borrow_logger.py "$MODE" $FORCE
+      - if: hashFiles('outputs/borrowlog/run/**') != ''
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/borrowlog/state
+          key: borrowlog-${{ github.run_id }}-${{ github.run_attempt }}
+      - if: hashFiles('outputs/borrowlog/run/**') != ''
+        run: |
+          gpg --batch --quiet --import .github/tzloc-report.pub.asc
+          tar czf - -C outputs/borrowlog run | gpg --batch --trust-model always --encrypt \
+            --recipient 3A439088B19222C64C00BA286E1157EC3AB4941F -o borrowlog.tgz.gpg
+      - if: hashFiles('borrowlog.tgz.gpg') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: borrowlog-${{ env.MODE }}
+          path: borrowlog.tgz.gpg
+          retention-days: 90
