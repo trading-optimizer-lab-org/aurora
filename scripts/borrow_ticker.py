@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 NY = ZoneInfo("America/New_York")
@@ -25,7 +25,7 @@ AHEAD = timedelta(hours=12)  # keep the chain only while there is work within th
 CATCHUP = timedelta(hours=3)  # a late successor still starts the slots it missed since its parent ended
 
 
-def events(day: datetime) -> list[tuple[datetime, str]]:
+def events(day: date) -> list[tuple[datetime, str]]:
     """(New York time, mode) of one day: snapshots Monday-Friday, the daily files Tuesday-Saturday."""
     at = lambda h, m: datetime(day.year, day.month, day.day, h, m, tzinfo=NY)  # noqa: E731
     out = [(at(h, m), "snap") for h, m in SNAPS] if day.weekday() < 5 else []
