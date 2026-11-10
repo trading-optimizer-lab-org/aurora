@@ -400,8 +400,7 @@ def cmd_snap(args) -> int:
     if cands is not None:
         prior[today] = [c["symbol"] for c in cands if c["src"] == "today"]
     elif not args.force and trading_day(today) is not False:  # the screener still shows the prior session
-        src = scan or (T._alpaca_get(f"{T.DATA}/v2/stocks/snapshots", {"symbols": ",".join(last), "feed": "iex"})
-                       if last else {})
+        src = scan or (market_scan(T._alpaca_get, last) if last else {})  # the delayed full feed, not IEX
         cands = prior_cands(last, src)
     if cands is not None:
         cands += scan_gainers(scan, today, {c["symbol"] for c in cands})
@@ -419,8 +418,14 @@ def cmd_snap(args) -> int:
         save(out, "snapshots.json", iex)
     except Exception as e:
         log.append(f"snapshots.json: {type(e).__name__}")
+    sip = {k: scan[k] for k in syms if k in scan}
+    try:  # candidates outside the scan (no universe yet, or not in it) still get the delayed full-market feed
+        if [k for k in syms if k not in sip]:
+            sip.update(market_scan(T._alpaca_get, [k for k in syms if k not in sip]))
+    except Exception as e:
+        log.append(f"candidate sip: {type(e).__name__}")
     for c in cands:  # the freshest of today's trades; else the screener's or the last close
-        p = fresh_price(today, scan.get(c["symbol"]), iex.get(c["symbol"]))
+        p = fresh_price(today, sip.get(c["symbol"]), iex.get(c["symbol"]))
         if p:
             c["price"], c["price_t"], c["price_feed"] = p
     try_save(out, "halts.xml", lambda: fetch("https://www.nasdaqtrader.com/rss.aspx",

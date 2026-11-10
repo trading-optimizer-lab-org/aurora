@@ -265,6 +265,10 @@ def test_market_scan_prices_and_premarket(tmp_path, monkeypatch) -> None:
         ("FLAT", "prior", 2.5, "delayed_sip"), ("UPP", "scan", 2.5, "delayed_sip"), ("TOD", "scan", 2.5, "delayed_sip")]
     assert (tmp_path / "out" / "2026-11-10" / "snap-0735" / "market_snapshot.json.gz").exists()
     assert L.cmd_snap(args) == 0 and len(L.T.load(state / "records.jsonl")) == 3  # a second trigger minutes later
+    (state / "universe.json").unlink()
+    (state / "records.jsonl").unlink()
+    assert L.cmd_snap(args) == 0  # no universe yet: the candidates alone get the delayed feed
+    assert [(r["symbol"], r.get("price_feed")) for r in L.T.load(state / "records.jsonl")] == [("FLAT", "delayed_sip")]
     monkeypatch.setattr(L, "trading_day", lambda d: False)
     (state / "records.jsonl").unlink()
     assert L.cmd_snap(args) == 0 and not (state / "records.jsonl").exists()  # a holiday records nothing
