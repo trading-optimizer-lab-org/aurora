@@ -1,12 +1,13 @@
 """Borrow logger: keeps a record of everything free that bears on shorting the stocks the book would short.
 
-Runs every 30 minutes of a trading day and once after it. Nothing here can spend money: TradeZero locate quotes
+Runs every 30 minutes while TradeZero gives locates (04:00-20:00 New York) and once the next morning. Nothing here can spend money: TradeZero locate quotes
 are cancelled and never accepted (tz_locate_meter.TZ refuses any accept call), and no order endpoint is called.
 
-  snap   every run 08:00-16:15 New York: Alpaca movers and snapshots of the candidates, Interactive Brokers' public
+  snap   every run 04:00-20:00 New York: Alpaca movers and snapshots of the candidates, Interactive Brokers' public
          shortable file, TradeZero easy-to-borrow flags, the account (cash, positions, locate inventory) to prove
-         nothing was spent, and at the quote slots a TradeZero locate quote per candidate.
-  daily  after the session: Reg SHO threshold lists (Nasdaq, NYSE), FINRA daily short volume, Nasdaq symbol
+         nothing was spent, and at the quote slots (premarket, session, after hours) a TradeZero locate quote
+         per candidate. Before the screener has today's movers, the candidates are the prior session's gainers.
+  daily  next morning: Reg SHO threshold lists (Nasdaq, NYSE), FINRA daily short volume, Nasdaq symbol
          directories and trading halts, Alpaca's asset flags, the day's TradeZero locate history, daily bars of the
          candidates, and the report over all stored records.
 
@@ -32,10 +33,13 @@ import borrow_proxy_meter as P  # noqa: E402
 import tz_locate_meter as T  # noqa: E402
 
 UA = {"User-Agent": "Mozilla/5.0 (research logger)"}
-SNAP = (8 * 60, 16 * 60 + 15)
-QUOTE_SLOTS = {"q0900": (8 * 60 + 45, 9 * 60 + 25), "q1100": (10 * 60 + 45, 11 * 60 + 25),
+SNAP = (4 * 60, 20 * 60)  # TradeZero's locate hours
+OPEN = 9 * 60 + 30
+QUOTE_SLOTS = {"q0415": (4 * 60, 4 * 60 + 45), "q0700": (6 * 60 + 45, 7 * 60 + 25),
+               "q0900": (8 * 60 + 45, 9 * 60 + 25), "q1100": (10 * 60 + 45, 11 * 60 + 25),
                "q1300": (12 * 60 + 45, 13 * 60 + 25), "q1430": (14 * 60 + 15, 14 * 60 + 55),
-               "q1550": (15 * 60 + 40, 16 * 60)}
+               "q1550": (15 * 60 + 40, 16 * 60), "q1700": (16 * 60 + 45, 17 * 60 + 25),
+               "q1930": (19 * 60 + 15, 19 * 60 + 55)}
 KEEP = 60  # sessions of compact records kept in the Actions cache
 BUSY = ("14 ", "18 ")  # another quote for the symbol is still pending or offered (the meter's)
 
@@ -53,7 +57,8 @@ def kinds(rows: list[dict]) -> dict:
     off = [r for r in rows if r.get("locateStatus") in (50, 65) and r.get("locatePrice")]
     offer = {k: min((r["locatePrice"] for r in off if r.get("locateType") in t), default=None)
              for k, t in (("regular", (1, 2)), ("pb", (3,)), ("su", (4,)))}
-    return {"threshold": any(r.get("locateType") in (3, 4) for r in rows), "offer": offer}
+    # TradeZero offers these pools for Reg SHO threshold stocks and also for some new listings (leveraged ETFs)
+    return {"pb_su_pool": any(r.get("locateType") in (3, 4) for r in rows), "offer": offer}
 
 
 def tz_account(tz: T.TZ, acct: str) -> dict:
@@ -79,13 +84,16 @@ def spent(acc: dict) -> list[str]:
             + [f"{k} unchecked" for k in ks if not isinstance(acc.get(k), dict) or "error" in acc[k]])
 
 
-def snap_records(cands: list[dict], ib: dict | None, etb: dict, quotes: dict, stamp: dict) -> list[dict]:
-    """ib None: the IB file could not be read, so its state is unknown, not "none"."""
+def snap_records(cands: list[dict], ib: dict | None, etb: dict, quotes: dict, stamp: dict,
+                 threshold: set | None = None) -> list[dict]:
+    """ib None: the IB file could not be read, so its state is unknown, not "none". threshold: symbols of the
+    latest Reg SHO threshold lists, None when none was fetched yet."""
     out = []
     for c in cands:
         qty = T.quantity(c["price"])
         ibs = P.ib_state(ib, c["symbol"], qty) if ib is not None else {"ib": None, "ib_avail": None, "ib_fee": None}
-        r = {**stamp, **c, "qty": qty, "notional": T.NOTIONAL, **ibs, "etb": etb.get(c["symbol"])}
+        r = {**stamp, **c, "qty": qty, "notional": T.NOTIONAL, **ibs, "etb": etb.get(c["symbol"]),
+             "threshold": None if threshold is None else c["symbol"] in threshold}
         q = quotes.get(c["symbol"])
         if q is None and stamp["slot"].startswith("q") and r["etb"]:
             r["outcome"] = "easy to borrow"  # not quoted because TradeZero has it easy to borrow
@@ -173,12 +181,13 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
             + f" | {f'{statistics.median(px):.2%}' if px else '-'} |")
     rej = Counter(x.get("text", "")[:40] for r in q if r["outcome"] == "rejected" for x in r.get("rows", []))
     L += ["", "Rejection reasons: " + ("; ".join(f"{k} x{v}" for k, v in rej.most_common(6)) or "none") + "."]
-    th = [r for r in q if r.get("threshold")]
-    if th:
-        L += [f"Reg SHO threshold stocks quoted: {len(th)}; Pre-Borrow offered on "
-              f"{sum(bool(r['offer'].get('pb')) for r in th)}, Single Use on {sum(bool(r['offer'].get('su')) for r in th)}."]
+    for name, th in (("Reg SHO threshold stocks quoted", [r for r in q if r.get("threshold")]),
+                     ("Quotes with Pre-Borrow or Single Use pools", [r for r in q if r.get("pb_su_pool")])):
+        if th:
+            L += [f"{name}: {len(th)}; Pre-Borrow offered on {sum(bool((r.get('offer') or {}).get('pb')) for r in th)}, "
+                  f"Single Use on {sum(bool((r.get('offer') or {}).get('su')) for r in th)}."]
     e = [r for r in recs if r.get("etb") is not None
-         and SNAP[0] <= int(r["time"][:2]) * 60 + int(r["time"][3:5]) < SNAP[1]]  # session snapshots only
+         and SNAP[0] <= int(r["time"][:2]) * 60 + int(r["time"][3:5]) < SNAP[1]]  # locate hours only
     if e:
         L += ["", "## Easy to borrow through the day", "", "| hour (New York) | snapshots | easy to borrow |",
               "|---|---|---|"]
@@ -248,6 +257,22 @@ def tz_snap(args, now: datetime, today: str, cands: list[dict], syms: list[str],
     return etb, quotes, slot
 
 
+def prior_cands(get, names: list[str]) -> list[dict]:
+    """The prior session's gainers at their latest (premarket) trade."""
+    snap = get(f"{T.DATA}/v2/stocks/snapshots", {"symbols": ",".join(names), "feed": "iex"})
+    out = []
+    for s in names:
+        p = ((snap.get(s) or {}).get("latestTrade") or {}).get("p")
+        if p and T.shortable(s, float(p)):
+            out.append({"symbol": s, "price": float(p), "pct": None, "src": "prior"})
+    return out
+
+
+def threshold_symbols(*texts: str) -> list[str]:
+    """Symbols of Nasdaq / NYSE threshold files: a header, pipe-separated rows, a timestamp line."""
+    return sorted({ln.split("|")[0] for t in texts for ln in t.splitlines()[1:] if "|" in ln and ln.split("|")[0]})
+
+
 def cmd_snap(args) -> int:
     now = datetime.now(T.NY)
     if not args.force and (now.weekday() >= 5 or not SNAP[0] <= minute(now) < SNAP[1]):
@@ -259,11 +284,15 @@ def cmd_snap(args) -> int:
         today = T.session_day(movers) or today
     recs, prior, audits = load_state(args.state)
     days = sorted(d for d in prior if d < today)
-    cands = T.candidates(T._alpaca_get, today, prior.get(days[-1], []) if days else [])
+    last = prior.get(days[-1], []) if days else []
+    cands = T.candidates(T._alpaca_get, today, last)
+    if cands is None and minute(now) < OPEN and last and not args.force:
+        cands = prior_cands(T._alpaca_get, last)  # premarket, the screener is still on the prior session
+    elif cands is not None:
+        prior[today] = [c["symbol"] for c in cands if c["src"] == "today"]
     if cands is None:
         print("the market screener is not on today's session (market closed): nothing to do", flush=True)
         return 0
-    prior[today] = [c["symbol"] for c in cands if c["src"] == "today"]
     out = args.out / today / f"snap-{now:%H%M}"
     try_save(out, "movers.json", lambda: T._alpaca_get(f"{T.DATA}/v1beta1/screener/stocks/movers", {"top": T.TOP}),
              log)
@@ -285,7 +314,8 @@ def cmd_snap(args) -> int:
     except Exception as e:  # TradeZero down must not lose the free files of this run
         log.append(f"tradezero: {type(e).__name__}")
     stamp = {"date": today, "time": f"{now:%H:%M:%S}", "slot": slot}
-    new = snap_records(cands, ib, etb, quotes, stamp)
+    th = args.state / "threshold.json"
+    new = snap_records(cands, ib, etb, quotes, stamp, set(json.loads(th.read_text())["symbols"]) if th.exists() else None)
     save(out, "records.json", new)
     append(args.state / "records.jsonl", new)
     (args.state / "prior.json").write_text(json.dumps({d: prior[d] for d in sorted(prior)[-10:]}))
@@ -312,6 +342,10 @@ def cmd_daily(args) -> int:
     while day.weekday() >= 5:
         day -= timedelta(days=1)
     d8, out, log = f"{day:%Y%m%d}", args.out / f"{day:%Y-%m-%d}" / "daily", list[str]()
+    done = args.state / "daily_done.txt"
+    if not args.force and done.exists() and done.read_text() == d8:
+        print(f"daily {day:%Y-%m-%d} already collected", flush=True)  # the backup cron after a run that happened
+        return 0
     try_save(out, "nasdaq_threshold.txt", lambda: fetch(
         f"https://www.nasdaqtrader.com/dynamic/symdir/regsho/nasdaqth{d8}.txt").text, log)
     try_save(out, "nyse_threshold.txt", lambda: fetch(
@@ -324,6 +358,12 @@ def cmd_daily(args) -> int:
                  log, gz=True)
     try_save(out, "halts.xml", lambda: fetch("https://www.nasdaqtrader.com/rss.aspx",
                                              params={"feed": "tradehalts"}).text, log)
+    lists = [out / "nasdaq_threshold.txt", out / "nyse_threshold.txt"]
+    if all(f.exists() for f in lists):
+        args.state.mkdir(parents=True, exist_ok=True)
+        (args.state / "threshold.json").write_text(json.dumps(
+            {"day": d8, "symbols": threshold_symbols(*(f.read_text(encoding="utf-8") for f in lists))}))
+        (args.state / "daily_done.txt").write_text(d8)
     recs, prior, audits = load_state(args.state)
     syms = sorted({r["symbol"] for r in recs if r["date"] == f"{day:%Y-%m-%d}"})
     if os.environ.get("APCA_API_KEY_ID"):

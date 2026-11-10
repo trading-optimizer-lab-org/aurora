@@ -29,7 +29,7 @@ class _R:
 
 
 class FakeTZ:
-    """AAA easy to borrow; BBB regular locate; CCC threshold with Single Use only; DDD busy (meter's quote)."""
+    """AAA easy to borrow; BBB regular locate; CCC with Single Use only; DDD busy (meter's quote)."""
 
     def __init__(self):
         self.calls, self.hist = [], []
@@ -96,12 +96,14 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("TZ_API_KEY_ID", "k")
     monkeypatch.setenv("TZ_API_SECRET_KEY", "s")
     args = Namespace(state=tmp_path / "state", out=tmp_path / "out", force=True, force_quotes=True)
+    monkeypatch.setattr(L, "quote_slot", lambda now: None)  # the clock must not pick a real slot
     assert L.cmd_snap(args) == 0
     assert not any("accept" in u or "/order" in u and m != "get" for m, u in fake.calls)
     recs = {r["symbol"]: r for r in L.T.load(args.state / "records.jsonl")}
     assert recs["AAA"]["etb"] is True and recs["AAA"]["outcome"] == "easy to borrow"  # counted, not quoted
     assert recs["BBB"]["outcome"] == "offered" and recs["BBB"]["offer"]["regular"] == 0.05 and recs["BBB"]["ib"] == "enough"
-    assert recs["CCC"]["threshold"] and recs["CCC"]["offer"] == {"regular": None, "pb": None, "su": 0.02}
+    assert recs["CCC"]["pb_su_pool"] and recs["CCC"]["offer"] == {"regular": None, "pb": None, "su": 0.02}
+    assert recs["CCC"]["threshold"] is None  # no threshold list fetched yet: unknown
     assert recs["DDD"]["outcome"] == "busy"
     run = args.out / today
     snap = next(run.iterdir())
@@ -121,8 +123,8 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     assert "Pre-Borrow offered on 0, Single Use on 1." in text
     assert "no positions, orders or locates" in text and "cash now" not in text
     assert "- cash now: 585.0" in L.report(recs2, audits, 585.0)
-    late = [{**r, "slot": "snap", "time": "16:30:00"} for r in recs.values()]
-    assert "## Easy to borrow through the day" not in L.report(late, audits)  # after 16:15 is not session
+    late = [{**r, "slot": "snap", "time": "20:30:00"} for r in recs.values()]
+    assert "## Easy to borrow through the day" not in L.report(late, audits)  # after 20:00 TradeZero gives no locates
     monkeypatch.setattr(L, "quote_slot", lambda now: "q1100")
     args.force_quotes = False
     assert L.cmd_snap(args) == 0 and L.cmd_snap(args) == 0
@@ -138,6 +140,8 @@ def test_logger_daily_files_and_failures(tmp_path, monkeypatch) -> None:
     def fetch(url, **kw):
         if "finra" in url:
             raise L.requests.ConnectionError("down")
+        if "threshold" in url or "regsho" in url:
+            return Namespace(text="Symbol|Name|Flag\nZZZ|Z corp|Y\n20261109210500\n")
         return Namespace(text=f"Symbol|x\n{url}\n")
 
     monkeypatch.setattr(L, "fetch", fetch)
@@ -148,6 +152,10 @@ def test_logger_daily_files_and_failures(tmp_path, monkeypatch) -> None:
     assert {"nasdaq_threshold.txt", "nyse_threshold.txt", "nasdaqlisted.txt.gz", "halts.xml", "REPORT.md"} <= names
     assert "finra_short_volume.txt" in (day / "daily" / "errors.txt").read_text()
     assert (tmp_path / "out" / "REPORT.md").exists()
+    assert L.json.loads((args.state / "threshold.json").read_text())["symbols"] == ["ZZZ"]
+    calls: list[str] = []
+    monkeypatch.setattr(L, "fetch", lambda url, **kw: calls.append(url))
+    assert L.cmd_daily(args) == 0 and calls == []  # the backup cron does not collect the same day twice
 
 
 def test_errors_keep_the_account_out_of_the_public_log(monkeypatch, capsys) -> None:
@@ -177,3 +185,16 @@ def test_session_day_and_web_pages_are_not_data(monkeypatch) -> None:
     log: list[str] = []
     L.try_save(Path("unused"), "nasdaq_threshold.txt", lambda: L.fetch("https://x/nasdaqth20261109.txt").text, log)
     assert log and "web page instead of data" in log[0]
+
+
+def test_premarket_candidates_and_threshold_files() -> None:
+    L = _script("borrow_logger", "borrow_logger_under_test5")
+
+    def get(url, params):
+        assert url.endswith("/snapshots") and params["symbols"] == "AAA,BBB,CCC"
+        return {"AAA": {"latestTrade": {"p": 3.1}}, "BBB": {"latestTrade": {"p": 0.2}}, "CCC": {}}
+    assert L.prior_cands(get, ["AAA", "BBB", "CCC"]) == [{"symbol": "AAA", "price": 3.1, "pct": None, "src": "prior"}]
+    nas = "Symbol|Security Name|Market Category|Reg SHO Threshold Flag|Rule 3210|Filler\nAAPD|X|G|Y|N|\n20261109\n"
+    assert L.threshold_symbols(nas, "Symbol|Security Name\n20261109210500\n") == ["AAPD"]
+    assert L.quote_slot(L.datetime(2026, 11, 10, 4, 5, tzinfo=L.T.NY)) == "q0415"
+    assert L.quote_slot(L.datetime(2026, 11, 10, 19, 35, tzinfo=L.T.NY)) == "q1930"
