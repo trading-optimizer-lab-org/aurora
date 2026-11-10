@@ -53,6 +53,8 @@ class FakeTZ:
             return _R({"orders": []})
         if path.endswith("/locates/inventory"):
             return _R({"locateInventory": []})
+        if "/cash-transactions/" in path:
+            return _R({"cashTransactions": [{"type": "Deposit"}]})
         raise AssertionError(path)
 
     def post(self, url, json=None, **kw):
@@ -110,7 +112,7 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     assert gzip.decompress((snap / "ib_usa.txt.gz").read_bytes()).startswith(b"BBB")
     assert json.loads((snap / "account.json").read_text())["pnl"]["availableCash"] == 585.0
     audits = L.T.load(args.state / "audits.jsonl")
-    assert audits[0] == {"date": today, "time": audits[0]["time"], "spent": []}  # no balance in the cache
+    assert audits[0] == {"date": today, "time": audits[0]["time"], "spent": [], "cash_rows": 1}  # no balance
     ok: dict = {"orders": {"orders": []}, "inventory": {"locates": []}}
     assert L.spent({**ok, "positions": {"positions": [{"symbol": "X"}]}}) == ["positions"]
     assert L.spent({**ok, "positions": {"error": "Timeout"}}) == ["positions unchecked"]  # a failed check is not clean
@@ -155,6 +157,11 @@ def test_logger_daily_files_and_failures(tmp_path, monkeypatch) -> None:
     assert L.json.loads((args.state / "threshold.json").read_text())["symbols"] == ["ZZZ"]
     calls: list[str] = []
     monkeypatch.setattr(L, "fetch", lambda url, **kw: calls.append(url))
+    assert L.cmd_daily(args) == 0 and any("finra" in u for u in calls)  # FINRA failed: the backup run retries
+    monkeypatch.setattr(L, "fetch", lambda url, **kw: Namespace(text="Symbol|Name|Flag\nZZZ|Z corp|Y\n"))
+    assert L.cmd_daily(args) == 0  # every source answers: the day is done
+    calls.clear()
+    monkeypatch.setattr(L, "fetch", lambda url, **kw: calls.append(url))
     assert L.cmd_daily(args) == 0 and calls == []  # the backup cron does not collect the same day twice
 
 
@@ -195,11 +202,69 @@ def test_premarket_candidates_and_threshold_files() -> None:
     new = {"date": "2026-11-10", "threshold": True, "threshold_day": "20261109"}
     assert L.migrate(dict(new)) == new
 
-    def get(url, params):
-        assert url.endswith("/snapshots") and params["symbols"] == "AAA,BBB,CCC"
-        return {"AAA": {"latestTrade": {"p": 3.1}}, "BBB": {"latestTrade": {"p": 0.2}}, "CCC": {}}
-    assert L.prior_cands(get, ["AAA", "BBB", "CCC"]) == [{"symbol": "AAA", "price": 3.1, "pct": None, "src": "prior"}]
+    snap = {"AAA": {"latestTrade": {"p": 3.1}}, "BBB": {"latestTrade": {"p": 0.2}}, "CCC": {}}
+    assert L.prior_cands(["AAA", "BBB", "CCC"], snap) == [{"symbol": "AAA", "price": 3.1, "pct": None, "src": "prior"}]
     nas = "Symbol|Security Name|Market Category|Reg SHO Threshold Flag|Rule 3210|Filler\nAAPD|X|G|Y|N|\n20261109\n"
     assert L.threshold_symbols(nas, "Symbol|Security Name\n20261109210500\n") == ["AAPD"]
     assert L.quote_slot(L.datetime(2026, 11, 10, 4, 5, tzinfo=L.T.NY)) == "q0415"
     assert L.quote_slot(L.datetime(2026, 11, 10, 19, 35, tzinfo=L.T.NY)) == "q1930"
+
+
+def test_market_scan_prices_and_premarket(tmp_path, monkeypatch) -> None:
+    L = _script("borrow_logger", "borrow_logger_under_test6")
+    calls: list[tuple] = []
+
+    def get(url, params):
+        calls.append((url, params))
+        return {s: {} for s in params["symbols"].split(",")}
+    assert len(L.market_scan(get, [f"S{i}" for i in range(2500)])) == 2500
+    assert [p["feed"] for _, p in calls] == ["delayed_sip"] * 3 and len(calls[0][1]["symbols"].split(",")) == 1000
+
+    # a premarket trade of today; yesterday's trade is older and not today's
+    sip = {"latestTrade": {"p": 2.5, "t": "2026-11-10T12:10:00Z"}}
+    iex = {"latestTrade": {"p": 2.0, "t": "2026-11-09T20:51:00Z"}}
+    assert L.fresh_price("2026-11-10", sip, iex) == (2.5, "2026-11-10T12:10:00Z", "delayed_sip")
+    assert L.fresh_price("2026-11-10", None, iex) is None
+    scan = {"UPP": {**sip, "dailyBar": {"c": 1.0, "t": "2026-11-09T05:00:00Z"}},
+            "FLAT": {**sip, "dailyBar": {"c": 2.4, "t": "2026-11-09T05:00:00Z"}},
+            "TOD": {**sip, "dailyBar": {"c": 2.5, "t": "2026-11-10T05:00:00Z"}, "prevDailyBar": {"c": 2.0}},
+            "OLD": {**iex, "dailyBar": {"c": 1.0, "t": "2026-11-09T05:00:00Z"}}}
+    assert [(c["symbol"], c["pct"]) for c in L.scan_gainers(scan, "2026-11-10", set())] == [("UPP", 150.0), ("TOD", 25.0)]
+
+    pages = iter([{"bars": {"A": [1, 2]}, "next_page_token": "x"}, {"bars": {"A": [3], "B": [4]}}])
+    assert L.alpaca_all(lambda u, p: next(pages), "u", {}) == {"bars": {"A": [1, 2, 3], "B": [4]}}
+    assert L.cash_rows({"cash": {"error": "HTTPError"}}) is None and L.cash_rows({"cash": [{"a": 1}, {"b": 2}]}) == 2
+    assert L.cash_rows({"cash": {"rows": [{"a": 1}, {"b": 2}]}}) == 2
+
+    class Clock(L.datetime):  # type: ignore[name-defined]
+        @classmethod
+        def now(cls, tz=None):
+            return L.datetime(2026, 11, 10, 7, 35, tzinfo=L.T.NY)
+    monkeypatch.setattr(L, "datetime", Clock)
+    monkeypatch.setattr(L, "trading_day", lambda d: True)
+    for k in ("TZ_API_KEY_ID", "TZ_API_SECRET_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(L.P, "ib_fetch", lambda: "")
+    monkeypatch.setattr(L, "fetch", lambda url, **kw: Namespace(text="<rss/>"))
+
+    def alpaca(url, params):
+        if url.endswith("/movers"):
+            return {"last_updated": "2026-11-09T21:00:00Z", "gainers": []}  # still the prior session
+        if params.get("feed") == "delayed_sip":
+            return {s: scan.get(s, {}) for s in params["symbols"].split(",")}
+        return {}
+    monkeypatch.setattr(L.T, "_alpaca_get", alpaca)
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "universe.json").write_text(L.json.dumps(sorted(scan)))
+    (state / "prior.json").write_text(L.json.dumps({"2026-11-09": ["FLAT"]}))
+    args = Namespace(state=state, out=tmp_path / "out", force=False, force_quotes=False)
+    assert L.cmd_snap(args) == 0
+    recs = L.T.load(state / "records.jsonl")
+    assert [(r["symbol"], r["src"], r["price"], r.get("price_feed")) for r in recs] == [
+        ("FLAT", "prior", 2.5, "delayed_sip"), ("UPP", "scan", 2.5, "delayed_sip"), ("TOD", "scan", 2.5, "delayed_sip")]
+    assert (tmp_path / "out" / "2026-11-10" / "snap-0735" / "market_snapshot.json.gz").exists()
+    assert L.cmd_snap(args) == 0 and len(L.T.load(state / "records.jsonl")) == 3  # a second trigger minutes later
+    monkeypatch.setattr(L, "trading_day", lambda d: False)
+    (state / "records.jsonl").unlink()
+    assert L.cmd_snap(args) == 0 and not (state / "records.jsonl").exists()  # a holiday records nothing
