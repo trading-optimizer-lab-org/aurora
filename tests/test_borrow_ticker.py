@@ -59,5 +59,15 @@ def test_chain(monkeypatch) -> None:
     assert T.main() == 0
     runs = [c for c in calls if c[0] == "workflow"]
     assert [c[2] for c in runs] == ["borrow-logger.yml", "borrow-logger.yml", "borrow-ticker.yml"]
-    assert runs[0][-1] == "mode=snap" and runs[1][-1] == "mode=daily"
-    assert runs[2][-3:] == ("parent=9", "-f", f"since={(since + T.LIFE).isoformat()}")
+    assert {runs[0][-1], runs[1][-1]} == {"mode=snap", "mode=daily"}
+    assert runs[2][-3] == "parent=9" and T.datetime.fromisoformat(runs[2][-1][6:]) == since + T.LIFE
+
+    # a late successor runs the latest missed slot of each mode once, then the rest on time
+    real = _ticker()
+    mon = datetime(2026, 11, 9, 9, 50, tzinfo=T.NY)
+    p = real.plan(mon - timedelta(hours=2), mon)
+    assert [(t.astimezone(T.NY).strftime("%H:%M"), m) for t, m in p[:2]] == [("09:35", "snap"), ("10:05", "snap")]
+    # DST: the end of a chain crossing the change is still LIFE of real time later
+    st = datetime(2026, 11, 1, 4, 0, tzinfo=T.UTC)
+    assert (st + T.LIFE).timestamp() - st.timestamp() == T.LIFE.total_seconds()
+    assert real.upcoming(st, st + timedelta(days=2))[0][0].astimezone(T.NY).strftime("%a %H:%M") == "Mon 04:05"

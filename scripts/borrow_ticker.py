@@ -2,7 +2,7 @@
 
 One run of the ticker workflow sleeps until each start time and dispatches borrow-logger.yml. Before the
 6-hour job limit it dispatches its own successor, so the chain covers every day with work. A cron kick every
-2 hours restarts the chain if it ever breaks; while the chain is alive that kick exits at once.
+hour restarts the chain if it ever breaks; while the chain is alive that kick exits at once.
 """
 
 from __future__ import annotations
@@ -12,15 +12,17 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 NY = ZoneInfo("America/New_York")
+UTC = timezone.utc  # all arithmetic in UTC: same-zone subtraction in Python ignores a DST change
 SNAPS = [(h, m) for h in range(4, 20) for m in (5, 35)] + [(15, 45)]  # TradeZero's locate hours + decision time
 DAILY = (5, 30)  # threshold lists of the prior session are out by then
 LIFE = timedelta(hours=5, minutes=40)  # under the 6-hour job limit
 REPLAY = timedelta(minutes=30)  # the logger skips a snapshot it already took, so a replay is harmless
 AHEAD = timedelta(hours=12)  # keep the chain only while there is work within this
+CATCHUP = timedelta(hours=3)  # a late successor still starts the slots it missed since its parent ended
 
 
 def events(day: datetime) -> list[tuple[datetime, str]]:
@@ -33,13 +35,33 @@ def events(day: datetime) -> list[tuple[datetime, str]]:
 
 
 def upcoming(now: datetime, until: datetime) -> list[tuple[datetime, str]]:
-    days = [now + timedelta(days=i) for i in range((until - now).days + 2)]
-    return [e for d in days for e in events(d) if now <= e[0] < until]
+    first = now.astimezone(NY).date()
+    days = [first + timedelta(days=i) for i in range(-1, (until - now).days + 2)]
+    return sorted(e for d in days for e in events(d) if now <= e[0] < until)
 
 
 def gh(*args: str) -> str:
-    return subprocess.run(["gh", *args, "--repo", os.environ["GITHUB_REPOSITORY"]],
-                          check=True, capture_output=True, text=True).stdout
+    """Three tries with a timeout: one GitHub hiccup must not break the chain."""
+    for i in range(3):
+        try:
+            return subprocess.run(["gh", *args, "--repo", os.environ["GITHUB_REPOSITORY"]],
+                                  check=True, capture_output=True, text=True, timeout=60).stdout
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if i == 2:
+                raise
+            time.sleep(20)
+    return ""
+
+
+def sleep_until(at: datetime) -> None:
+    time.sleep(max(0.0, at.timestamp() - time.time()))
+
+
+def plan(start: datetime, now: datetime) -> list[tuple[datetime, str]]:
+    """The start times from start to start + LIFE; the missed ones collapse to the latest of each mode, run now."""
+    due = upcoming(start, start + LIFE)
+    late = {m: (t, m) for t, m in due if t <= now}
+    return sorted(late.values()) + [e for e in due if e[0] > now]
 
 
 def older_twin(me: int, parent: str, runs: list[dict]) -> bool:
@@ -54,19 +76,24 @@ def main() -> int:
     if older_twin(me, parent, running):
         print("the chain is alive in another run", flush=True)
         return 0
+    now = datetime.now(UTC)
     since = os.environ.get("SINCE", "")  # the parent's end: no start time falls between two runs
-    start = datetime.now(NY) - REPLAY  # a fresh chain also starts what the broken one missed lately
-    if since and datetime.now(NY) - datetime.fromisoformat(since) < timedelta(minutes=30):
-        start = datetime.fromisoformat(since).astimezone(NY)
+    start = now - REPLAY  # a fresh chain also starts what the broken one missed lately
+    if since and now - datetime.fromisoformat(since) < CATCHUP:
+        start = datetime.fromisoformat(since).astimezone(UTC)
     if not upcoming(start, start + AHEAD):
         print("no logger run within 12 hours: the chain stops until a cron kick", flush=True)
         return 0
-    for at, mode in upcoming(start, start + LIFE):
-        time.sleep(max(0.0, (at - datetime.now(NY)).total_seconds()))
-        gh("workflow", "run", "borrow-logger.yml", "--ref", "main", "-f", f"mode={mode}")
-        print(f"{at:%a %H:%M} {mode}: started", flush=True)
+    for at, mode in plan(start, now):
+        sleep_until(at)
+        try:
+            gh("workflow", "run", "borrow-logger.yml", "--ref", "main", "-f", f"mode={mode}")
+        except Exception as e:  # one failed start must not stop the later ones nor the successor
+            print(f"{at.astimezone(NY):%a %H:%M} {mode}: failed {type(e).__name__}", flush=True)
+            continue
+        print(f"{at.astimezone(NY):%a %H:%M} {mode}: started", flush=True)
     end = start + LIFE
-    time.sleep(max(0.0, (end - datetime.now(NY)).total_seconds()))
+    sleep_until(end)
     if upcoming(end, end + AHEAD):
         gh("workflow", "run", "borrow-ticker.yml", "--ref", "main",
            "-f", f"parent={me}", "-f", f"since={end.isoformat()}")
