@@ -189,6 +189,11 @@ def test_session_day_and_web_pages_are_not_data(monkeypatch) -> None:
 
 def test_premarket_candidates_and_threshold_files() -> None:
     L = _script("borrow_logger", "borrow_logger_under_test5")
+    old = {"date": "2026-11-09", "threshold": True, "offer": {"su": 0.02}}
+    assert L.migrate(dict(old)) == {"date": "2026-11-09", "offer": {"su": 0.02}, "pb_su_pool": True,
+                                    "threshold": None, "threshold_day": None}
+    new = {"date": "2026-11-10", "threshold": True, "threshold_day": "20261109"}
+    assert L.migrate(dict(new)) == new
 
     def get(url, params):
         assert url.endswith("/snapshots") and params["symbols"] == "AAA,BBB,CCC"

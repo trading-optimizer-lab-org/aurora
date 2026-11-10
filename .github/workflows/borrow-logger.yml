@@ -56,11 +56,6 @@ jobs:
           restore-keys: borrowlog-
       - run: python scripts/borrow_logger.py "$MODE" $FORCE
       - if: hashFiles('outputs/borrowlog/run/**') != ''
-        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
-        with:
-          path: outputs/borrowlog/state
-          key: borrowlog-${{ github.run_id }}-${{ github.run_attempt }}
-      - if: hashFiles('outputs/borrowlog/run/**') != ''
         run: |
           gpg --batch --quiet --import .github/tzloc-report.pub.asc
           tar czf - -C outputs/borrowlog run | gpg --batch --trust-model always --encrypt \
@@ -71,3 +66,9 @@ jobs:
           name: borrowlog-${{ env.MODE }}
           path: borrowlog.tgz.gpg
           retention-days: 90
+      # saved only after the artifact is uploaded: if the upload fails, the next run redoes this one
+      - if: hashFiles('outputs/borrowlog/run/**') != ''
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/borrowlog/state
+          key: borrowlog-${{ github.run_id }}-${{ github.run_attempt }}

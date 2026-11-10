@@ -85,15 +85,16 @@ def spent(acc: dict) -> list[str]:
 
 
 def snap_records(cands: list[dict], ib: dict | None, etb: dict, quotes: dict, stamp: dict,
-                 threshold: set | None = None) -> list[dict]:
+                 threshold: set | None = None, threshold_day: str | None = None) -> list[dict]:
     """ib None: the IB file could not be read, so its state is unknown, not "none". threshold: symbols of the
-    latest Reg SHO threshold lists, None when none was fetched yet."""
+    Reg SHO threshold lists of threshold_day, None when no recent list was fetched."""
     out = []
     for c in cands:
         qty = T.quantity(c["price"])
         ibs = P.ib_state(ib, c["symbol"], qty) if ib is not None else {"ib": None, "ib_avail": None, "ib_fee": None}
         r = {**stamp, **c, "qty": qty, "notional": T.NOTIONAL, **ibs, "etb": etb.get(c["symbol"]),
-             "threshold": None if threshold is None else c["symbol"] in threshold}
+             "threshold": None if threshold is None else c["symbol"] in threshold,
+             "threshold_day": None if threshold is None else threshold_day}
         q = quotes.get(c["symbol"])
         if q is None and stamp["slot"].startswith("q") and r["etb"]:
             r["outcome"] = "easy to borrow"  # not quoted because TradeZero has it easy to borrow
@@ -211,8 +212,17 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
 
 # ---------------------------------------------------------------- commands
 
+def migrate(r: dict) -> dict:
+    """Records written before threshold_day existed used "threshold" for the Pre-Borrow / Single Use pool."""
+    if "threshold_day" not in r:
+        if "threshold" in r:
+            r["pb_su_pool"] = r.pop("threshold")
+        r["threshold"] = r["threshold_day"] = None
+    return r
+
+
 def load_state(state: Path) -> tuple[list[dict], dict, list[dict]]:
-    recs = T.load(state / "records.jsonl")
+    recs = [migrate(r) for r in T.load(state / "records.jsonl")]
     prior = json.loads((state / "prior.json").read_text()) if (state / "prior.json").exists() else {}
     audits = T.load(state / "audits.jsonl")
     return recs, prior, audits
@@ -220,7 +230,7 @@ def load_state(state: Path) -> tuple[list[dict], dict, list[dict]]:
 
 def append(path: Path, rows: list[dict]) -> None:
     """Add rows, keeping the last KEEP sessions: the cache stays small; every run's artifact keeps all of it."""
-    old = T.load(path)
+    old = [migrate(r) for r in T.load(path)] if path.name == "records.jsonl" else T.load(path)
     keep = set(sorted({r["date"] for r in old + rows})[-KEEP:])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(r) + "\n" for r in old + rows if r["date"] in keep), encoding="utf-8")
@@ -315,7 +325,11 @@ def cmd_snap(args) -> int:
         log.append(f"tradezero: {type(e).__name__}")
     stamp = {"date": today, "time": f"{now:%H:%M:%S}", "slot": slot}
     th = args.state / "threshold.json"
-    new = snap_records(cands, ib, etb, quotes, stamp, set(json.loads(th.read_text())["symbols"]) if th.exists() else None)
+    tl = json.loads(th.read_text()) if th.exists() else {}
+    # a list older than 4 days means the daily fetch failed: membership is unknown, not the stale list
+    fresh = bool(tl) and (datetime.strptime(today, "%Y-%m-%d") - datetime.strptime(tl["day"], "%Y%m%d")).days <= 4
+    new = snap_records(cands, ib, etb, quotes, stamp, set(tl["symbols"]) if fresh else None,
+                       tl["day"] if fresh else None)
     save(out, "records.json", new)
     append(args.state / "records.jsonl", new)
     (args.state / "prior.json").write_text(json.dumps({d: prior[d] for d in sorted(prior)[-10:]}))
