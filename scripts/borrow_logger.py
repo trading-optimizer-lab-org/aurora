@@ -3,13 +3,18 @@
 Runs every 30 minutes while TradeZero gives locates (04:00-20:00 New York) and once the next morning. Nothing here can spend money: TradeZero locate quotes
 are cancelled and never accepted (tz_locate_meter.TZ refuses any accept call), and no order endpoint is called.
 
-  snap   every run 04:00-20:00 New York: Alpaca movers and snapshots of the candidates, Interactive Brokers' public
+  snap   every run 04:00-20:00 New York: Alpaca movers, a 15-minute delayed snapshot of the whole market (the free
+         IEX feed has no trades before 08:00 or after 17:00), IEX snapshots of the candidates, Nasdaq halts,
+         Interactive Brokers' public
          shortable file, TradeZero easy-to-borrow flags, the account (cash, positions, locate inventory) to prove
          nothing was spent, and at the quote slots (premarket, session, after hours) a TradeZero locate quote
-         per candidate. Before the screener has today's movers, the candidates are the prior session's gainers.
-  daily  next morning: Reg SHO threshold lists (Nasdaq, NYSE), FINRA daily short volume, Nasdaq symbol
-         directories and trading halts, Alpaca's asset flags, the day's TradeZero locate history, daily bars of the
-         candidates, and the report over all stored records.
+         per candidate. Candidates: the screener's gainers, the prior session's gainers, and the top gainers of the
+         whole-market snapshot (premarket and after hours, when the screener still shows the session).
+  daily  next morning: Reg SHO threshold lists (Nasdaq, NYSE), Rule 201 short sale restriction lists (Nasdaq,
+         Cboe), FINRA daily short volume, Nasdaq symbol directories, trading halts (Nasdaq, NYSE history),
+         Alpaca's asset flags, the day's TradeZero locate history and cash transactions, daily bars and 1-minute
+         bars 04:00-20:00 (consolidated feed) plus the overnight session (Blue Ocean) of the candidates, and the
+         report over all stored records.
 
 Raw files go to --out (encrypted by the workflow); compact records accumulate in --state (Actions cache).
 """
@@ -23,7 +28,7 @@ import statistics
 import sys
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -41,6 +46,8 @@ QUOTE_SLOTS = {"q0415": (4 * 60, 4 * 60 + 45), "q0700": (6 * 60 + 45, 7 * 60 + 2
                "q1550": (15 * 60 + 40, 16 * 60), "q1700": (16 * 60 + 45, 17 * 60 + 25),
                "q1930": (19 * 60 + 15, 19 * 60 + 55)}
 KEEP = 60  # sessions of compact records kept in the Actions cache
+SCAN_TOP, SCAN_MIN_PCT = 20, 10.0  # whole-market gainers added to the candidates
+EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA", "BATS"}
 BUSY = ("14 ", "18 ")  # another quote for the symbol is still pending or offered (the meter's)
 
 
@@ -66,7 +73,8 @@ def tz_account(tz: T.TZ, acct: str) -> dict:
     for k, path in (("account", f"/v1/api/account/{acct}"), ("pnl", f"/v1/api/accounts/{acct}/pnl"),
                     ("positions", f"/v1/api/accounts/{acct}/positions"),
                     ("orders", f"/v1/api/accounts/{acct}/orders"),
-                    ("inventory", f"/v1/api/accounts/{acct}/locates/inventory")):
+                    ("inventory", f"/v1/api/accounts/{acct}/locates/inventory"),
+                    ("cash", f"/v1/api/accounts/{acct}/cash-transactions/start-date/2026-11-01")):
         try:
             out[k] = tz.get(path)
         except requests.RequestException as e:
@@ -79,9 +87,73 @@ def spent(acc: dict) -> list[str]:
     """Account activity that commits money: open positions, orders today, locate inventory (the owner's or a bug)."""
     def rows(x) -> list:
         return [v for v in (x.values() if isinstance(x, dict) else [x]) if isinstance(v, list) and v]
-    ks = ("positions", "orders", "inventory")
+    ks = ("positions", "orders", "inventory")  # cash holds the deposit too: its rows are counted, not flagged
     return ([k for k in ks if rows(acc.get(k) or {})]
             + [f"{k} unchecked" for k in ks if not isinstance(acc.get(k), dict) or "error" in acc[k]])
+
+
+def cash_rows(acc: dict) -> int | None:
+    """How many cash transactions TradeZero lists (a new one is a fee or a deposit); no amounts."""
+    c = acc.get("cash")
+    if not isinstance(c, (dict, list)) or (isinstance(c, dict) and "error" in c):
+        return None
+    rows = [v for v in (c.values() if isinstance(c, dict) else [c]) if isinstance(v, list)]
+    return sum(len(v) for v in rows)
+
+
+def ny_date(ts: str) -> str:
+    """New York date of an Alpaca UTC timestamp."""
+    try:
+        return f"{datetime.fromisoformat(ts[:19]).replace(tzinfo=timezone.utc).astimezone(T.NY):%Y-%m-%d}"
+    except ValueError:
+        return ""
+
+
+def fresh_price(today: str, *snaps: dict | None) -> tuple[float, str, str] | None:
+    """Latest trade of today across the feeds' snapshots of one symbol: (price, UTC time, feed)."""
+    best = None
+    for feed, s in zip(("delayed_sip", "iex"), snaps):
+        t = (s or {}).get("latestTrade") or {}
+        if t.get("p") and ny_date(str(t.get("t", ""))) == today and (best is None or t["t"] > best[1]):
+            best = (float(t["p"]), t["t"], feed)
+    return best
+
+
+def scan_gainers(scan: dict, today: str, skip: set) -> list[dict]:
+    """Top gainers of the whole-market snapshot against the last close before today."""
+    out = []
+    for sym, s in scan.items():
+        p = fresh_price(today, s)
+        d, pd = (s or {}).get("dailyBar") or {}, (s or {}).get("prevDailyBar") or {}
+        ref = pd.get("c") if ny_date(str(d.get("t", ""))) == today else d.get("c")
+        if p and ref and sym not in skip and T.shortable(sym, p[0]):
+            pct = (p[0] / float(ref) - 1) * 100
+            if pct >= SCAN_MIN_PCT:
+                out.append({"symbol": sym, "price": p[0], "pct": round(pct, 2), "src": "scan"})
+    return sorted(out, key=lambda c: -c["pct"])[:SCAN_TOP]
+
+
+def market_scan(get, syms: list[str]) -> dict:
+    """15-minute delayed consolidated snapshots of every symbol, 1,000 per request."""
+    out: dict = {}
+    for i in range(0, len(syms), 1000):
+        out.update(get(f"{T.DATA}/v2/stocks/snapshots", {"symbols": ",".join(syms[i:i + 1000]),
+                                                        "feed": "delayed_sip"}))
+    return out
+
+
+def alpaca_all(get, url: str, params: dict) -> dict:
+    """Every page of a multi-symbol bars request."""
+    bars: dict = {}
+    page = None
+    for _ in range(50):
+        r = get(url, {**params, **({"page_token": page} if page else {})})
+        for k, v in (r.get("bars") or {}).items():
+            bars.setdefault(k, []).extend(v)
+        page = r.get("next_page_token")
+        if not page:
+            break
+    return {"bars": bars}
 
 
 def snap_records(cands: list[dict], ib: dict | None, etb: dict, quotes: dict, stamp: dict,
@@ -254,7 +326,7 @@ def tz_snap(args, now: datetime, today: str, cands: list[dict], syms: list[str],
     acc = tz_account(tz, acct)
     save(out, "account.json", acc)
     # the cache is not encrypted: it keeps whether money moved, never the balance or the account number
-    audits_new = [{"date": today, "time": f"{now:%H:%M}", "spent": spent(acc)}]
+    audits_new = [{"date": today, "time": f"{now:%H:%M}", "spent": spent(acc), "cash_rows": cash_rows(acc)}]
     append(args.state / "audits.jsonl", audits_new)
     audits += audits_new
     if audits_new[0]["spent"]:
@@ -267,15 +339,28 @@ def tz_snap(args, now: datetime, today: str, cands: list[dict], syms: list[str],
     return etb, quotes, slot
 
 
-def prior_cands(get, names: list[str]) -> list[dict]:
-    """The prior session's gainers at their latest (premarket) trade."""
-    snap = get(f"{T.DATA}/v2/stocks/snapshots", {"symbols": ",".join(names), "feed": "iex"})
+def prior_cands(names: list[str], scan: dict) -> list[dict]:
+    """The prior session's gainers at their last consolidated trade (premarket, or the prior close)."""
     out = []
     for s in names:
-        p = ((snap.get(s) or {}).get("latestTrade") or {}).get("p")
+        p = ((scan.get(s) or {}).get("latestTrade") or {}).get("p")
         if p and T.shortable(s, float(p)):
             out.append({"symbol": s, "price": float(p), "pct": None, "src": "prior"})
     return out
+
+
+def trading_day(today: str) -> bool | None:
+    """Alpaca's market calendar: False on a holiday, None when it cannot be read."""
+    if not os.environ.get("APCA_API_KEY_ID"):
+        return None
+    h = {"APCA-API-KEY-ID": os.environ["APCA_API_KEY_ID"], "APCA-API-SECRET-KEY": os.environ["APCA_API_SECRET_KEY"]}
+    try:
+        r = requests.get(f"{alpaca_base(h)}/v2/calendar", headers=h, params={"start": today, "end": today},
+                         timeout=15)
+        r.raise_for_status()
+        return any(d.get("date") == today for d in r.json())
+    except (requests.RequestException, ValueError):
+        return None
 
 
 def threshold_symbols(*texts: str) -> list[str]:
@@ -293,22 +378,51 @@ def cmd_snap(args) -> int:
         movers = T._alpaca_get(f"{T.DATA}/v1beta1/screener/stocks/movers", {"top": T.TOP})
         today = T.session_day(movers) or today
     recs, prior, audits = load_state(args.state)
+    qs = quote_slot(now)
+    if not args.force and any(r["date"] == today and 0 <= minute(now) - minute(
+            datetime.strptime(r["time"][:5], "%H:%M")) < 10 for r in recs) and not (
+            qs and not any(r["date"] == today and r["slot"] == qs for r in recs)):  # a quote slot still to do runs
+        print(f"{today} {now:%H:%M}: snapped less than 10 minutes ago (the cron and the ticker both ran)", flush=True)
+        return 0
     days = sorted(d for d in prior if d < today)
     last = prior.get(days[-1], []) if days else []
-    cands = T.candidates(T._alpaca_get, today, last)
-    if cands is None and minute(now) < OPEN and last and not args.force:
-        cands = prior_cands(T._alpaca_get, last)  # premarket, the screener is still on the prior session
-    elif cands is not None:
-        prior[today] = [c["symbol"] for c in cands if c["src"] == "today"]
-    if cands is None:
-        print("the market screener is not on today's session (market closed): nothing to do", flush=True)
-        return 0
     out = args.out / today / f"snap-{now:%H%M}"
+    scan: dict = {}
+    uni = args.state / "universe.json"
+    try:
+        syms_all = json.loads(uni.read_text()) if uni.exists() else []
+        scan = market_scan(T._alpaca_get, syms_all) if syms_all else {}
+    except Exception as e:  # the whole-market scan is extra: the candidates still come from the screener
+        log.append(f"market scan: {type(e).__name__}")
+    cands = T.candidates(T._alpaca_get, today, last)
+    if cands is not None:
+        prior[today] = [c["symbol"] for c in cands if c["src"] == "today"]
+    elif not args.force and trading_day(today) is not False:  # the screener still shows the prior session
+        src = scan or (T._alpaca_get(f"{T.DATA}/v2/stocks/snapshots", {"symbols": ",".join(last), "feed": "iex"})
+                       if last else {})
+        cands = prior_cands(last, src)
+    if cands is not None:
+        cands += scan_gainers(scan, today, {c["symbol"] for c in cands})
+    if not cands:
+        print("the market is closed today or there are no candidates: nothing to do", flush=True)
+        return 0
+    if scan:
+        save(out, "market_snapshot.json", scan, gz=True)
     try_save(out, "movers.json", lambda: T._alpaca_get(f"{T.DATA}/v1beta1/screener/stocks/movers", {"top": T.TOP}),
              log)
     syms = [c["symbol"] for c in cands]
-    try_save(out, "snapshots.json", lambda: T._alpaca_get(f"{T.DATA}/v2/stocks/snapshots",
-                                                           {"symbols": ",".join(syms), "feed": "iex"}), log)
+    iex: dict = {}
+    try:
+        iex = T._alpaca_get(f"{T.DATA}/v2/stocks/snapshots", {"symbols": ",".join(syms), "feed": "iex"})
+        save(out, "snapshots.json", iex)
+    except Exception as e:
+        log.append(f"snapshots.json: {type(e).__name__}")
+    for c in cands:  # the freshest of today's trades; else the screener's or the last close
+        p = fresh_price(today, scan.get(c["symbol"]), iex.get(c["symbol"]))
+        if p:
+            c["price"], c["price_t"], c["price_feed"] = p
+    try_save(out, "halts.xml", lambda: fetch("https://www.nasdaqtrader.com/rss.aspx",
+                                             params={"feed": "tradehalts"}).text, log)
     ib_text = ""
     try:
         ib_text = P.ib_fetch()
@@ -372,6 +486,13 @@ def cmd_daily(args) -> int:
                  log, gz=True)
     try_save(out, "halts.xml", lambda: fetch("https://www.nasdaqtrader.com/rss.aspx",
                                              params={"feed": "tradehalts"}).text, log)
+    try_save(out, "nyse_halts.csv", lambda: fetch("https://www.nyse.com/api/trade-halts/historical/download",
+                                                  params={"haltDateFrom": f"{day:%Y-%m-%d}"}).text, log)
+    try_save(out, "nasdaq_ssr.txt", lambda: fetch(
+        f"https://www.nasdaqtrader.com/dynamic/symdir/shorthalts/shorthalts{d8}.txt").text, log)
+    try_save(out, "cboe_ssr.csv", lambda: fetch("https://www-api.cboe.com/us/equities/market_statistics/"
+                                                f"short_sale_circuit_breakers/downloads/BatsCircuitBreakers{day:%Y}.csv"
+                                                ).text, log)
     lists = [out / "nasdaq_threshold.txt", out / "nyse_threshold.txt"]
     if all(f.exists() for f in lists):
         args.state.mkdir(parents=True, exist_ok=True)
@@ -386,10 +507,24 @@ def cmd_daily(args) -> int:
         try_save(out, "alpaca_assets.json", lambda: requests.get(
             f"{base}/v2/assets", headers=h, params={"status": "active", "asset_class": "us_equity"}, timeout=60).json(),
             log, gz=True)
+        assets = out / "alpaca_assets.json.gz"
+        if assets.exists():  # the symbols of the snapshots' whole-market scan
+            uni = sorted(a["symbol"] for a in json.loads(gzip.decompress(assets.read_bytes()))
+                         if a.get("tradable") and a.get("exchange") in EXCHANGES and a["symbol"].isalpha())
+            if len(uni) > 1000:
+                args.state.mkdir(parents=True, exist_ok=True)
+                (args.state / "universe.json").write_text(json.dumps(uni))
         if syms:
             try_save(out, "daily_bars.json", lambda: T._alpaca_get(f"{T.DATA}/v2/stocks/bars", {
                 "symbols": ",".join(syms), "timeframe": "1Day", "start": f"{day - timedelta(days=10):%Y-%m-%d}",
                 "end": f"{day + timedelta(days=1):%Y-%m-%d}", "feed": "iex", "limit": 10000}), log)
+            d0 = datetime(day.year, day.month, day.day, tzinfo=T.NY)
+            for name, feed, a, b, tf in (("daily_bars_sip.json", "sip", d0 - timedelta(days=10), d0 + timedelta(days=1), "1Day"),
+                                         ("minute_bars_sip.json", "sip", d0 + timedelta(hours=4), d0 + timedelta(hours=20), "1Min"),
+                                         ("overnight_bars.json", "boats", d0 + timedelta(hours=20), d0 + timedelta(hours=28), "1Min")):
+                try_save(out, name, lambda feed=feed, a=a, b=b, tf=tf: alpaca_all(T._alpaca_get, f"{T.DATA}/v2/stocks/bars", {
+                    "symbols": ",".join(syms), "timeframe": tf, "start": a.isoformat(), "end": b.isoformat(),
+                    "feed": feed, "limit": 10000}), log, gz=True)
     key, secret = os.environ.get("TZ_API_KEY_ID"), os.environ.get("TZ_API_SECRET_KEY")
     if key and secret:
         tz = T.TZ(key, secret)
