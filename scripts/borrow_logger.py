@@ -443,7 +443,8 @@ def cmd_snap(args) -> int:
     try:
         etb, quotes, slot = tz_snap(args, now, today, cands, syms, recs, audits, log, out)
     except Exception as e:  # TradeZero down must not lose the free files of this run
-        log.append(f"tradezero: {type(e).__name__}")
+        code = getattr(getattr(e, "response", None), "status_code", "")  # the status only: the URL has the account
+        log.append(f"tradezero: {type(e).__name__} {code}".strip())
     stamp = {"date": today, "time": f"{now:%H:%M:%S}", "slot": slot}
     th = args.state / "threshold.json"
     tl = json.loads(th.read_text()) if th.exists() else {}
