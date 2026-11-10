@@ -9,7 +9,7 @@ on:
   schedule:
     - cron: "5,35 12-21 * * 1-5"  # snapshots; the script keeps 08:00-16:15 New York in summer and winter
     - cron: "45 19,20 * * 1-5"  # 15:45 New York, the book's decision time, for the last quote slot
-    - cron: "30 4 * * 2-6"  # after the session: daily files and the report
+    - cron: "30 10 * * 2-6"  # next morning, once Nasdaq and NYSE have published the threshold lists
   workflow_dispatch:
     inputs:
       mode:
@@ -38,7 +38,7 @@ jobs:
       TZ_API_SECRET_KEY: ${{ secrets.TZ_API_SECRET_KEY }}
       APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
       APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
-      MODE: ${{ inputs.mode || (github.event.schedule == '30 4 * * 2-6' && 'daily' || 'snap') }}
+      MODE: ${{ inputs.mode || (github.event.schedule == '30 10 * * 2-6' && 'daily' || 'snap') }}
       FORCE: ${{ inputs.force && '--force --force-quotes' || '' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
