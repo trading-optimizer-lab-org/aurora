@@ -74,7 +74,9 @@ def outcome(rows: list[dict]) -> str:
     st = [r.get("locateStatus") for r in rows]
     if not rows:
         return "no answer"
-    if 65 in st or 50 in st or any(r.get("locateStatus") == 67 and r.get("locatePrice") for r in rows):
+    if 50 in st:
+        return "FILLED"  # never expected: the meter has no accept call
+    if 65 in st or any(r.get("locateStatus") == 67 and r.get("locatePrice") for r in rows):
         return "offered"
     if 56 in st:
         return "rejected"
@@ -88,19 +90,33 @@ def measure(tz: TZ, acct: str, sym: str, qty: int) -> dict:
     if tz.get(f"/v1/api/accounts/{acct}/is-easy-to-borrow/symbol/{sym}").get("isEasyToBorrow"):
         return {"outcome": "easy to borrow", "rows": []}
     qid = f"m-{uuid.uuid4().hex[:16]}"
-    tz.post("/v1/api/accounts/locates/quote", {"account": acct, "symbol": sym, "quantity": qty, "quoteReqID": qid})
     rows: dict = {}
-    for _ in range(POLLS):
-        tz.sleep(1.0)
-        hist = tz.get(f"/v1/api/accounts/{acct}/locates/history").get("locateHistory", [])
-        rows = {r["quoteReqID"]: r for r in hist if r.get("quoteReqID") in (qid, qid + ".SU")}
-        if rows and all(r.get("locateStatus") in DONE for r in rows.values()):
-            break
+    try:
+        tz.post("/v1/api/accounts/locates/quote", {"account": acct, "symbol": sym, "quantity": qty, "quoteReqID": qid})
+        for i in range(POLLS):
+            tz.sleep(1.0)
+            hist = tz.get(f"/v1/api/accounts/{acct}/locates/history").get("locateHistory", [])
+            rows = {r["quoteReqID"]: r for r in hist if r.get("quoteReqID") in (qid, qid + ".SU")}
+            # a Single Use row can appear after the regular one is final: wait a few polls for it
+            if rows and all(r.get("locateStatus") in DONE for r in rows.values()) and (len(rows) == 2 or i >= 3):
+                break
+    except requests.RequestException as e:  # the quote may exist without an answer: cancel it blindly
+        for q in (qid, qid + ".SU"):
+            try:
+                tz.delete(f"/v1/api/accounts/locates/cancel/accounts/{acct}/quoteReqID/{q}")
+            except requests.RequestException:
+                pass
+        return {"outcome": "error", "rows": [], "error": type(e).__name__, "qid": qid, "cancel": "blind"}
     keep = [{k: r.get(k) for k in ("quoteReqID", "locateStatus", "locateType", "locatePrice", "locateError", "text")}
             for r in rows.values()]
-    out = {"outcome": outcome(keep), "rows": keep, "qid": qid}
-    if any(r.get("locateStatus") in (54, 65) for r in rows.values()):
-        tz.delete(f"/v1/api/accounts/locates/cancel/accounts/{acct}/quoteReqID/{qid}")
+    out: dict = {"outcome": outcome(keep), "rows": keep, "qid": qid}
+    live0 = [q for q, r in rows.items() if r.get("locateStatus") in (54, 65)]
+    if live0:
+        for q in live0:  # the Single Use offer has its own id: cancelling the regular one leaves it open
+            try:
+                tz.delete(f"/v1/api/accounts/locates/cancel/accounts/{acct}/quoteReqID/{q}")
+            except requests.RequestException as e:
+                out.setdefault("cancel_errors", []).append(f"{q[-3:]}:{type(e).__name__}")
         out["cancel"] = "unconfirmed"
         for _ in range(POLLS):  # the cancel is asynchronous: only history confirms it
             tz.sleep(1.0)

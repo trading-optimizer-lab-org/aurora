@@ -52,17 +52,17 @@ jobs:
       - run: python scripts/borrow_proxy_meter.py run ${{ inputs.force && '--force' || '' }}
         continue-on-error: true
       - run: python scripts/tz_locate_meter.py run ${{ inputs.force && '--force' || '' }}
-      - if: hashFiles('outputs/tzloc/changed') != ''
+      - if: always() && hashFiles('outputs/tzloc/changed') != ''
         uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
         with:
           path: outputs/tzloc
           key: tzloc-${{ github.run_id }}-${{ github.run_attempt }}
       # The repository is public: records and report leave the runner only encrypted to the owner's key.
-      - if: hashFiles('outputs/tzloc/changed') != ''
+      - if: always() && hashFiles('outputs/tzloc/changed') != ''
         run: |
           gpg --batch --quiet --import .github/tzloc-report.pub.asc
           tar czf - -C outputs tzloc | gpg --batch --trust-model always --encrypt             --recipient 3A439088B19222C64C00BA286E1157EC3AB4941F -o tzloc.tgz.gpg
-      - if: hashFiles('tzloc.tgz.gpg') != ''
+      - if: always() && hashFiles('tzloc.tgz.gpg') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: tzloc-encrypted

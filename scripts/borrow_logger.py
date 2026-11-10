@@ -47,7 +47,7 @@ QUOTE_SLOTS = {"q0415": (4 * 60, 4 * 60 + 45), "q0700": (6 * 60 + 45, 7 * 60 + 2
                "q1930": (19 * 60 + 15, 19 * 60 + 55)}
 KEEP = 60  # sessions of compact records kept in the Actions cache
 SCAN_TOP, SCAN_MIN_PCT = 20, 10.0  # whole-market gainers added to the candidates
-EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA", "BATS"}
+EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA", "NYSEARCA", "BATS"}
 BUSY = ("14 ", "18 ")  # another quote for the symbol is still pending or offered (the meter's)
 
 
@@ -252,7 +252,7 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
             sum(r["outcome"] == "no shares" for r in g), sum(r["outcome"] == "rejected" for r in g),
             sum(r["outcome"] not in ("easy to borrow", "offered", "no shares", "rejected") for r in g)))
             + f" | {f'{statistics.median(px):.2%}' if px else '-'} |")
-    rej = Counter(x.get("text", "")[:40] for r in q if r["outcome"] == "rejected" for x in r.get("rows", []))
+    rej = Counter(str(x.get("text") or "")[:40] for r in q if r["outcome"] == "rejected" for x in r.get("rows", []))
     L += ["", "Rejection reasons: " + ("; ".join(f"{k} x{v}" for k, v in rej.most_common(6)) or "none") + "."]
     for name, th in (("Reg SHO threshold stocks quoted", [r for r in q if r.get("threshold")]),
                      ("Quotes with Pre-Borrow or Single Use pools", [r for r in q if r.get("pb_su_pool")])):
@@ -326,11 +326,12 @@ def tz_snap(args, now: datetime, today: str, cands: list[dict], syms: list[str],
     acc = tz_account(tz, acct)
     save(out, "account.json", acc)
     # the cache is not encrypted: it keeps whether money moved, never the balance or the account number
-    audits_new = [{"date": today, "time": f"{now:%H:%M}", "spent": spent(acc), "cash_rows": cash_rows(acc)}]
+    sp = spent(acc)
+    audits_new = [{"date": today, "time": f"{now:%H:%M}", "spent": sp, "cash_rows": cash_rows(acc)}]
     append(args.state / "audits.jsonl", audits_new)
     audits += audits_new
-    if audits_new[0]["spent"]:
-        log.append("account activity: " + ", ".join(audits_new[0]["spent"]))
+    if sp:
+        log.append("account activity: " + ", ".join(sp))
     etb = etb_all(tz, acct, syms)
     slot = quote_slot(now) or ("qforced" if args.force_quotes else "snap")
     if slot != "qforced" and any(r["date"] == today and r["slot"] == slot for r in recs):
@@ -381,7 +382,8 @@ def cmd_snap(args) -> int:
     qs = quote_slot(now)
     if not args.force and any(r["date"] == today and 0 <= minute(now) - minute(
             datetime.strptime(r["time"][:5], "%H:%M")) < 10 for r in recs) and not (
-            qs and not any(r["date"] == today and r["slot"] == qs for r in recs)):  # a quote slot still to do runs
+            qs and os.environ.get("TZ_API_KEY_ID") and not any(
+                r["date"] == today and r["slot"] == qs for r in recs)):  # a quote slot still to do runs
         print(f"{today} {now:%H:%M}: snapped less than 10 minutes ago (the cron and the ticker both ran)", flush=True)
         return 0
     days = sorted(d for d in prior if d < today)
@@ -498,15 +500,21 @@ def cmd_daily(args) -> int:
         args.state.mkdir(parents=True, exist_ok=True)
         (args.state / "threshold.json").write_text(json.dumps(
             {"day": d8, "symbols": threshold_symbols(*(f.read_text(encoding="utf-8") for f in lists))}))
-        (args.state / "daily_done.txt").write_text(d8)
+    if all(f.exists() for f in lists) and (out / "finra_short_volume.txt.gz").exists():
+        (args.state / "daily_done.txt").write_text(d8)  # else the backup runs fetch the day again
     recs, prior, audits = load_state(args.state)
     syms = sorted({r["symbol"] for r in recs if r["date"] == f"{day:%Y-%m-%d}"})
     if os.environ.get("APCA_API_KEY_ID"):
         h = {"APCA-API-KEY-ID": os.environ["APCA_API_KEY_ID"], "APCA-API-SECRET-KEY": os.environ["APCA_API_SECRET_KEY"]}
         base = alpaca_base(h)
-        try_save(out, "alpaca_assets.json", lambda: requests.get(
-            f"{base}/v2/assets", headers=h, params={"status": "active", "asset_class": "us_equity"}, timeout=60).json(),
-            log, gz=True)
+        def assets_list():
+            r = requests.get(f"{base}/v2/assets", headers=h, params={"status": "active", "asset_class": "us_equity"},
+                             timeout=60)
+            r.raise_for_status()
+            if not isinstance(r.json(), list):
+                raise ValueError("assets: not a list")
+            return r.json()
+        try_save(out, "alpaca_assets.json", assets_list, log, gz=True)
         assets = out / "alpaca_assets.json.gz"
         if assets.exists():  # the symbols of the snapshots' whole-market scan
             uni = sorted(a["symbol"] for a in json.loads(gzip.decompress(assets.read_bytes()))

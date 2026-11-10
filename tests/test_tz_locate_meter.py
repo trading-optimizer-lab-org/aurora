@@ -68,7 +68,7 @@ class FakeTZ:
         self.calls.append(("delete", url))
         q = url.rsplit("/", 1)[1]
         for r in self.hist:
-            if r["quoteReqID"] in (q, q + ".SU") and r["locateStatus"] in (54, 65):
+            if r["quoteReqID"] == q and r["locateStatus"] in (54, 65):  # each id cancels only itself
                 r["locateStatus"] = 52
         return _R({"locateCancelSent": "true"})
 
@@ -86,7 +86,8 @@ def test_meter_measures_and_cancels(tmp_path) -> None:
     assert not any("accept" in u for _, u in fake.calls)
     dels = [u for m, u in fake.calls if m == "delete"]
     # only live quotes need a cancel, and history confirms each one
-    assert all(any(u.endswith(got[s]["qid"]) for u in dels) for s in ("BBB", "EEE")) and len(dels) == 2
+    assert all(any(u.endswith(got[s]["qid"]) for u in dels) for s in ("BBB", "EEE")) and len(dels) == 3
+    assert sum(u.endswith(".SU") for u in dels) == 1  # the Single Use offer is cancelled by its own id
     assert got["BBB"]["cancel"] == got["EEE"]["cancel"] == "confirmed" and "cancel" not in got["CCC"]
     M.check_nothing_filled(tz, acct, {g["qid"] for g in got.values() if g.get("qid")})
     fake.hist.append({"quoteReqID": got["CCC"]["qid"], "locateStatus": 50})
@@ -123,3 +124,23 @@ def test_meter_candidates_and_report() -> None:
     assert "| close | up 100%+ | 1 | 0% | 100% | 0% | 0% | 0% | 0% | 0% | 2.00% |" in text
     assert "| close | prior day gainer | 1 | 0% | 0% | 100% |" in text
     assert "Quotes at another size, left out: 1." in text
+
+
+def test_meter_cancels_blindly_when_the_answer_is_lost() -> None:
+    M = _script("tz_locate_meter", "tz_locate_meter_under_test9")
+    dels: list[str] = []
+
+    class Http:
+        def get(self, url, **kw):
+            return _R({"isEasyToBorrow": False})
+
+        def post(self, url, **kw):
+            raise M.requests.Timeout("no answer")  # the quote may still have reached TradeZero
+
+        def delete(self, url, **kw):
+            dels.append(url)
+            return _R({})
+    out = M.measure(M.TZ("k", "s", http=Http(), sleep=lambda s: None), "2TZ9", "AAA", 100)
+    assert out["outcome"] == "error" and out["cancel"] == "blind" and out["qid"]
+    assert dels == [f"{M.BASE}/v1/api/accounts/locates/cancel/accounts/2TZ9/quoteReqID/{out['qid']}{s}" for s in ("", ".SU")]
+    assert M.outcome([{"locateStatus": 50}]) == "FILLED"

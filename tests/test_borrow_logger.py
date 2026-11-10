@@ -157,6 +157,11 @@ def test_logger_daily_files_and_failures(tmp_path, monkeypatch) -> None:
     assert L.json.loads((args.state / "threshold.json").read_text())["symbols"] == ["ZZZ"]
     calls: list[str] = []
     monkeypatch.setattr(L, "fetch", lambda url, **kw: calls.append(url))
+    assert L.cmd_daily(args) == 0 and any("finra" in u for u in calls)  # FINRA failed: the backup run retries
+    monkeypatch.setattr(L, "fetch", lambda url, **kw: Namespace(text="Symbol|Name|Flag\nZZZ|Z corp|Y\n"))
+    assert L.cmd_daily(args) == 0  # every source answers: the day is done
+    calls.clear()
+    monkeypatch.setattr(L, "fetch", lambda url, **kw: calls.append(url))
     assert L.cmd_daily(args) == 0 and calls == []  # the backup cron does not collect the same day twice
 
 
@@ -231,7 +236,7 @@ def test_market_scan_prices_and_premarket(tmp_path, monkeypatch) -> None:
     assert L.cash_rows({"cash": {"error": "HTTPError"}}) is None and L.cash_rows({"cash": [{"a": 1}, {"b": 2}]}) == 2
     assert L.cash_rows({"cash": {"rows": [{"a": 1}, {"b": 2}]}}) == 2
 
-    class Clock(L.datetime):
+    class Clock(L.datetime):  # type: ignore[name-defined]
         @classmethod
         def now(cls, tz=None):
             return L.datetime(2026, 11, 10, 7, 35, tzinfo=L.T.NY)
