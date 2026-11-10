@@ -177,7 +177,8 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
     if th:
         L += [f"Reg SHO threshold stocks quoted: {len(th)}; Pre-Borrow offered on "
               f"{sum(bool(r['offer'].get('pb')) for r in th)}, Single Use on {sum(bool(r['offer'].get('su')) for r in th)}."]
-    e = [r for r in recs if r.get("etb") is not None and "08" <= r["time"][:2] <= "16"]
+    e = [r for r in recs if r.get("etb") is not None
+         and SNAP[0] <= int(r["time"][:2]) * 60 + int(r["time"][3:5]) < SNAP[1]]  # session snapshots only
     if e:
         L += ["", "## Easy to borrow through the day", "", "| hour (New York) | snapshots | easy to borrow |",
               "|---|---|---|"]

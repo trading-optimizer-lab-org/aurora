@@ -121,6 +121,8 @@ def test_logger_snap_and_report(tmp_path, monkeypatch) -> None:
     assert "Pre-Borrow offered on 0, Single Use on 1." in text
     assert "no positions, orders or locates" in text and "cash now" not in text
     assert "- cash now: 585.0" in L.report(recs2, audits, 585.0)
+    late = [{**r, "slot": "snap", "time": "16:30:00"} for r in recs.values()]
+    assert "## Easy to borrow through the day" not in L.report(late, audits)  # after 16:15 is not session
     monkeypatch.setattr(L, "quote_slot", lambda now: "q1100")
     args.force_quotes = False
     assert L.cmd_snap(args) == 0 and L.cmd_snap(args) == 0
