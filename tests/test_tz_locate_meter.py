@@ -144,3 +144,27 @@ def test_meter_cancels_blindly_when_the_answer_is_lost() -> None:
     assert out["outcome"] == "error" and out["cancel"] == "blind" and out["qid"]
     assert dels == [f"{M.BASE}/v1/api/accounts/locates/cancel/accounts/2TZ9/quoteReqID/{out['qid']}{s}" for s in ("", ".SU")]
     assert M.outcome([{"locateStatus": 50}]) == "FILLED"
+
+
+def test_tz_retries_server_errors_but_not_a_quote() -> None:
+    M = _script("tz_locate_meter", "tz_locate_meter_under_test10")
+    codes = iter([503, 502, 200])
+    sent: list[str] = []
+
+    class Http:
+        def get(self, url, **kw):
+            sent.append("get")
+            r = _R({"ok": 1})
+            r.status_code = next(codes)
+            return r
+
+        def post(self, url, **kw):
+            sent.append("post")
+            r = _R({})
+            r.status_code = 503
+            return r
+    tz = M.TZ("k", "s", http=Http(), sleep=lambda s: None)
+    assert tz.get("/x") == {"ok": 1} and sent == ["get"] * 3
+    with pytest.raises(RuntimeError):  # the fake raise_for_status
+        tz.post("/q", {})
+    assert sent.count("post") == 1

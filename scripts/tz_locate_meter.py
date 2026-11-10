@@ -46,10 +46,11 @@ class TZ:
         assert "/accept" not in path, "the meter never accepts a locate"
         for attempt in range(3):
             r = getattr(self.http, method)(BASE + path, headers=self.h, json=body, timeout=15)
-            if r.status_code != 429:
+            # a quote POST is not retried on 5xx: it may have been created, and a retry would send a second one
+            if r.status_code != 429 and (r.status_code < 500 or method == "post"):
                 r.raise_for_status()
                 return r.json() if r.content else {}
-            self.sleep(2.0)
+            self.sleep(2.0 * (attempt + 1))
         r.raise_for_status()
         return {}
 
