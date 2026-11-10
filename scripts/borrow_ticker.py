@@ -19,6 +19,7 @@ NY = ZoneInfo("America/New_York")
 SNAPS = [(h, m) for h in range(4, 20) for m in (5, 35)] + [(15, 45)]  # TradeZero's locate hours + decision time
 DAILY = (5, 30)  # threshold lists of the prior session are out by then
 LIFE = timedelta(hours=5, minutes=40)  # under the 6-hour job limit
+REPLAY = timedelta(minutes=30)  # the logger skips a snapshot it already took, so a replay is harmless
 AHEAD = timedelta(hours=12)  # keep the chain only while there is work within this
 
 
@@ -42,36 +43,26 @@ def gh(*args: str) -> str:
 
 
 def older_twin(me: int, parent: str, runs: list[dict]) -> bool:
-    """Another running ticker that started first and is not the one that started this run: it keeps the chain."""
+    """Another queued or running ticker created first and is not the one that started this run: it keeps the chain."""
     return any(r["databaseId"] < me and str(r["databaseId"]) != parent for r in runs)
-
-
-def recent_logger_run(now: datetime) -> bool:
-    """The cron did start the logger a few minutes ago: no second snapshot."""
-    runs = json.loads(gh("run", "list", "--workflow", "borrow-logger.yml", "-L", "5", "--json", "createdAt"))
-    return any(now - datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00")) < timedelta(minutes=8)
-               for r in runs)
 
 
 def main() -> int:
     me, parent = int(os.environ["GITHUB_RUN_ID"]), os.environ.get("PARENT", "")
-    running = json.loads(gh("run", "list", "--workflow", "borrow-ticker.yml", "--status", "in_progress",
-                            "--json", "databaseId"))
+    running = [r for st in ("in_progress", "queued") for r in json.loads(gh(
+        "run", "list", "--workflow", "borrow-ticker.yml", "--status", st, "--json", "databaseId"))]
     if older_twin(me, parent, running):
         print("the chain is alive in another run", flush=True)
         return 0
     since = os.environ.get("SINCE", "")  # the parent's end: no start time falls between two runs
-    start = datetime.now(NY)
-    if since and start - datetime.fromisoformat(since) < timedelta(minutes=30):
+    start = datetime.now(NY) - REPLAY  # a fresh chain also starts what the broken one missed lately
+    if since and datetime.now(NY) - datetime.fromisoformat(since) < timedelta(minutes=30):
         start = datetime.fromisoformat(since).astimezone(NY)
     if not upcoming(start, start + AHEAD):
         print("no logger run within 12 hours: the chain stops until a cron kick", flush=True)
         return 0
     for at, mode in upcoming(start, start + LIFE):
         time.sleep(max(0.0, (at - datetime.now(NY)).total_seconds()))
-        if mode == "snap" and recent_logger_run(datetime.now(NY)):
-            print(f"{at:%a %H:%M} snap: the cron started it", flush=True)
-            continue
         gh("workflow", "run", "borrow-logger.yml", "--ref", "main", "-f", f"mode={mode}")
         print(f"{at:%a %H:%M} {mode}: started", flush=True)
     end = start + LIFE

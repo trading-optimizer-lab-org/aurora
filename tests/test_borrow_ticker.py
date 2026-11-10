@@ -40,7 +40,7 @@ def test_chain(monkeypatch) -> None:
     def gh(*args):
         calls.append(args)
         if args[:2] == ("run", "list"):
-            return json.dumps([{"databaseId": 7}] if "borrow-ticker.yml" in args else [])
+            return json.dumps([{"databaseId": 7}] if "in_progress" in args else [])
         return ""
 
     now = datetime.now(T.NY)
