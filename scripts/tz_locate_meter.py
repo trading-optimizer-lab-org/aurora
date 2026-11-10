@@ -18,7 +18,7 @@ import statistics
 import sys
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -125,10 +125,19 @@ def shortable(sym: str, price: float) -> bool:
     return price >= MIN_PRICE and sym.isalpha() and not (len(sym) == 5 and sym[-1] in "WRU")
 
 
+def session_day(movers: dict) -> str:
+    """New York date of the screener's last update: Alpaca stamps it in UTC, a day ahead after 19:00 New York."""
+    try:
+        utc = datetime.fromisoformat(str(movers.get("last_updated", ""))[:19]).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return ""
+    return f"{utc.astimezone(NY):%Y-%m-%d}"
+
+
 def candidates(get, today: str, prior: list[str]) -> list[dict] | None:
     """Today's top gainers and the prior session's; None when the screener is not on today's session."""
     m = get(f"{DATA}/v1beta1/screener/stocks/movers", {"top": TOP})
-    if str(m.get("last_updated", ""))[:10] != today:
+    if session_day(m) != today:
         return None
     out = [{"symbol": g["symbol"], "price": float(g["price"]), "pct": float(g["percent_change"]), "src": "today"}
            for g in m.get("gainers", [])]

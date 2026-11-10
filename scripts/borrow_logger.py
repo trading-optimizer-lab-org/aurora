@@ -134,6 +134,8 @@ def save(out: Path, name: str, data, gz: bool = False) -> None:
 def fetch(url: str, **kw) -> requests.Response:
     r = requests.get(url, headers=UA, timeout=60, **kw)
     r.raise_for_status()
+    if r.text.lstrip()[:15].lower().startswith(("<!doctype", "<html")):  # Nasdaq answers a missing file with a page
+        raise ValueError(f"web page instead of data: {r.url}")
     return r
 
 
@@ -147,7 +149,8 @@ def try_save(out: Path, name: str, fn, log: list[str], gz: bool = False) -> None
 # ---------------------------------------------------------------- report
 
 def report(recs: list[dict], audits: list[dict], cash=None) -> str:
-    q = [r for r in recs if r.get("slot", "").startswith("q") and r.get("outcome") not in (None, "busy")]
+    q = [r for r in recs if r.get("slot", "").startswith("q") and r["slot"] != "qforced"
+         and r.get("outcome") not in (None, "busy")]  # forced test runs, often out of hours, stay out
     L = ["# Borrow logger", "", f"Last {len({r['date'] for r in recs})} sessions, {len(recs)} stock snapshots, "
          f"{len(q)} TradeZero quotes (about ${T.NOTIONAL:,.0f} each).", "",
          "## Quotes by time of day", "",
@@ -174,7 +177,7 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
     if th:
         L += [f"Reg SHO threshold stocks quoted: {len(th)}; Pre-Borrow offered on "
               f"{sum(bool(r['offer'].get('pb')) for r in th)}, Single Use on {sum(bool(r['offer'].get('su')) for r in th)}."]
-    e = [r for r in recs if r.get("etb") is not None]
+    e = [r for r in recs if r.get("etb") is not None and "08" <= r["time"][:2] <= "16"]
     if e:
         L += ["", "## Easy to borrow through the day", "", "| hour (New York) | snapshots | easy to borrow |",
               "|---|---|---|"]
@@ -252,7 +255,7 @@ def cmd_snap(args) -> int:
     today, log = f"{now:%Y-%m-%d}", list[str]()
     if args.force:  # on a weekend or before the open, use the latest session the screener has
         movers = T._alpaca_get(f"{T.DATA}/v1beta1/screener/stocks/movers", {"top": T.TOP})
-        today = str(movers.get("last_updated", ""))[:10] or today
+        today = T.session_day(movers) or today
     recs, prior, audits = load_state(args.state)
     days = sorted(d for d in prior if d < today)
     cands = T.candidates(T._alpaca_get, today, prior.get(days[-1], []) if days else [])

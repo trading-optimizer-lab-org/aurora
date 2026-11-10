@@ -158,3 +158,20 @@ def test_errors_keep_the_account_out_of_the_public_log(monkeypatch, capsys) -> N
     assert L.main() == 1
     out = capsys.readouterr().out
     assert "failed: RuntimeError" in out and "SECRET123" not in out
+
+
+def test_session_day_and_web_pages_are_not_data(monkeypatch) -> None:
+    L = _script("borrow_logger", "borrow_logger_under_test4")
+    assert L.T.session_day({"last_updated": "2026-11-10T00:59:00.058246601Z"}) == "2026-11-09"  # 19:59 New York
+    assert L.T.session_day({"last_updated": "2026-11-09T15:00:00Z"}) == "2026-11-09"
+    assert L.T.session_day({}) == ""
+
+    class Page:
+        text, url = "  <!DOCTYPE html><title>Page Not Available</title>", "https://x/Trader.aspx?id=http404"
+
+        def raise_for_status(self) -> None:
+            pass
+    monkeypatch.setattr(L.requests, "get", lambda *a, **k: Page())
+    log: list[str] = []
+    L.try_save(Path("unused"), "nasdaq_threshold.txt", lambda: L.fetch("https://x/nasdaqth20261109.txt").text, log)
+    assert log and "web page instead of data" in log[0]
