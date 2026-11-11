@@ -315,3 +315,10 @@ def test_quotes_keep_to_the_daily_budget_and_stop_at_the_cap(tmp_path, monkeypat
     res = L.quote_all(tz, "2TZ9", [{"symbol": s, "price": 2.0} for s in ("BBB", "CCC", "DDD")])
     assert list(res) == ["BBB"] and res["BBB"]["outcome"] == "capped" and res["BBB"]["status"] == 429
     assert "| q1100 |" not in L.report([{"date": today, "slot": "q1100", "symbol": "X", "outcome": "capped"}], [])
+    assert recs["BBB"]["qday"] == today  # the budget counts real New York days
+
+    def lost(*a):
+        raise L.requests.ConnectionError("down")
+    monkeypatch.setattr(L.T, "check_nothing_filled", lost)
+    res = L.quote_all(real_tz("k", "s", http=FakeTZ(), sleep=lambda x: None), "2TZ9", [{"symbol": "BBB", "price": 2.0}])
+    assert res["BBB"].get("qid") and res["BBB"]["check"] == "ConnectionError"  # a failed check keeps the spent quotes

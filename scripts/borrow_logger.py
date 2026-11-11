@@ -192,11 +192,16 @@ def quote_all(tz: T.TZ, acct: str, cands: list[dict]) -> dict:
         if any(str(x.get("text") or "").startswith(BUSY) for x in q["rows"]):
             q["outcome"] = "busy"
         res[c["symbol"]] = q
-        if q.get("status") == 429:  # the daily cap: every further quote would fail too
+        if q.get("status") == 429 and q.get("step") == "quote" and "unpurchased_limit" in q.get("body", ""):
+            # the daily cap: every further quote would fail too
             q["outcome"] = "capped"
             break
         tz.sleep(1.0)  # quote endpoint: 1 per second
-    T.check_nothing_filled(tz, acct, {q["qid"] for q in res.values() if q.get("qid")})
+    try:
+        T.check_nothing_filled(tz, acct, {q["qid"] for q in res.values() if q.get("qid")})
+    except requests.RequestException as e:  # keep the quotes: they count against the day's budget
+        for q in res.values():
+            q["check"] = type(e).__name__
     return res
 
 
@@ -348,11 +353,15 @@ def tz_snap(args, now: datetime, today: str, cands: list[dict], syms: list[str],
         slot = "snap"  # one quote batch per slot and day, whichever cron runs first
     quotes: dict = {}
     if slot.startswith("q"):
-        used = sum(1 for r in recs if r["date"] == today and r.get("qid"))
+        # the cap counts real New York days: a forced run can carry the prior session's date
+        day = f"{now:%Y-%m-%d}"
+        used = sum(1 for r in recs if r.get("qid") and r.get("qday", r["date"]) == day)
         n = max(0, min(QUOTE_BUDGET[slot], DAILY_QUOTES - used))
         # the biggest gainers first: they are what the strategy shorts
         pick = sorted([c for c in cands if not etb.get(c["symbol"])], key=lambda c: (c["pct"] is None, -(c["pct"] or 0)))
         quotes = quote_all(tz, acct, pick[:n]) if n else {}
+        for q in quotes.values():
+            q["qday"] = day
     return etb, quotes, slot
 
 
