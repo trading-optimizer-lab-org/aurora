@@ -156,7 +156,7 @@ def test_meter_records_which_call_failed_and_why() -> None:
 
     class Http:
         def get(self, url, **kw):
-            return reply(200, '{"isEasyToBorrow": false}') if "easy" in url else reply(403, "Locates disabled")
+            return reply(200, '{"isEasyToBorrow": false}') if "easy" in url else reply(403, "Locates disabled for 2TZ9 id 1234567")
 
         def post(self, url, **kw):
             return reply(200, "{}")
@@ -164,8 +164,8 @@ def test_meter_records_which_call_failed_and_why() -> None:
         def delete(self, url, **kw):
             return reply(200, "{}")
     out = M.measure(M.TZ("k", "s", http=Http(), sleep=lambda s: None), "2TZ9", "AAA", 100)
-    assert (out["error"], out["step"], out["status"], out["body"]) == ("HTTPError", "history", 403, "Locates disabled")
-    assert M.why(M.requests.Timeout("x"), "quote") == {"error": "Timeout", "step": "quote"}
+    assert (out["error"], out["step"], out["status"], out["body"]) == ("HTTPError", "history", 403, "Locates disabled for <account> id <number>")
+    assert M.why(M.requests.Timeout("x"), "quote", "2TZ9") == {"error": "Timeout", "step": "quote"}
 
 
 def test_tz_retries_server_errors_but_not_a_quote() -> None:

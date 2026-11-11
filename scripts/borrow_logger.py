@@ -183,7 +183,7 @@ def quote_all(tz: T.TZ, acct: str, cands: list[dict]) -> dict:
         try:
             q = T.measure(tz, acct, c["symbol"], T.quantity(c["price"]))
         except requests.RequestException as e:
-            q = {"outcome": "error", "rows": [], **T.why(e, "easy to borrow")}
+            q = {"outcome": "error", "rows": [], **T.why(e, "easy to borrow or cancel check", acct)}
         if any(str(x.get("text") or "").startswith(BUSY) for x in q["rows"]):
             q["outcome"] = "busy"
         res[c["symbol"]] = q

@@ -15,6 +15,7 @@ import json
 import math
 import os
 import statistics
+import re
 import sys
 import time
 import uuid
@@ -86,12 +87,14 @@ def outcome(rows: list[dict]) -> str:
     return "no shares"
 
 
-def why(e: Exception, step: str) -> dict:
-    """Error class, HTTP status, failed call and the start of the reply. Private files only: a reply may name the account."""
+def why(e: Exception, step: str, acct: str) -> dict:
+    """Error class, HTTP status, failed call and the start of the reply, with the account and long numbers masked:
+    the records also sit in the unencrypted Actions cache."""
     r = getattr(e, "response", None)
     out: dict = {"error": type(e).__name__, "step": step}
     if r is not None:
-        out.update(status=r.status_code, body=(r.text or "")[:200])
+        body = (r.text or "")[:200].replace(acct, "<account>") if acct else (r.text or "")[:200]
+        out.update(status=r.status_code, body=re.sub(r"\d{5,}", "<number>", body))
     return out
 
 
@@ -118,7 +121,7 @@ def measure(tz: TZ, acct: str, sym: str, qty: int) -> dict:
                 tz.delete(f"/v1/api/accounts/locates/cancel/accounts/{acct}/quoteReqID/{q}")
             except requests.RequestException:
                 pass
-        return {"outcome": "error", "rows": [], **why(e, step), "qid": qid, "cancel": "blind"}
+        return {"outcome": "error", "rows": [], **why(e, step, acct), "qid": qid, "cancel": "blind"}
     keep = [{k: r.get(k) for k in ("quoteReqID", "locateStatus", "locateType", "locatePrice", "locateError", "text")}
             for r in rows.values()]
     out: dict = {"outcome": outcome(keep), "rows": keep, "qid": qid}
@@ -276,7 +279,7 @@ def cmd_run(args) -> int:
         try:
             res = measure(tz, acct, c["symbol"], qty)
         except requests.RequestException as e:
-            res = {"outcome": "error", "rows": [], **why(e, "easy to borrow")}
+            res = {"outcome": "error", "rows": [], **why(e, "easy to borrow or cancel check", acct)}
         new.append({"date": today, "slot": slot, "time": f"{datetime.now(NY):%H:%M:%S}", **c, "qty": qty, "notional": NOTIONAL, **res})
     check_nothing_filled(tz, acct, {r["qid"] for r in new if r.get("qid")})
     args.store.parent.mkdir(parents=True, exist_ok=True)
