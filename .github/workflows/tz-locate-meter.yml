@@ -3,10 +3,9 @@ name: "TradeZero locate meter"
 # scripts/tz_locate_meter.py: twice a trading day, a TradeZero locate quote on the day's top gainers and the prior
 # session's, cancelled and never accepted. Records stay in the Actions cache (keys tzloc-*); nothing goes to the
 # public summary, only an artifact encrypted to the owner's key (.github/tzloc-report.pub.asc). Runs only once the secrets TZ_API_KEY_ID and TZ_API_SECRET_KEY exist.
+# Manual only since 2026-11-11: the borrow logger quotes the same stocks at the same times, and TradeZero caps
+# unpurchased quotes at about 100 a day, so a second scheduled quoter would spend half the budget twice.
 on:
-  schedule:
-    - cron: "50 13,14 * * 1-5"  # 09:50 New York in summer and in winter; the script keeps the one inside its window
-    - cron: "25 19,20 * * 1-5"  # 15:25 New York
   workflow_dispatch:
     inputs:
       force:
