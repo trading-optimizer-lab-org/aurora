@@ -272,3 +272,53 @@ def test_market_scan_prices_and_premarket(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(L, "trading_day", lambda d: False)
     (state / "records.jsonl").unlink()
     assert L.cmd_snap(args) == 0 and not (state / "records.jsonl").exists()  # a holiday records nothing
+
+
+def test_quotes_keep_to_the_daily_budget_and_stop_at_the_cap(tmp_path, monkeypatch) -> None:
+    L = _script("borrow_logger", "borrow_logger_under_test_budget")
+    fake = FakeTZ()
+    real_tz = L.T.TZ
+    monkeypatch.setattr(L.T, "TZ", lambda k, s: real_tz(k, s, http=fake, sleep=lambda x: None))
+    today = f"{datetime.now(L.T.NY):%Y-%m-%d}"
+
+    def alpaca(url, params):
+        if url.endswith("/movers"):
+            return {"last_updated": today + "T15:00:00Z", "gainers": [
+                {"symbol": s, "price": 2.0, "percent_change": p} for s, p in
+                (("CCC", 60.0), ("BBB", 120.0), ("AAA", 150.0), ("DDD", 30.0))]}
+        return {"snapshots": params["symbols"]}
+
+    monkeypatch.setattr(L.T, "_alpaca_get", alpaca)
+    monkeypatch.setattr(L.P, "ib_fetch", lambda: "")
+    monkeypatch.setenv("TZ_API_KEY_ID", "k")
+    monkeypatch.setenv("TZ_API_SECRET_KEY", "s")
+    monkeypatch.setattr(L, "quote_slot", lambda now: "q1100")
+    monkeypatch.setitem(L.QUOTE_BUDGET, "q1100", 1)
+    args = Namespace(state=tmp_path / "state", out=tmp_path / "out", force=True, force_quotes=False)
+    assert L.cmd_snap(args) == 0
+    recs = {r["symbol"]: r for r in L.T.load(args.state / "records.jsonl")}
+    assert [s for s, r in recs.items() if r.get("qid")] == ["BBB"]  # the biggest gainer TradeZero does not lend freely
+    assert "outcome" not in recs["CCC"] and recs["AAA"]["outcome"] == "easy to borrow"
+    monkeypatch.setattr(L, "quote_slot", lambda now: "q1300")
+    monkeypatch.setattr(L, "DAILY_QUOTES", 1)
+    assert L.cmd_snap(args) == 0  # the day's budget is spent: nothing more is quoted
+    assert sum(1 for m, u in fake.calls if m == "post") == 1
+
+    class Capped(FakeTZ):
+        def post(self, url, json=None, **kw):
+            self.calls.append(("post", url))
+            r = L.requests.Response()
+            r.status_code, r._content = 429, b'{"error":"volume cap exceeded","reason":"unpurchased_limit"}'
+            return r
+    capped = Capped()
+    tz = real_tz("k", "s", http=capped, sleep=lambda x: None)
+    res = L.quote_all(tz, "2TZ9", [{"symbol": s, "price": 2.0} for s in ("BBB", "CCC", "DDD")])
+    assert list(res) == ["BBB"] and res["BBB"]["outcome"] == "capped" and res["BBB"]["status"] == 429
+    assert "| q1100 |" not in L.report([{"date": today, "slot": "q1100", "symbol": "X", "outcome": "capped"}], [])
+    assert recs["BBB"]["qday"] == today  # the budget counts real New York days
+
+    def lost(*a):
+        raise L.requests.ConnectionError("down")
+    monkeypatch.setattr(L.T, "check_nothing_filled", lost)
+    res = L.quote_all(real_tz("k", "s", http=FakeTZ(), sleep=lambda x: None), "2TZ9", [{"symbol": "BBB", "price": 2.0}])
+    assert res["BBB"].get("qid") and res["BBB"]["check"] == "ConnectionError"  # a failed check keeps the spent quotes

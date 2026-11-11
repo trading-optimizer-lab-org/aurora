@@ -45,6 +45,11 @@ QUOTE_SLOTS = {"q0415": (4 * 60, 4 * 60 + 45), "q0700": (6 * 60 + 45, 7 * 60 + 2
                "q1300": (12 * 60 + 45, 13 * 60 + 25), "q1430": (14 * 60 + 15, 14 * 60 + 55),
                "q1550": (15 * 60 + 40, 16 * 60), "q1700": (16 * 60 + 45, 17 * 60 + 25),
                "q1930": (19 * 60 + 15, 19 * 60 + 55)}
+# TradeZero refuses locate quotes (429 "unpurchased_limit") after about 100 unpurchased ones a day, so the quotes
+# are budgeted: most at the decision time, a sample in the other slots, a margin left below the cap
+DAILY_QUOTES = 95
+QUOTE_BUDGET = {"q0415": 5, "q0700": 5, "q0900": 10, "q1100": 5, "q1300": 5, "q1430": 5, "q1550": 50, "q1700": 5,
+                "q1930": 5, "qforced": 10}
 KEEP = 60  # sessions of compact records kept in the Actions cache
 SCAN_TOP, SCAN_MIN_PCT = 20, 10.0  # whole-market gainers added to the candidates
 EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA", "NYSEARCA", "BATS"}
@@ -187,8 +192,16 @@ def quote_all(tz: T.TZ, acct: str, cands: list[dict]) -> dict:
         if any(str(x.get("text") or "").startswith(BUSY) for x in q["rows"]):
             q["outcome"] = "busy"
         res[c["symbol"]] = q
+        if q.get("status") == 429 and q.get("step") == "quote" and "unpurchased_limit" in q.get("body", ""):
+            # the daily cap: every further quote would fail too
+            q["outcome"] = "capped"
+            break
         tz.sleep(1.0)  # quote endpoint: 1 per second
-    T.check_nothing_filled(tz, acct, {q["qid"] for q in res.values() if q.get("qid")})
+    try:
+        T.check_nothing_filled(tz, acct, {q["qid"] for q in res.values() if q.get("qid")})
+    except requests.RequestException as e:  # keep the quotes: they count against the day's budget
+        for q in res.values():
+            q["check"] = type(e).__name__
     return res
 
 
@@ -231,7 +244,8 @@ def try_save(out: Path, name: str, fn, log: list[str], gz: bool = False) -> None
 
 def report(recs: list[dict], audits: list[dict], cash=None) -> str:
     q = [r for r in recs if r.get("slot", "").startswith("q") and r["slot"] != "qforced"
-         and r.get("outcome") not in (None, "busy")]  # forced test runs, often out of hours, stay out
+         and r.get("outcome") not in (None, "busy", "capped")  # forced test runs, often out of hours, stay out
+         and not (r["date"] == "2026-11-10" and r.get("outcome") == "error")]  # the cap, before errors had a status
     L = ["# Borrow logger", "", f"Last {len({r['date'] for r in recs})} sessions, {len(recs)} stock snapshots, "
          f"{len(q)} TradeZero quotes (about ${T.NOTIONAL:,.0f} each).", "",
          "## Quotes by time of day", "",
@@ -333,10 +347,21 @@ def tz_snap(args, now: datetime, today: str, cands: list[dict], syms: list[str],
     if sp:
         log.append("account activity: " + ", ".join(sp))
     etb = etb_all(tz, acct, syms)
-    slot = quote_slot(now) or ("qforced" if args.force_quotes else "snap")
+    # a hand-run test never takes a scheduled slot: its date can be the prior session's
+    slot = "qforced" if args.force_quotes else (quote_slot(now) or "snap")
     if slot != "qforced" and any(r["date"] == today and r["slot"] == slot for r in recs):
         slot = "snap"  # one quote batch per slot and day, whichever cron runs first
-    quotes = quote_all(tz, acct, [c for c in cands if not etb.get(c["symbol"])]) if slot.startswith("q") else {}
+    quotes: dict = {}
+    if slot.startswith("q"):
+        # the cap counts real New York days: a forced run can carry the prior session's date
+        day = f"{now:%Y-%m-%d}"
+        used = sum(1 for r in recs if r.get("qid") and r.get("qday", r["date"]) == day)
+        n = max(0, min(QUOTE_BUDGET[slot], DAILY_QUOTES - used))
+        # the biggest gainers first: they are what the strategy shorts
+        pick = sorted([c for c in cands if not etb.get(c["symbol"])], key=lambda c: (c["pct"] is None, -(c["pct"] or 0)))
+        quotes = quote_all(tz, acct, pick[:n]) if n else {}
+        for q in quotes.values():
+            q["qday"] = day
     return etb, quotes, slot
 
 
