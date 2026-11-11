@@ -146,6 +146,28 @@ def test_meter_cancels_blindly_when_the_answer_is_lost() -> None:
     assert M.outcome([{"locateStatus": 50}]) == "FILLED"
 
 
+def test_meter_records_which_call_failed_and_why() -> None:
+    M = _script("tz_locate_meter", "tz_locate_meter_under_test10")
+
+    def reply(code: int, text: str):
+        r = M.requests.Response()
+        r.status_code, r._content = code, text.encode()
+        return r
+
+    class Http:
+        def get(self, url, **kw):
+            return reply(200, '{"isEasyToBorrow": false}') if "easy" in url else reply(403, "Locates disabled")
+
+        def post(self, url, **kw):
+            return reply(200, "{}")
+
+        def delete(self, url, **kw):
+            return reply(200, "{}")
+    out = M.measure(M.TZ("k", "s", http=Http(), sleep=lambda s: None), "2TZ9", "AAA", 100)
+    assert (out["error"], out["step"], out["status"], out["body"]) == ("HTTPError", "history", 403, "Locates disabled")
+    assert M.why(M.requests.Timeout("x"), "quote") == {"error": "Timeout", "step": "quote"}
+
+
 def test_tz_retries_server_errors_but_not_a_quote() -> None:
     M = _script("tz_locate_meter", "tz_locate_meter_under_test10")
     codes = iter([503, 502, 200])
