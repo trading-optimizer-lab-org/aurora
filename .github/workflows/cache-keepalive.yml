@@ -1,0 +1,36 @@
+name: "cache keepalive: v56 market data inputs"
+
+# GitHub evicts caches not read for 7 days. Restoring each one marks it used, so the v56 inputs survive for v57.
+# run: 1
+on:
+  push:
+    branches: [research/stock-catalog]
+    paths:
+      - .github/workflows/cache-keepalive.yml
+
+permissions:
+  contents: read
+
+jobs:
+  touch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {path: outputs/v18, key: v18-inputs-39433812183-1}
+          - {path: outputs/v23/store, key: v23-store-39561011760-1}
+          - {path: outputs/v24/store, key: v24-store-39591258262-1}
+          - {path: "outputs/v28/inputs\noutputs/v28/pmstore", key: v28-inputs2-39825946914-1}
+          - {path: outputs/v26/store, key: v26-store-39651846112-1}
+          - {path: outputs/v43, key: v43-data-40461750579-1}
+          - {path: "outputs/v44\n!outputs/v44/filing/minutes\n!outputs/v44/index_days\n!outputs/v44/tick_days", key: v44-data-40551641084-1}
+          - {path: outputs/v55/iex, key: v55-iex-42048053366}
+    steps:
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ${{ matrix.path }}
+          key: ${{ matrix.key }}
+          fail-on-cache-miss: true
+      - run: du -sh outputs | tail -1
