@@ -186,9 +186,10 @@ def quote_all(tz: T.TZ, acct: str, cands: list[dict]) -> dict:
     res = {}
     for c in cands:
         try:
-            q = T.measure(tz, acct, c["symbol"], T.quantity(c["price"]))
+            q = T.measure(tz, acct, c["symbol"], T.quote_quantity(c["price"]))
         except requests.RequestException as e:
             q = {"outcome": "error", "rows": [], **T.why(e, "easy to borrow or cancel check", acct)}
+        q["quote_qty"] = T.quote_quantity(c["price"])  # qty stays the $500 size the IB file is read against
         if any(str(x.get("text") or "").startswith(BUSY) for x in q["rows"]):
             q["outcome"] = "busy"
         res[c["symbol"]] = q

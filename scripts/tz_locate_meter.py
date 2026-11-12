@@ -187,6 +187,13 @@ def quantity(price: float) -> int:
     return max(100, int(math.ceil(NOTIONAL / price / 100.0)) * 100)
 
 
+def quote_quantity(price: float) -> int:
+    """Size of a TradeZero quote: one lot under $5. TradeZero rejected 65 of 167 quotes (2026-11-10..12) with R35
+    "not enough Buying Power", mostly cheap names at 400+ shares, while it lent 97% of the others: its short margin
+    on low-priced stocks is per share, so a bigger lot only measured the small account, not the borrow."""
+    return 100 if price < 5.0 else quantity(price)
+
+
 # ---------------------------------------------------------------- store and report
 
 def load(path: Path) -> list[dict]:
@@ -275,7 +282,7 @@ def cmd_run(args) -> int:
         raise SystemExit("the keys reach no live account: locates exist only on live accounts")
     new = []
     for c in cands:
-        qty = quantity(c["price"])
+        qty = quote_quantity(c["price"])
         try:
             res = measure(tz, acct, c["symbol"], qty)
         except requests.RequestException as e:
