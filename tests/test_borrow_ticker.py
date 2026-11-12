@@ -45,7 +45,9 @@ def test_chain(monkeypatch) -> None:
 
     now = datetime.now(T.NY)
     monkeypatch.setattr(T, "gh", gh)
-    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+    clock = [T.time.time()]
+    monkeypatch.setattr(T.time, "time", lambda: clock[0])
+    monkeypatch.setattr(T.time, "sleep", lambda x: clock.__setitem__(0, clock[0] + x))
     monkeypatch.setattr(T, "upcoming", lambda a, b: [(a, "snap"), (a, "daily")])
     monkeypatch.setenv("GITHUB_RUN_ID", "9")
     monkeypatch.setenv("PARENT", "")
@@ -73,21 +75,37 @@ def test_chain(monkeypatch) -> None:
     assert real.upcoming(st, st + timedelta(days=2))[0][0].astimezone(T.NY).strftime("%a %H:%M") == "Mon 04:05"
 
 
+
 def test_a_startup_failure_is_dispatched_again(monkeypatch) -> None:
     T = _ticker()
+    clock = [1000.0]
+    monkeypatch.setattr(T.time, "time", lambda: clock[0])
+    monkeypatch.setattr(T.time, "sleep", lambda x: clock.__setitem__(0, clock[0] + x))
+    ids: set[int] = {1}  # run 1 was dispatched earlier and is running: it must not be taken for the new one
+    view = {2: ["queued", "startup_failure"], 3: ["queued"] * 30 + ["startup_failure"], 4: ["in_progress"]}
     sent: list[str] = []
-    state = iter(["startup_failure", "startup_failure", "in_progress"])
 
     def gh(*args):
         if args[:2] == ("workflow", "run"):
             sent.append(args[-1])
+            ids.add(max(ids) + 1)
             return ""
-        st = next(state)
-        return json.dumps([{"createdAt": T.datetime.now(T.UTC).isoformat(), "status": "completed" if "fail" in st
-                            else st, "conclusion": st if "fail" in st else None}])
+        if args[:2] == ("run", "list"):
+            return json.dumps([{"databaseId": i} for i in ids])
+        st = view[int(args[2])].pop(0) if len(view[int(args[2])]) > 1 else view[int(args[2])][0]
+        done = st not in T.QUEUED and st != "in_progress"
+        return json.dumps({"status": "completed" if done else st, "conclusion": st if done else None})
     monkeypatch.setattr(T, "gh", gh)
-    monkeypatch.setattr(T.time, "sleep", lambda s: None)
-    assert T.start_logger("snap") == "in_progress" and sent == ["mode=snap"] * 3
-    state = iter(["startup_failure"] * 3)
+    pending: dict = {}
+    rid = T.dispatch("snap")
+    assert rid == 2
+    pending[rid] = ("snap", 0)
+    # run 3 stays queued for 15 minutes before it fails at startup: it is still watched and retried
+    T.wait_until(T.datetime.fromtimestamp(clock[0] + 3600, T.UTC), pending, early=True)
+    assert sent == ["mode=snap"] * 3 and pending == {}
+
+    view[5], view[6], view[7] = ["startup_failure"], ["startup_failure"], ["startup_failure"]
     sent.clear()
-    assert T.start_logger("snap") == "startup_failure" and len(sent) == 3  # gives up after two retries
+    pending = {T.dispatch("daily"): ("daily", 0)}
+    T.wait_until(T.datetime.fromtimestamp(clock[0] + 3600, T.UTC), pending, early=True)
+    assert len(sent) == 3 and pending == {}  # gives up after two retries

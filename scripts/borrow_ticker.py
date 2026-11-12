@@ -23,6 +23,7 @@ LIFE = timedelta(hours=5, minutes=40)  # under the 6-hour job limit
 REPLAY = timedelta(minutes=30)  # the logger skips a snapshot it already took, so a replay is harmless
 AHEAD = timedelta(hours=12)  # keep the chain only while there is work within this
 CATCHUP = timedelta(hours=3)  # a late successor still starts the slots it missed since its parent ended
+LINGER = timedelta(minutes=10)  # LIFE + LINGER stays under the 6-hour job limit
 RETRIES = 2  # GitHub failed two logger runs at startup on 2026-11-11 (15:35, 15:45) and lost the decision quotes
 
 
@@ -54,29 +55,52 @@ def gh(*args: str) -> str:
     return ""
 
 
-def sleep_until(at: datetime) -> None:
-    time.sleep(max(0.0, at.timestamp() - time.time()))
+QUEUED = ("queued", "requested", "waiting", "pending")
 
 
-def start_logger(mode: str) -> str:
-    """Dispatch the logger and watch that run until it starts; dispatch again if GitHub fails it at startup."""
-    for _ in range(RETRIES + 1):
-        sent = datetime.now(UTC) - timedelta(seconds=10)
-        gh("workflow", "run", "borrow-logger.yml", "--ref", "main", "-f", f"mode={mode}")
-        state = "unconfirmed"
-        for _ in range(16):  # a startup failure took up to 6 minutes to show
-            time.sleep(30)
-            runs = json.loads(gh("run", "list", "--workflow", "borrow-logger.yml", "--event", "workflow_dispatch",
-                                 "--limit", "5", "--json", "createdAt,status,conclusion"))
-            mine = sorted((r for r in runs if datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00")) >= sent),
-                          key=lambda r: r["createdAt"])
-            if not mine or mine[0]["status"] in ("queued", "requested", "waiting", "pending"):
-                continue
-            state = mine[0]["conclusion"] or mine[0]["status"]
-            break
-        if state != "startup_failure":
-            return state
-    return state
+def logger_ids() -> set[int]:
+    runs = json.loads(gh("run", "list", "--workflow", "borrow-logger.yml", "--event", "workflow_dispatch",
+                         "--limit", "10", "--json", "databaseId"))
+    return {r["databaseId"] for r in runs}
+
+
+def dispatch(mode: str) -> int | None:
+    """Start the logger and return the id of the run this dispatch created (the ticker is its only dispatcher)."""
+    before = logger_ids()
+    gh("workflow", "run", "borrow-logger.yml", "--ref", "main", "-f", f"mode={mode}")
+    for _ in range(12):
+        time.sleep(5)
+        new = sorted(logger_ids() - before)
+        if new:
+            return new[0]
+    return None
+
+
+def watch(pending: dict[int, tuple[str, int]]) -> None:
+    """Forget the runs that started; dispatch again the ones GitHub failed at startup."""
+    for rid, (mode, tries) in list(pending.items()):
+        r = json.loads(gh("run", "view", str(rid), "--json", "status,conclusion"))
+        if r["status"] in QUEUED:
+            continue
+        del pending[rid]
+        if r["conclusion"] == "startup_failure" and tries < RETRIES:
+            new = dispatch(mode)
+            print(f"{mode}: failed at startup, dispatched again", flush=True)
+            if new:
+                pending[new] = (mode, tries + 1)
+
+
+def wait_until(at: datetime, pending: dict[int, tuple[str, int]], early: bool = False) -> None:
+    """Sleep until at, watching the dispatched runs every 30 seconds; early: return once none is left."""
+    while True:
+        try:
+            watch(pending)
+        except Exception as e:  # a GitHub hiccup must not break the chain
+            print(f"watch: {type(e).__name__}", flush=True)
+        left = at.timestamp() - time.time()
+        if left <= 0 or (early and not pending):
+            return
+        time.sleep(min(30.0, left))
 
 
 def plan(start: datetime, now: datetime) -> list[tuple[datetime, str]]:
@@ -106,16 +130,20 @@ def main() -> int:
     if not upcoming(start, start + AHEAD):
         print("no logger run within 12 hours: the chain stops until a cron kick", flush=True)
         return 0
+    pending: dict[int, tuple[str, int]] = {}  # dispatched runs not started yet: id -> (mode, retries done)
     for at, mode in plan(start, now):
-        sleep_until(at)
+        wait_until(at, pending)
         try:
-            state = start_logger(mode)
+            rid = dispatch(mode)
         except Exception as e:  # one failed start must not stop the later ones nor the successor
             print(f"{at.astimezone(NY):%a %H:%M} {mode}: failed {type(e).__name__}", flush=True)
             continue
-        print(f"{at.astimezone(NY):%a %H:%M} {mode}: {state}", flush=True)
+        if rid:
+            pending[rid] = (mode, 0)
+        print(f"{at.astimezone(NY):%a %H:%M} {mode}: started", flush=True)
     end = start + LIFE
-    sleep_until(end)
+    wait_until(end, pending)
+    wait_until(datetime.now(UTC) + LINGER, pending, early=True)  # a run still queued at the hand-over
     if upcoming(end, end + AHEAD):
         gh("workflow", "run", "borrow-ticker.yml", "--ref", "main",
            "-f", f"parent={me}", "-f", f"since={end.isoformat()}")
