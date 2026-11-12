@@ -71,3 +71,23 @@ def test_chain(monkeypatch) -> None:
     st = datetime(2026, 11, 1, 4, 0, tzinfo=T.UTC)
     assert (st + T.LIFE).timestamp() - st.timestamp() == T.LIFE.total_seconds()
     assert real.upcoming(st, st + timedelta(days=2))[0][0].astimezone(T.NY).strftime("%a %H:%M") == "Mon 04:05"
+
+
+def test_a_startup_failure_is_dispatched_again(monkeypatch) -> None:
+    T = _ticker()
+    sent: list[str] = []
+    state = iter(["startup_failure", "startup_failure", "in_progress"])
+
+    def gh(*args):
+        if args[:2] == ("workflow", "run"):
+            sent.append(args[-1])
+            return ""
+        st = next(state)
+        return json.dumps([{"createdAt": T.datetime.now(T.UTC).isoformat(), "status": "completed" if "fail" in st
+                            else st, "conclusion": st if "fail" in st else None}])
+    monkeypatch.setattr(T, "gh", gh)
+    monkeypatch.setattr(T.time, "sleep", lambda s: None)
+    assert T.start_logger("snap") == "in_progress" and sent == ["mode=snap"] * 3
+    state = iter(["startup_failure"] * 3)
+    sent.clear()
+    assert T.start_logger("snap") == "startup_failure" and len(sent) == 3  # gives up after two retries

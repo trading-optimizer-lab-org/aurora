@@ -23,6 +23,7 @@ LIFE = timedelta(hours=5, minutes=40)  # under the 6-hour job limit
 REPLAY = timedelta(minutes=30)  # the logger skips a snapshot it already took, so a replay is harmless
 AHEAD = timedelta(hours=12)  # keep the chain only while there is work within this
 CATCHUP = timedelta(hours=3)  # a late successor still starts the slots it missed since its parent ended
+RETRIES = 2  # GitHub failed two logger runs at startup on 2026-11-11 (15:35, 15:45) and lost the decision quotes
 
 
 def events(day: date) -> list[tuple[datetime, str]]:
@@ -57,6 +58,27 @@ def sleep_until(at: datetime) -> None:
     time.sleep(max(0.0, at.timestamp() - time.time()))
 
 
+def start_logger(mode: str) -> str:
+    """Dispatch the logger and watch that run until it starts; dispatch again if GitHub fails it at startup."""
+    for _ in range(RETRIES + 1):
+        sent = datetime.now(UTC) - timedelta(seconds=10)
+        gh("workflow", "run", "borrow-logger.yml", "--ref", "main", "-f", f"mode={mode}")
+        state = "unconfirmed"
+        for _ in range(16):  # a startup failure took up to 6 minutes to show
+            time.sleep(30)
+            runs = json.loads(gh("run", "list", "--workflow", "borrow-logger.yml", "--event", "workflow_dispatch",
+                                 "--limit", "5", "--json", "createdAt,status,conclusion"))
+            mine = sorted((r for r in runs if datetime.fromisoformat(r["createdAt"].replace("Z", "+00:00")) >= sent),
+                          key=lambda r: r["createdAt"])
+            if not mine or mine[0]["status"] in ("queued", "requested", "waiting", "pending"):
+                continue
+            state = mine[0]["conclusion"] or mine[0]["status"]
+            break
+        if state != "startup_failure":
+            return state
+    return state
+
+
 def plan(start: datetime, now: datetime) -> list[tuple[datetime, str]]:
     """The start times from start to start + LIFE; the missed ones collapse to the latest of each mode, run now."""
     due = upcoming(start, start + LIFE)
@@ -87,11 +109,11 @@ def main() -> int:
     for at, mode in plan(start, now):
         sleep_until(at)
         try:
-            gh("workflow", "run", "borrow-logger.yml", "--ref", "main", "-f", f"mode={mode}")
+            state = start_logger(mode)
         except Exception as e:  # one failed start must not stop the later ones nor the successor
             print(f"{at.astimezone(NY):%a %H:%M} {mode}: failed {type(e).__name__}", flush=True)
             continue
-        print(f"{at.astimezone(NY):%a %H:%M} {mode}: started", flush=True)
+        print(f"{at.astimezone(NY):%a %H:%M} {mode}: {state}", flush=True)
     end = start + LIFE
     sleep_until(end)
     if upcoming(end, end + AHEAD):
