@@ -299,6 +299,8 @@ def test_quotes_keep_to_the_daily_budget_and_stop_at_the_cap(tmp_path, monkeypat
     recs = {r["symbol"]: r for r in L.T.load(args.state / "records.jsonl")}
     assert [s for s, r in recs.items() if r.get("qid")] == ["BBB"]  # the biggest gainer TradeZero does not lend freely
     assert recs["BBB"]["quote_qty"] == 100 and recs["BBB"]["qty"] == 300  # one lot quoted, the IB size kept
+    text = L.report([{**recs["BBB"], "outcome": "offered", "ib": "none"}], [])
+    assert "One-lot quotes of names under $5: 1, offered or easy to borrow 100%" in text and "| none |" not in text
     assert "outcome" not in recs["CCC"] and recs["AAA"]["outcome"] == "easy to borrow"
     monkeypatch.setattr(L, "quote_slot", lambda now: "q1300")
     monkeypatch.setattr(L, "DAILY_QUOTES", 1)

@@ -287,7 +287,9 @@ def cmd_run(args) -> int:
             res = measure(tz, acct, c["symbol"], qty)
         except requests.RequestException as e:
             res = {"outcome": "error", "rows": [], **why(e, "easy to borrow or cancel check", acct)}
-        new.append({"date": today, "slot": slot, "time": f"{datetime.now(NY):%H:%M:%S}", **c, "qty": qty, "notional": NOTIONAL, **res})
+        new.append({"date": today, "slot": slot, "time": f"{datetime.now(NY):%H:%M:%S}", **c, "qty": qty,
+                    # a one-lot quote is not the $NOTIONAL size: the report keeps it apart
+                    "notional": NOTIONAL if qty == quantity(c["price"]) else round(qty * c["price"], 2), **res})
     check_nothing_filled(tz, acct, {r["qid"] for r in new if r.get("qid")})
     args.store.parent.mkdir(parents=True, exist_ok=True)
     with args.store.open("a", encoding="utf-8") as f:

@@ -282,7 +282,14 @@ def report(recs: list[dict], audits: list[dict], cash=None) -> str:
         for h in sorted({r["time"][:2] for r in e}):
             g = [r for r in e if r["time"][:2] == h]
             L.append(f"| {h}:00 | {len(g)} | {sum(r['etb'] for r in g) / len(g):.0%} |")
-    both = [r for r in q if r.get("ib")]
+    small = [r for r in q if r.get("quote_qty", r["qty"]) != r["qty"]]  # one lot under $5, from 2026-11-12
+    if small:
+        L += ["", "## Quote size", "",
+              f"One-lot quotes of names under $5: {len(small)}, offered or easy to borrow "
+              f"{sum(r['outcome'] in ('offered', 'easy to borrow') for r in small) / len(small):.0%}; "
+              f"rejected for buying power {sum('R35' in str(r.get('rows')) for r in small)}. "
+              "They are left out of the IB comparison below, which reads the IB file at the $500 size."]
+    both = [r for r in q if r.get("ib") and r.get("quote_qty", r["qty"]) == r["qty"]]
     if both:
         L += ["", "## Interactive Brokers' file against TradeZero quotes", "", "| IB | quotes | TZ offered or ETB |",
               "|---|---|---|"]
