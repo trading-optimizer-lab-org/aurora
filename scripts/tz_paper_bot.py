@@ -1,9 +1,11 @@
-"""TradeZero paper bot: v58's book DS0.20-NS0.60-RU0.25-N5 on the paper account (docs/research/PAPER_BOT_SPEC.md).
+"""TradeZero paper bot: the book DS0.20-NS0.80-RU0.25-N5 (v61, chosen 2026-11-14) on the paper account
+(docs/research/PAPER_BOT_SPEC.md).
 
-  open    08:00-09:28 New York: DS1/RU signals on the last session's daily bars, a live locate quote per name
-          (cancelled, never accepted), sell limits at 1.20 x that close; NS cover limits at 0.70 x entry
-  close   15:30-15:57 New York: reconcile the day's fills, NS signals at 15:50 on IEX, at 15:55 market covers that
-          are due and market shorts for NS
+  open    starts 08:40-09:28 New York: DS1/RU signals on the last session's daily bars, a live locate quote per
+          name (cancelled, never accepted); at 09:30 sell limits at 1.20 x that close and NS cover limits at
+          0.70 x entry, so nothing can fill before the regular session the backtest used
+  close   starts 14:40-15:57 New York: reconcile the day's fills, NS signals at 15:50 on IEX and their locate
+          quotes, at 15:55 market shorts for NS and market covers that are due
   report  the ledger
 Sized on a virtual $5,000. Orders go only to the paper keys; the live keys only quote locates. State stays in the
 Actions cache; the public log shows counts only.
@@ -31,14 +33,16 @@ ALPACA = ("https://api.alpaca.markets", "https://paper-api.alpaca.markets")
 EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA", "NYSEARCA", "BATS"}
 STATE = Path(os.environ.get("TZPAPER_DIR", "outputs/tzpaper")) / "state.json"
 EQUITY0 = 5000.0
-SIZE = {"DS1": 0.20, "RU": 0.25, "NS": 0.60}
+SIZE = {"DS1": 0.20, "RU": 0.25, "NS": 0.80}
 ORDER = ("DS1", "RU", "NS")  # tie-break of the ranking
 NEW_MAX, OPEN_MAX, GROSS_MAX, ONCE = 5, 20, 2.0, 20
 RISE, LIMIT_UP, HOLD_RUN = 3.0, 1.20, 9  # run-up >= 300%; entry limit; closes after the entry day's close
 GAP, DROP, LOW_PART, HOLD_NS, TARGET_NS = 0.30, 0.10, 0.25, 3, 0.70
 DV_MIN, DV_CAP, FLOOR = 1e6, 0.01, 2.50
 QUOTES_PER_RUN = 5
-WINDOWS = {"open": (8 * 60, 9 * 60 + 28), "close": (15 * 60 + 25, 15 * 60 + 57)}
+WINDOWS = {"open": (8 * 60 + 40, 9 * 60 + 28), "close": (14 * 60 + 40, 15 * 60 + 57)}
+LAST_MARKET = (15, 58)  # a market order sent later could miss the 16:00 close (TradeZero rejects it after)
+SPARES = 2  # located names beyond the free slots, used only if an order is rejected
 WORKING = {"PendingNew", "New", "Accepted", "PartiallyFilled", "PendingCancel"}
 
 
@@ -46,11 +50,11 @@ WORKING = {"PendingNew", "New", "Accepted", "PartiallyFilled", "PendingCancel"}
 
 def empty() -> dict:
     return {"realized": 0.0, "locate_cost": 0.0, "open": [], "pending": [], "fired": {m: {} for m in ORDER},
-            "runs": {}, "events": []}
+            "runs": {}, "events": [], "lost": []}
 
 
 def load() -> dict:
-    return json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else empty()
+    return {**empty(), **json.loads(STATE.read_text(encoding="utf-8"))} if STATE.exists() else empty()
 
 
 def save(st: dict) -> None:
@@ -200,6 +204,16 @@ class Broker:
     def cancel(self, cid: str) -> None:
         self.tz.delete(f"/v1/api/accounts/{self.acct}/orders/{cid}")
 
+    def shorts(self) -> dict[str, dict]:
+        """Open stock shorts: symbol -> {qty, px, day (New York date the row was created)}."""
+        out = {}
+        for p in self.tz.get(f"/v1/api/accounts/{self.acct}/positions").get("positions", []):
+            if p.get("securityType") == "Stock" and p.get("side") == "Short" and abs(float(p.get("shares") or 0)):
+                day = datetime.fromisoformat(p["createdDate"]).astimezone(NY).date().isoformat() \
+                    if p.get("createdDate") else None
+                out[p["symbol"]] = {"qty": int(abs(float(p["shares"]))), "px": float(p.get("priceAvg") or 0), "day": day}
+        return out
+
 
 def locate(live: M.TZ | None, acct: str | None, sym: str, qty: int) -> tuple[bool, float, dict]:
     """(can short, locate dollars, record). Paper has no locates: the live account quotes and cancels."""
@@ -226,6 +240,8 @@ def reconcile(st: dict, br: Broker, sessions: list[str], today: str) -> None:
         if o is None:
             if p["day"] == today:
                 keep.append(p)  # not visible yet
+            elif p["what"] == "entry":  # its day ended unseen: sync() may still find the position
+                st["lost"].append(p)
             continue
         done = int(o.get("executed") or 0) - p.get("applied", 0)
         if done > 0:
@@ -263,17 +279,65 @@ def apply_fill(st: dict, p: dict, qty: int, px: float, sessions: list[str]) -> N
         st["open"].remove(pos)
 
 
+def sync(st: dict, br: Broker, sessions: list[str], today: str, last: dict[str, float]) -> None:
+    """Make the ledger match the paper account's shorts, for fills a missed run never saw. Symbols with a working
+    order are left alone: their fills arrive through reconcile()."""
+    have = br.shorts()
+    busy = {p["sym"] for p in st["pending"]}
+    for pos in [p for p in st["open"] if p["sym"] not in busy]:
+        q = have.get(pos["sym"], {}).get("qty", 0)
+        if q < pos["qty"]:  # covered unseen: booked at the last price known
+            px = last.get(pos["sym"], pos["entry"])
+            st["realized"] += (pos["entry"] - px) * (pos["qty"] - q)
+            event(st, "exit", day=today, sym=pos["sym"], member=pos["member"], qty=pos["qty"] - q, px=px,
+                  why="unseen")
+            pos["qty"] = q
+            if q == 0:
+                st["open"].remove(pos)
+        elif q > pos["qty"]:  # more shares than booked: the broker's average price is the basis
+            event(st, "sync", sym=pos["sym"], qty_was=pos["qty"], qty=q)
+            lost = next((p for p in reversed(st["lost"]) if p["sym"] == pos["sym"]), None)
+            if lost:
+                st["locate_cost"] += lost.get("loc", 0.0) * (q - pos["qty"]) / max(lost["qty"], 1)
+                st["lost"].remove(lost)
+            pos["entry"] = have[pos["sym"]]["px"]
+            pos["qty"] = q
+    mine = {p["sym"] for p in st["open"]}
+    for sym, h in have.items():
+        if sym in mine or sym in busy:
+            continue
+        lost = next((p for p in reversed(st["lost"]) if p["sym"] == sym), None)
+        member = lost["member"] if lost else "DS1"
+        day = h["day"] if h["day"] in sessions else (lost["day"] if lost else today)
+        i = sessions.index(day) if day in sessions else sessions.index(today)
+        due = sessions[min(i + (HOLD_NS if member == "NS" else HOLD_RUN), len(sessions) - 1)]
+        st["open"].append({"sym": sym, "member": member, "qty": h["qty"], "entry": h["px"], "day": day, "due": due})
+        if lost:
+            st["locate_cost"] += lost.get("loc", 0.0) * h["qty"] / max(lost["qty"], 1)
+        event(st, "entry", day=day, sym=sym, member=member, qty=h["qty"], px=h["px"], why="unseen")
+    st["lost"] = [p for p in st["lost"] if p["day"] in sessions and sessions.index(today) - sessions.index(p["day"]) < 5]
+
+
 # ---------------------------------------------------------------- runs
 
+def late(deadline: tuple[int, int] | None) -> bool:
+    now = datetime.now(NY)
+    return deadline is not None and now.hour * 60 + now.minute >= deadline[0] * 60 + deadline[1]
+
+
 def place_entries(st: dict, br: Broker, live, lacct, cands: list[tuple], today: str, eq: float,
-                  last: dict[str, float], kind: str) -> int:
-    """cands: (prio, member order, member, sym, price, dv1, limit or None). Returns orders placed."""
+                  last: dict[str, float], kind: str, at: tuple[int, int] | None = None,
+                  deadline: tuple[int, int] | None = None, quote_until: tuple[int, int] | None = None) -> int:
+    """cands: (prio, member order, member, sym, price, dv1, limit or None). Locates until ``quote_until``, then at
+    ``at`` the orders, none after ``deadline``. Up to SPARES extra names are located so that a rejected order
+    can hand its slot to the next one. Returns orders placed."""
     slots, gross_left = room(st, eq, last, today)
     held = {p["sym"] for p in st["open"]} | {p["sym"] for p in st["pending"]}
-    placed = quotes = 0
+    go: list[tuple] = []
+    quotes = 0
     tried: set[str] = set()
     for prio, _, member, sym, px, dv1, lim in sorted(cands, key=lambda c: (-c[0], c[1])):
-        if placed >= slots or quotes >= QUOTES_PER_RUN:
+        if len(go) >= slots + SPARES or quotes >= QUOTES_PER_RUN or late(quote_until):
             break
         if sym in held or sym in tried:
             continue
@@ -286,15 +350,24 @@ def place_entries(st: dict, br: Broker, live, lacct, cands: list[tuple], today: 
         event(st, "locate", day=today, sym=sym, member=member, qty=q, ok=ok, cost=cost, outcome=rec.get("outcome"))
         if not ok:
             continue
-        o = br.order(sym, "Sell", "Open", q, kind, "Day", lim)
+        go.append((member, sym, q, lim, cost))
+        gross_left -= q * (lim or px)
+    if at is not None:
+        wait_until(*at)
+    placed = 0
+    for member, sym, q, lim, cost in go:
+        if placed >= slots:
+            break
+        if late(deadline):
+            event(st, "late", sym=sym, member=member, what="entry")
+            continue
         st["fired"][member][sym] = today
+        o = br.order(sym, "Sell", "Open", q, kind, "Day", lim)
         if o["status"] == "Rejected":
             event(st, "rejected", sym=sym, member=member, what="entry", text=o["text"])
             continue
         st["pending"].append({"cid": o["cid"], "sym": sym, "member": member, "what": "entry", "qty": q,
                               "day": today, "loc": cost})
-        held.add(sym)
-        gross_left -= q * (lim or px)
         placed += 1
     return placed
 
@@ -304,6 +377,8 @@ def run_open(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str],
     uni = al.universe()
     bars = al.daily(uni, sessions[sessions.index(today) - 30], prev)
     last = {s: b[-1]["c"] for s, b in bars.items() if b}
+    reconcile(st, br, sessions, today)
+    sync(st, br, sessions, today, last)
     eq = equity(st, last)
     cands = []
     for s, b in bars.items():
@@ -314,7 +389,8 @@ def run_open(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str],
         for k, m in enumerate(("DS1", "RU")):
             if not recent(st, m, s, sessions, today):
                 cands.append((r, k, m, s, b[-1]["c"], dv1, b[-1]["c"] * LIMIT_UP))
-    n = place_entries(st, br, live, lacct, cands, today, eq, last, "Limit")
+    n = place_entries(st, br, live, lacct, cands, today, eq, last, "Limit", at=(9, 30), deadline=(9, 31))
+    wait_until(9, 30)
     for p in st["open"]:  # NS cover at 0.70 x entry, from the session after the entry
         if p["member"] == "NS" and p["day"] != today:
             o = br.order(p["sym"], "Buy", "Close", p["qty"], "Limit", "Day", p["entry"] * TARGET_NS)
@@ -329,11 +405,13 @@ def wait_until(hh: int, mm: int) -> None:
 
 
 def run_close(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str], today: str) -> str:
-    reconcile(st, br, sessions, today)
     prev = sessions[sessions.index(today) - 1]
     uni = al.universe()
     bars = al.daily(uni, sessions[sessions.index(today) - 30], prev)
     pre = [s for s, b in bars.items() if b and b[-1]["t"][:10] == prev and b[-1]["c"] <= 20.0 and dv20(b) >= DV_MIN]
+    wait_until(15, 45)
+    reconcile(st, br, sessions, today)
+    sync(st, br, sessions, today, {s: b[-1]["c"] for s, b in bars.items() if b})
     wait_until(15, 50)
     snap = al.snapshots(sorted(set(pre) | {p["sym"] for p in st["open"]}))
     last = {s: float((v.get("latestTrade") or {}).get("p") or 0) for s, v in snap.items()}
@@ -347,19 +425,25 @@ def run_close(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str]
         g = nightshort(bars[s][-1]["c"], d["o"], max(d["h"], px), min(d["l"], px), px, dv20(bars[s]))
         if g is not None and not recent(st, "NS", s, sessions, today):
             cands.append((g, 2, "NS", s, px, bars[s][-1]["c"] * bars[s][-1]["v"], None))
-    wait_until(15, 55)
     due = [p for p in st["open"] if p["due"] <= today]
+    n = place_entries(st, br, live, lacct, cands, today, eq, last, "Market", at=(15, 55), deadline=LAST_MARKET,
+                      quote_until=(15, 55))
     for p in due:  # a working cover limit would block the market cover
         for q in [x for x in st["pending"] if x["sym"] == p["sym"] and x["what"] == "target"]:
             br.cancel(q["cid"])
-    if due:
-        time.sleep(3)
+    for _ in range(6 if due else 0):  # the cancel is asynchronous: cover only once the limit is gone
+        time.sleep(2)
         reconcile(st, br, sessions, today)
+        if not any(x["what"] == "target" and x["sym"] in {p["sym"] for p in due} for x in st["pending"]):
+            break
+    busy = {x["sym"] for x in st["pending"] if x["what"] == "target"}
     for p in [p for p in st["open"] if p["due"] <= today]:
+        if p["sym"] in busy or late(LAST_MARKET):  # still covered at the next close
+            event(st, "late", sym=p["sym"], member=p["member"], what="time")
+            continue
         o = br.order(p["sym"], "Buy", "Close", p["qty"], "Market", "Day")
         st["pending"].append({"cid": o["cid"], "sym": p["sym"], "member": p["member"], "what": "time",
                               "qty": p["qty"], "day": today})
-    n = place_entries(st, br, live, lacct, cands, today, eq, last, "Market")
     for _ in range(24):  # the market orders fill in seconds; the day's limits stay as they are
         time.sleep(5)
         reconcile(st, br, sessions, today)
@@ -396,6 +480,9 @@ class DryBroker(Broker):
 
     def cancel(self, cid: str) -> None:
         raise AssertionError("a dry run cancels no order")
+
+    def shorts(self) -> dict:
+        return {}
 
 
 def dry(mode: str, now: datetime) -> int:
