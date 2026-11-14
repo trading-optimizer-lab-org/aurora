@@ -326,7 +326,8 @@ def place_entries(st: dict, br: Broker, live, lacct, cands: list[tuple], today: 
     ``at`` the orders, none after ``deadline``. Returns orders placed."""
     slots, gross_left = room(st, eq, last, today)
     held = {p["sym"] for p in st["open"]} | {p["sym"] for p in st["pending"]}
-    go, quotes = [], 0
+    go: list[tuple] = []
+    quotes = 0
     tried: set[str] = set()
     for prio, _, member, sym, px, dv1, lim in sorted(cands, key=lambda c: (-c[0], c[1])):
         if len(go) >= slots or quotes >= QUOTES_PER_RUN or late(quote_until):
