@@ -38,6 +38,11 @@ def main() -> int:
         r = get(path)
         n = len(r.json().get(name, [])) if r.ok else None
         print(f"{name} call: HTTP {r.status_code}, items: {n}")
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import tz_locate_meter as M
+    import tz_paper_bot as B
+    br = B.Broker(M.TZ(os.environ["TZ_PAPER_KEY_ID"], os.environ["TZ_PAPER_SECRET_KEY"]))
+    print(f"the bot's own position reader: {len(br.shorts())} open shorts")
     return 0
 
 

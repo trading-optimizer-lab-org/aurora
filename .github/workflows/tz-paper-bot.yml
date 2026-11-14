@@ -1,14 +1,18 @@
 name: "TradeZero paper bot"
 
-# scripts/tz_paper_bot.py (docs/research/PAPER_BOT_SPEC.md): v58's book on the TradeZero paper account, sized on a
+# scripts/tz_paper_bot.py (docs/research/PAPER_BOT_SPEC.md): DS0.20-NS0.80-RU0.25 on the TradeZero paper account, sized on a
 # virtual $5,000. Orders only with the paper keys; the live keys only quote locates and cancel them. The state stays
 # in the Actions cache (keys tzpaper-*); the public log shows counts only, the ledger leaves the runner encrypted to
 # the owner's key. The script keeps its own New York windows, so the crons cover summer and winter time.
 # run: 1
 on:
   schedule:
-    - cron: "5,25,45 12,13,14 * * 1-5"  # open: 08:00-09:28 New York
-    - cron: "25,35 19,20 * * 1-5"  # close: 15:25-15:57 New York, then waits for 15:50, 15:55 and 16:01
+    # GitHub often starts scheduled runs late, so each window gets several tries; the first that starts does the
+    # day and the others exit ("already ran today"). Summer and winter time both land inside the windows.
+    - cron: "45 12,13 * * 1-5"  # open: 08:45 New York, then waits for 09:30
+    - cron: "5,25 13,14 * * 1-5"  # open: 09:05 and 09:25 New York
+    - cron: "45 18,19 * * 1-5"  # close: 14:45 New York, then waits for 15:45, 15:50, 15:55 and 16:01
+    - cron: "5,25,35 19,20 * * 1-5"  # close: 15:05, 15:25 and 15:35 New York
   workflow_dispatch:
     inputs:
       mode:
@@ -35,7 +39,7 @@ concurrency:
 jobs:
   bot:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       TZ_PAPER_KEY_ID: ${{ secrets.TZ_PAPER_KEY_ID }}
       TZ_PAPER_SECRET_KEY: ${{ secrets.TZ_PAPER_SECRET_KEY }}
@@ -43,7 +47,7 @@ jobs:
       TZ_API_SECRET_KEY: ${{ secrets.TZ_API_SECRET_KEY }}
       APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
       APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
-      MODE: ${{ inputs.mode || (github.event.schedule == '25,35 19,20 * * 1-5' && 'close' || 'open') }}
+      MODE: ${{ inputs.mode || ((github.event.schedule == '45 18,19 * * 1-5' || github.event.schedule == '5,25,35 19,20 * * 1-5') && 'close' || 'open') }}
       DRY: ${{ github.event_name == 'push' || inputs.dry == true }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803

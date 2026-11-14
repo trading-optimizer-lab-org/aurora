@@ -1,6 +1,6 @@
 # TradeZero paper bot: the 2026 book as it trades live
 
-Written 2026-11-14, before the bot placed any order. The bot trades v58's book DS0.20-NS0.60-RU0.25-N5 on the
+Written 2026-11-14, before the bot placed any order. The bot trades the book DS0.20-NS0.80-RU0.25-N5 on the
 TradeZero paper account, sized on a virtual $5,000, and checks each short against a live locate quote that it
 cancels. Its purpose is to measure how far live fills, locates and costs fall from the backtest.
 
@@ -13,7 +13,7 @@ Source: `docs/research/data/v33_summary.json` arms.limit, year 2026; configs dec
 |---|---|---|---|---|
 | DS1 (0.20) | DS1_RUNUP\|12936 = entry 1822 | close / min(5 prior closes) >= 4; close $1-20; 20-day dollar volume >= $1M | day t+1: sell limit at close_t x 1.20, day order | close of the 10th session counting the entry day; no stop, no target |
 | RU (0.25) | RU_RUNUP\|12936 = entry 10897 | same as DS1 | same as DS1 | same as DS1 |
-| NS (0.60) | NS_NIGHTSHORT\|20359 = entry 546 | open_t >= 1.30 x close_t-1; price <= 0.90 x open_t; price in the bottom 25% of the day's range; price $2-5 | day t: decided at 15:50 on IEX, market sell at 15:55 | cover at entry x 0.70 from day t+1 (good-till-cancel limit), else at the close of day t+3; no stop |
+| NS (0.80) | NS_NIGHTSHORT\|20359 = entry 546 | open_t >= 1.30 x close_t-1; price <= 0.90 x open_t; price in the bottom 25% of the day's range; price $2-5 | day t: decided at 15:50 on IEX, market sell at 15:55 | cover at entry x 0.70 from day t+1 (good-till-cancel limit), else at the close of day t+3; no stop |
 
 ## 2. Book rules (run_v28_after, run_v33, run_v48, run_v49)
 
@@ -40,3 +40,16 @@ Source: `docs/research/data/v33_summary.json` arms.limit, year 2026; configs dec
   volume cap is.
 - IEX prices at 15:50 differ from the consolidated tape; v55 measured the cost of this at 6% of the median.
 - Paper fills are TradeZero's simulation, not the market's.
+
+## 5. Sizes and timing, changed 2026-11-14 before the first order
+
+- NS 0.60 -> 0.80, the owner's choice after v61 (V61_RESULTS.md, V61B_RESULTS.md): DS0.20-NS0.80-RU0.25 has the
+  best 2023-2026 median of the 125 books searched and beats the old book in both periods and all three locate
+  worlds (F0C1 all years $12,643 vs $11,634; lose 75% in a year 6.3% vs 1.1%).
+- The morning run quotes locates before the open and sends the DS1/RU sell limits and NS cover limits at 09:30:
+  a Day limit is live from 04:00 on TradeZero, and the backtest filled these only in the regular session.
+- The close run quotes the NS locates between 15:50 and 15:55, sends the orders at 15:55 and none after 15:58.
+  A due cover whose target limit is still being cancelled waits for the next close.
+- Several cron starts per window (08:45-09:25 and 14:45-15:45 New York) because GitHub starts schedules late.
+- Every run compares the ledger with the paper account's open shorts; fills a missed run never saw are booked
+  (covers at the last known price, entries at the account's average price).

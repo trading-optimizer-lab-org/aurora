@@ -38,6 +38,7 @@ def test_nightshort():
 
 
 def test_shares_cap_at_one_percent_of_dollar_volume():
+    assert B.SIZE == {"DS1": 0.20, "RU": 0.25, "NS": 0.80}
     assert B.shares(0.6, 5000, 1e7, 3.0) == 1000
     assert B.shares(0.6, 5000, 1e5, 3.0) == 333
 
@@ -63,6 +64,9 @@ class FakeBroker:
 
     def cancel(self, cid):
         self.cancelled.append(cid)
+
+    def shorts(self):
+        return getattr(self, "have", {})
 
 
 empty = B.empty
@@ -113,3 +117,34 @@ def test_report_hides_dollars_by_default():
     st = empty()
     st["realized"] = 123.0
     assert "$" not in B.report(st) and "$123" in B.report(st, money=True)
+
+
+def test_sync_books_unseen_cover_and_adopts_lost_entry():
+    st, br = empty(), FakeBroker()
+    st["open"].append({"sym": "AAA", "member": "DS1", "qty": 100, "entry": 10.0, "day": SESS[0], "due": SESS[9]})
+    st["pending"].append({"cid": "gone", "sym": "NNN", "member": "NS", "what": "entry", "qty": 200,
+                          "day": SESS[3], "loc": 4.0})
+    B.reconcile(st, br, SESS, SESS[4])  # yesterday's entry is no longer in today's order book
+    assert st["pending"] == [] and st["lost"][0]["sym"] == "NNN"
+    br.have = {"NNN": {"qty": 100, "px": 3.0, "day": SESS[3]}}
+    B.sync(st, br, SESS, SESS[4], {"AAA": 8.0})
+    assert st["realized"] == 200.0  # AAA covered unseen at the last price
+    assert st["open"] == [{"sym": "NNN", "member": "NS", "qty": 100, "entry": 3.0, "day": SESS[3], "due": SESS[6]}]
+    assert abs(st["locate_cost"] - 2.0) < 1e-9
+
+
+def test_sync_leaves_symbols_with_working_orders():
+    st, br = empty(), FakeBroker()
+    st["open"].append({"sym": "AAA", "member": "NS", "qty": 100, "entry": 4.0, "day": SESS[0], "due": SESS[3]})
+    st["pending"].append({"cid": "t", "sym": "AAA", "member": "NS", "what": "target", "qty": 100, "day": SESS[1]})
+    B.sync(st, br, SESS, SESS[1], {})
+    assert st["open"][0]["qty"] == 100 and st["realized"] == 0.0
+
+
+def test_no_order_after_the_deadline(monkeypatch):
+    st, br = empty(), FakeBroker()
+    monkeypatch.setattr(B, "locate", lambda live, acct, sym, qty: (True, 0.0, {"outcome": "offered"}))
+    monkeypatch.setattr(B, "late", lambda d: d == B.LAST_MARKET)
+    n = B.place_entries(st, br, object(), "acct", [(1.0, 2, "NS", "AAA", 3.0, 1e8, None)], SESS[5], 5000.0, {},
+                        "Market", deadline=B.LAST_MARKET)
+    assert n == 0 and br.sent == [] and st["events"][-1]["kind"] == "late"
