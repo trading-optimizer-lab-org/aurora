@@ -148,3 +148,30 @@ def test_no_order_after_the_deadline(monkeypatch):
     n = B.place_entries(st, br, object(), "acct", [(1.0, 2, "NS", "AAA", 3.0, 1e8, None)], SESS[5], 5000.0, {},
                         "Market", deadline=B.LAST_MARKET)
     assert n == 0 and br.sent == [] and st["events"][-1]["kind"] == "late"
+    assert "AAA" not in st["fired"]["NS"]  # a skipped entry does not block the symbol for 20 sessions
+
+
+def test_rejected_order_hands_its_slot_to_the_next_name(monkeypatch):
+    class Rejecting(FakeBroker):
+        def order(self, sym, *a, **k):
+            o = super().order(sym, *a, **k)
+            return {**o, "status": "Rejected", "text": "no"} if sym == "TOP" else o
+
+    st, br = empty(), Rejecting()
+    monkeypatch.setattr(B, "locate", lambda live, acct, sym, qty: (True, 0.0, {"outcome": "offered"}))
+    monkeypatch.setattr(B, "room", lambda *a: (1, 1e9))
+    cands = [(9.0, 0, "DS1", "TOP", 4.0, 1e8, 4.8), (5.0, 0, "DS1", "NXT", 4.0, 1e8, 4.8),
+             (4.0, 0, "DS1", "LST", 4.0, 1e8, 4.8)]
+    assert B.place_entries(st, br, object(), "acct", cands, SESS[5], 5000.0, {}, "Limit") == 1
+    assert [x[0] for x in br.sent] == ["TOP", "NXT"] and [p["sym"] for p in st["pending"]] == ["NXT"]
+
+
+def test_sync_extra_shares_take_the_broker_basis_and_lost_locate():
+    st, br = empty(), FakeBroker()
+    st["open"].append({"sym": "AAA", "member": "DS1", "qty": 50, "entry": 10.0, "day": SESS[3], "due": SESS[12]})
+    st["lost"].append({"cid": "gone", "sym": "AAA", "member": "DS1", "what": "entry", "qty": 100, "day": SESS[3],
+                       "loc": 6.0})
+    br.have = {"AAA": {"qty": 100, "px": 9.5, "day": SESS[3]}}
+    B.sync(st, br, SESS, SESS[4], {})
+    assert st["open"][0]["qty"] == 100 and st["open"][0]["entry"] == 9.5
+    assert abs(st["locate_cost"] - 3.0) < 1e-9 and st["lost"] == []

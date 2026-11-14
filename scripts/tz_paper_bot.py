@@ -42,6 +42,7 @@ DV_MIN, DV_CAP, FLOOR = 1e6, 0.01, 2.50
 QUOTES_PER_RUN = 5
 WINDOWS = {"open": (8 * 60 + 40, 9 * 60 + 28), "close": (14 * 60 + 40, 15 * 60 + 57)}
 LAST_MARKET = (15, 58)  # a market order sent later could miss the 16:00 close (TradeZero rejects it after)
+SPARES = 2  # located names beyond the free slots, used only if an order is rejected
 WORKING = {"PendingNew", "New", "Accepted", "PartiallyFilled", "PendingCancel"}
 
 
@@ -293,8 +294,13 @@ def sync(st: dict, br: Broker, sessions: list[str], today: str, last: dict[str, 
             pos["qty"] = q
             if q == 0:
                 st["open"].remove(pos)
-        elif q > pos["qty"]:
+        elif q > pos["qty"]:  # more shares than booked: the broker's average price is the basis
             event(st, "sync", sym=pos["sym"], qty_was=pos["qty"], qty=q)
+            lost = next((p for p in reversed(st["lost"]) if p["sym"] == pos["sym"]), None)
+            if lost:
+                st["locate_cost"] += lost.get("loc", 0.0) * (q - pos["qty"]) / max(lost["qty"], 1)
+                st["lost"].remove(lost)
+            pos["entry"] = have[pos["sym"]]["px"]
             pos["qty"] = q
     mine = {p["sym"] for p in st["open"]}
     for sym, h in have.items():
@@ -323,14 +329,15 @@ def place_entries(st: dict, br: Broker, live, lacct, cands: list[tuple], today: 
                   last: dict[str, float], kind: str, at: tuple[int, int] | None = None,
                   deadline: tuple[int, int] | None = None, quote_until: tuple[int, int] | None = None) -> int:
     """cands: (prio, member order, member, sym, price, dv1, limit or None). Locates until ``quote_until``, then at
-    ``at`` the orders, none after ``deadline``. Returns orders placed."""
+    ``at`` the orders, none after ``deadline``. Up to SPARES extra names are located so that a rejected order
+    can hand its slot to the next one. Returns orders placed."""
     slots, gross_left = room(st, eq, last, today)
     held = {p["sym"] for p in st["open"]} | {p["sym"] for p in st["pending"]}
     go: list[tuple] = []
     quotes = 0
     tried: set[str] = set()
     for prio, _, member, sym, px, dv1, lim in sorted(cands, key=lambda c: (-c[0], c[1])):
-        if len(go) >= slots or quotes >= QUOTES_PER_RUN or late(quote_until):
+        if len(go) >= slots + SPARES or quotes >= QUOTES_PER_RUN or late(quote_until):
             break
         if sym in held or sym in tried:
             continue
@@ -349,10 +356,12 @@ def place_entries(st: dict, br: Broker, live, lacct, cands: list[tuple], today: 
         wait_until(*at)
     placed = 0
     for member, sym, q, lim, cost in go:
-        st["fired"][member][sym] = today
+        if placed >= slots:
+            break
         if late(deadline):
             event(st, "late", sym=sym, member=member, what="entry")
             continue
+        st["fired"][member][sym] = today
         o = br.order(sym, "Sell", "Open", q, kind, "Day", lim)
         if o["status"] == "Rejected":
             event(st, "rejected", sym=sym, member=member, what="entry", text=o["text"])
@@ -380,7 +389,7 @@ def run_open(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str],
         for k, m in enumerate(("DS1", "RU")):
             if not recent(st, m, s, sessions, today):
                 cands.append((r, k, m, s, b[-1]["c"], dv1, b[-1]["c"] * LIMIT_UP))
-    n = place_entries(st, br, live, lacct, cands, today, eq, last, "Limit", at=(9, 30))
+    n = place_entries(st, br, live, lacct, cands, today, eq, last, "Limit", at=(9, 30), deadline=(9, 31))
     wait_until(9, 30)
     for p in st["open"]:  # NS cover at 0.70 x entry, from the session after the entry
         if p["member"] == "NS" and p["day"] != today:
