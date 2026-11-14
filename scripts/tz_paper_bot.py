@@ -112,6 +112,7 @@ class Alpaca:
                  "adjustment": "split", "feed": "sip", "limit": 10000}
             while True:
                 d = self.get(f"{DATA}/v2/stocks/bars", p)
+                assert isinstance(d, dict)
                 for s, bars in (d.get("bars") or {}).items():
                     out.setdefault(s, []).extend(bars)
                 if not d.get("next_page_token"):
@@ -383,12 +384,18 @@ def report(st: dict, money: bool = False) -> str:
     return out
 
 
-class DryBroker:
+class DryBroker(Broker):
+    def __init__(self) -> None:
+        pass
+
     def order(self, *a, **k) -> dict:
         raise AssertionError("a dry run places no order")
 
     def orders(self) -> dict:
         return {}
+
+    def cancel(self, cid: str) -> None:
+        raise AssertionError("a dry run cancels no order")
 
 
 def dry(mode: str, now: datetime) -> int:
