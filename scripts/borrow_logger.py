@@ -46,9 +46,10 @@ QUOTE_SLOTS = {"q0415": (4 * 60, 4 * 60 + 45), "q0700": (6 * 60 + 45, 7 * 60 + 2
                "q1550": (15 * 60 + 40, 16 * 60), "q1700": (16 * 60 + 45, 17 * 60 + 25),
                "q1930": (19 * 60 + 15, 19 * 60 + 55)}
 # TradeZero refuses locate quotes (429 "unpurchased_limit") after about 100 unpurchased ones a day, so the quotes
-# are budgeted: most at the decision time, a sample in the other slots, a margin left below the cap
-DAILY_QUOTES = 95
-QUOTE_BUDGET = {"q0415": 5, "q0700": 5, "q0900": 10, "q1100": 5, "q1300": 5, "q1430": 5, "q1550": 50, "q1700": 5,
+# are budgeted: most at the decision time, a sample in the other slots, a margin left below the cap. The paper bot
+# (scripts/tz_paper_bot.py) takes 5 at 09:00 and 5 at 15:50 of the same live budget.
+DAILY_QUOTES = 85
+QUOTE_BUDGET = {"q0415": 5, "q0700": 5, "q0900": 5, "q1100": 5, "q1300": 5, "q1430": 5, "q1550": 45, "q1700": 5,
                 "q1930": 5, "qforced": 10}
 KEEP = 60  # sessions of compact records kept in the Actions cache
 SCAN_TOP, SCAN_MIN_PCT = 20, 10.0  # whole-market gainers added to the candidates

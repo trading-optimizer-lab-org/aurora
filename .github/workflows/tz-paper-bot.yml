@@ -1,0 +1,84 @@
+name: "TradeZero paper bot"
+
+# scripts/tz_paper_bot.py (docs/research/PAPER_BOT_SPEC.md): v58's book on the TradeZero paper account, sized on a
+# virtual $5,000. Orders only with the paper keys; the live keys only quote locates and cancel them. The state stays
+# in the Actions cache (keys tzpaper-*); the public log shows counts only, the ledger leaves the runner encrypted to
+# the owner's key. The script keeps its own New York windows, so the crons cover summer and winter time.
+# run: 1
+on:
+  schedule:
+    - cron: "5,25,45 12,13,14 * * 1-5"  # open: 08:00-09:28 New York
+    - cron: "25,35 19,20 * * 1-5"  # close: 15:25-15:57 New York, then waits for 15:50, 15:55 and 16:01
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "open, close or report"
+        type: choice
+        options: [report, open, close]
+        default: report
+      dry:
+        description: "Latest session's signals only: no orders, no quotes, no state"
+        type: boolean
+        default: true
+  push:
+    branches: [tz-paper-bot]
+    paths:
+      - .github/workflows/tz-paper-bot.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tzpaper
+  cancel-in-progress: false
+
+jobs:
+  bot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TZ_PAPER_KEY_ID: ${{ secrets.TZ_PAPER_KEY_ID }}
+      TZ_PAPER_SECRET_KEY: ${{ secrets.TZ_PAPER_SECRET_KEY }}
+      TZ_API_KEY_ID: ${{ secrets.TZ_API_KEY_ID }}
+      TZ_API_SECRET_KEY: ${{ secrets.TZ_API_SECRET_KEY }}
+      APCA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      APCA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+      MODE: ${{ inputs.mode || (github.event.schedule == '25,35 19,20 * * 1-5' && 'close' || 'open') }}
+      DRY: ${{ github.event_name == 'push' || inputs.dry == true }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/tzpaper
+          key: tzpaper-none
+          restore-keys: tzpaper-
+      - if: env.DRY == 'true'
+        run: |
+          python scripts/tz_paper_bot.py open --dry
+          python scripts/tz_paper_bot.py close --dry
+      - if: env.DRY != 'true'
+        run: python scripts/tz_paper_bot.py "$MODE"
+      - if: always() && hashFiles('outputs/tzpaper/changed') != ''
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: outputs/tzpaper
+          key: tzpaper-${{ github.run_id }}-${{ github.run_attempt }}
+      # The repository is public: the ledger and the dollar report leave the runner only encrypted to the owner's key.
+      - if: always() && hashFiles('outputs/tzpaper/state.json') != ''
+        run: |
+          python scripts/tz_paper_bot.py report > outputs/tzpaper/report.txt
+          gpg --batch --quiet --import .github/tzloc-report.pub.asc
+          tar czf - -C outputs tzpaper | gpg --batch --trust-model always --encrypt \
+            --recipient 3A439088B19222C64C00BA286E1157EC3AB4941F -o tzpaper.tgz.gpg
+      - if: always() && hashFiles('tzpaper.tgz.gpg') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: tzpaper-encrypted
+          path: tzpaper.tgz.gpg
+          retention-days: 90
