@@ -53,3 +53,10 @@ Source: `docs/research/data/v33_summary.json` arms.limit, year 2026; configs dec
 - Several cron starts per window (08:45-09:25 and 14:45-15:45 New York) because GitHub starts schedules late.
 - Every run compares the ledger with the paper account's open shorts; fills a missed run never saw are booked
   (covers at the last known price, entries at the account's average price).
+
+## 6. Always-on runs, changed 2026-11-18
+
+GitHub started the scheduled runs of 2026-11-16 and 2026-11-17 nine to ten hours late, so the bot traded on neither
+day. The workflow now runs `auto`: each run stays up about 5.5 hours, runs every New York window inside it and
+starts the next run as its last step. The concurrency group keeps one run working and at most one waiting. A cron
+every 3 hours only restarts the chain if it breaks.

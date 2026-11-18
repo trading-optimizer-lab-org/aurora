@@ -18,6 +18,7 @@ import math
 import os
 import sys
 import time
+import traceback
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -499,26 +500,36 @@ def dry(mode: str, now: datetime) -> int:
     return 0
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=("open", "close", "report"))
-    ap.add_argument("--force", action="store_true", help="run outside the time window (tests)")
-    ap.add_argument("--dry", action="store_true", help="last session's signals only: no orders, no quotes, no state")
-    a = ap.parse_args()
+def auto(budget_s: float) -> int:
+    """Stay up for ``budget_s`` seconds and run each window as it comes, so the bot never depends on GitHub
+    starting a scheduled run on time. The workflow starts the next run when this one ends."""
+    end = time.time() + budget_s
+    while True:
+        now = datetime.now(NY)
+        m = now.hour * 60 + now.minute
+        mode = next((k for k, (lo, hi) in WINDOWS.items() if lo <= m <= hi), None)
+        if mode:
+            print(f"{now:%Y-%m-%d %H:%M} New York: {mode}", flush=True)
+            try:
+                day(mode, now)
+            except Exception:  # the other window of the day must still run
+                traceback.print_exc()
+            wait_until(*divmod(WINDOWS[mode][1] + 1, 60))  # once a window, even when it had nothing to do
+            continue
+        starts = sorted(lo for lo, _ in WINDOWS.values())
+        nxt = next((lo for lo in starts if lo > m), starts[0] + 24 * 60)
+        wake = now.replace(second=0, microsecond=0) + timedelta(minutes=nxt - m)
+        if wake.timestamp() + 90 * 60 > end:  # a window takes up to 80 minutes and must end inside this run
+            print(f"next window at {wake:%a %H:%M} New York, after this run; the next run takes it")
+            return 0
+        time.sleep(max(0.0, wake.timestamp() - time.time()))
+
+
+def day(mode: str, now: datetime) -> int:
     st = load()
-    if a.mode == "report":
-        print(report(st, money=True))
-        return 0
-    now = datetime.now(NY)
     today = f"{now:%Y-%m-%d}"
-    lo, hi = WINDOWS[a.mode]
-    if not (a.force or a.dry) and not (lo <= now.hour * 60 + now.minute <= hi):
-        print(f"{a.mode}: outside its window at {now:%H:%M} New York")
-        return 0
-    if a.dry:
-        return dry(a.mode, now)
-    if st["runs"].get(a.mode) == today:
-        print(f"{a.mode}: already ran today")
+    if st["runs"].get(mode) == today:
+        print(f"{mode}: already ran today")
         return 0
     al = Alpaca()
     sessions = al.sessions(now.date())
@@ -530,15 +541,38 @@ def main() -> int:
     if os.environ.get("TZ_API_KEY_ID"):
         live = M.TZ(os.environ["TZ_API_KEY_ID"], os.environ["TZ_API_SECRET_KEY"])
         lacct = M.live_account(live)
-    st["runs"][a.mode] = today
-    save(st)  # a second cron in the same window must not run the day twice
+    st["runs"][mode] = today
+    save(st)  # a second run in the same window must not run the day twice
     try:
-        msg = (run_open if a.mode == "open" else run_close)(st, al, br, live, lacct, sessions, today)
+        msg = (run_open if mode == "open" else run_close)(st, al, br, live, lacct, sessions, today)
     finally:
         save(st)
     print(msg)
-    print(report(st))
+    print(report(st), flush=True)
     return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("mode", choices=("open", "close", "report", "auto"))
+    ap.add_argument("--hours", type=float, default=5.5, help="auto: how long this run stays up")
+    ap.add_argument("--force", action="store_true", help="run outside the time window (tests)")
+    ap.add_argument("--dry", action="store_true", help="last session's signals only: no orders, no quotes, no state")
+    a = ap.parse_args()
+    st = load()
+    if a.mode == "report":
+        print(report(st, money=True))
+        return 0
+    if a.mode == "auto":
+        return auto(a.hours * 3600)
+    now = datetime.now(NY)
+    lo, hi = WINDOWS[a.mode]
+    if not (a.force or a.dry) and not (lo <= now.hour * 60 + now.minute <= hi):
+        print(f"{a.mode}: outside its window at {now:%H:%M} New York")
+        return 0
+    if a.dry:
+        return dry(a.mode, now)
+    return day(a.mode, now)
 
 
 if __name__ == "__main__":

@@ -175,3 +175,30 @@ def test_sync_extra_shares_take_the_broker_basis_and_lost_locate():
     B.sync(st, br, SESS, SESS[4], {})
     assert st["open"][0]["qty"] == 100 and st["open"][0]["entry"] == 9.5
     assert abs(st["locate_cost"] - 3.0) < 1e-9 and st["lost"] == []
+
+
+def test_auto_runs_each_window_once_and_hands_over(monkeypatch):
+    from datetime import datetime, timedelta
+
+    cur = [datetime(2026, 11, 16, 8, 0, tzinfo=B.NY)]
+    calls = []
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cur[0]
+
+    def step(seconds):
+        cur[0] += timedelta(seconds=seconds)
+
+    def run(mode, now):
+        calls.append((mode, f"{now:%H:%M}"))
+        step(300)
+
+    monkeypatch.setattr(B, "datetime", Clock)
+    monkeypatch.setattr(B.time, "time", lambda: cur[0].timestamp())
+    monkeypatch.setattr(B.time, "sleep", step)
+    monkeypatch.setattr(B, "wait_until", lambda hh, mm: cur.__setitem__(0, cur[0].replace(hour=hh, minute=mm)))
+    monkeypatch.setattr(B, "day", run)
+    assert B.auto(10 * 3600) == 0
+    assert calls == [("open", "08:40"), ("close", "14:40")]
