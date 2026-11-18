@@ -51,6 +51,7 @@ jobs:
       MODE: ${{ inputs.mode || 'auto' }}
       DRY: ${{ github.event_name == 'push' || inputs.dry == true }}
     steps:
+      - run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
@@ -91,6 +92,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A run that ended within 10 minutes means something is wrong; never let the chain spin.
+          if [ $(( $(date +%s) - STARTED )) -lt 600 ]; then echo "run too short, chain not continued"; exit 1; fi
           for i in 1 2 3 4 5; do
             gh workflow run tz-paper-bot.yml --repo "$GITHUB_REPOSITORY" --ref main -f mode=auto -f dry=false && exit 0
             sleep 30

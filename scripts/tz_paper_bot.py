@@ -520,7 +520,10 @@ def auto(budget_s: float) -> int:
         nxt = next((lo for lo in starts if lo > m), starts[0] + 24 * 60)
         wake = now.replace(second=0, microsecond=0) + timedelta(minutes=nxt - m)
         if wake.timestamp() + 90 * 60 > end:  # a window takes up to 80 minutes and must end inside this run
-            print(f"next window at {wake:%a %H:%M} New York, after this run; the next run takes it")
+            # Hand over 15 minutes before the window, or at the end of this run if that comes first. A fresh run
+            # always fits a window that is under 15 minutes away, so the chain never spins.
+            time.sleep(max(0.0, min(end, wake.timestamp() - 15 * 60) - time.time()))
+            print(f"next window at {wake:%a %H:%M} New York; the next run takes it")
             return 0
         time.sleep(max(0.0, wake.timestamp() - time.time()))
 
