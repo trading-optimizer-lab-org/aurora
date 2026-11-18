@@ -504,6 +504,7 @@ def auto(budget_s: float) -> int:
     """Stay up for ``budget_s`` seconds and run each window as it comes, so the bot never depends on GitHub
     starting a scheduled run on time. The workflow starts the next run when this one ends."""
     end = time.time() + budget_s
+    failed = 0
     while True:
         now = datetime.now(NY)
         m = now.hour * 60 + now.minute
@@ -512,16 +513,20 @@ def auto(budget_s: float) -> int:
             print(f"{now:%Y-%m-%d %H:%M} New York: {mode}", flush=True)
             try:
                 day(mode, now)
-            except Exception:  # the other window of the day must still run
+            except Exception:  # the other window of the day must still run; the run still ends as failed
                 traceback.print_exc()
+                failed = 1
             wait_until(*divmod(WINDOWS[mode][1] + 1, 60))  # once a window, even when it had nothing to do
             continue
         starts = sorted(lo for lo, _ in WINDOWS.values())
         nxt = next((lo for lo in starts if lo > m), starts[0] + 24 * 60)
         wake = now.replace(second=0, microsecond=0) + timedelta(minutes=nxt - m)
         if wake.timestamp() + 90 * 60 > end:  # a window takes up to 80 minutes and must end inside this run
-            print(f"next window at {wake:%a %H:%M} New York, after this run; the next run takes it")
-            return 0
+            # Hand over 15 minutes before the window, or at the end of this run if that comes first. A fresh run
+            # always fits a window that is under 15 minutes away, so the chain never spins.
+            time.sleep(max(0.0, min(end, wake.timestamp() - 15 * 60) - time.time()))
+            print(f"next window at {wake:%a %H:%M} New York; the next run takes it")
+            return failed
         time.sleep(max(0.0, wake.timestamp() - time.time()))
 
 

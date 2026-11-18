@@ -202,3 +202,27 @@ def test_auto_runs_each_window_once_and_hands_over(monkeypatch):
     monkeypatch.setattr(B, "day", run)
     assert B.auto(10 * 3600) == 0
     assert calls == [("open", "08:40"), ("close", "14:40")]
+
+
+def test_auto_hands_over_before_a_far_window_and_never_spins(monkeypatch):
+    from datetime import datetime, timedelta
+
+    cur = [datetime(2026, 11, 18, 9, 47, tzinfo=B.NY)]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cur[0]
+
+    monkeypatch.setattr(B, "datetime", Clock)
+    monkeypatch.setattr(B.time, "time", lambda: cur[0].timestamp())
+    monkeypatch.setattr(B.time, "sleep", lambda s: cur.__setitem__(0, cur[0] + timedelta(seconds=s)))
+    monkeypatch.setattr(B, "day", lambda mode, now: None)
+    assert B.auto(5.5 * 3600) == 0
+    assert f"{cur[0]:%H:%M}" == "14:25"  # stayed up, then left 15 minutes before the close window
+    for start in range(0, 24 * 60, 7):  # a fresh run, started at any minute, stays up at least 15 minutes
+        cur[0] = datetime(2026, 11, 18, tzinfo=B.NY) + timedelta(minutes=start)
+        monkeypatch.setattr(B, "wait_until", lambda hh, mm: cur.__setitem__(0, cur[0].replace(hour=hh, minute=mm)))
+        t0 = cur[0]
+        B.auto(5.5 * 3600)
+        assert cur[0] - t0 >= timedelta(minutes=15), start
