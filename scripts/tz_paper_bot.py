@@ -465,7 +465,8 @@ def run_close(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str]
     wait_until(16, 1)  # sell limits from the open can still fill in the last minutes
     reconcile(st, br, sessions, today)
     seen = fresh(bars, prev)
-    priced = sum(1 for s in pre if ((snap.get(s) or {}).get("dailyBar") or {}).get("t", "")[:10] == today)
+    priced = sum(1 for s in pre if ((snap.get(s) or {}).get("dailyBar") or {}).get("t", "")[:10] == today
+                 and last.get(s, 0.0) > 0)  # the signals use the trade price, so a bar without one does not count
     msg = (f"close: {seen} names with {prev} bars, {priced} of {len(pre)} with a {today} price, {len(due)} time "
            f"covers, {len(cands)} NS signals, {n} NS shorts sent, {len(st['open'])} open")
     if seen < MIN_FRESH or (pre and not priced):  # after the covers; the run ends as failed

@@ -275,3 +275,11 @@ def test_close_fails_loudly_without_prices_but_covers_what_is_due(monkeypatch):
     with pytest.raises(RuntimeError, match="0 of 1500 with a"):
         B.run_close(st, FakeData(1500, SESS[11]), br, None, None, LONG, SESS[12])
     assert br.sent == [("AAA", "Buy", "Close", 100, "Market", "Day", None)]
+    bar = {"dailyBar": {"t": f"{SESS[12]}T05:00:00Z", "o": 3.0, "h": 3.0, "l": 3.0}}
+    no_trade = {f"N{i}": bar for i in range(1500)}  # the day's bar but no trade price
+    st, br = held_ns()
+    with pytest.raises(RuntimeError, match="0 of 1500 with a"):
+        B.run_close(st, FakeData(1500, SESS[11], no_trade), br, None, None, LONG, SESS[12])
+    priced = {k: {**v, "latestTrade": {"p": 3.0}} for k, v in no_trade.items()}
+    st, br = held_ns()
+    assert "1500 of 1500 with a" in B.run_close(st, FakeData(1500, SESS[11], priced), br, None, None, LONG, SESS[12])
