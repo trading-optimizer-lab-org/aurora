@@ -45,6 +45,7 @@ WINDOWS = {"open": (8 * 60 + 40, 9 * 60 + 28), "close": (14 * 60 + 40, 15 * 60 +
 LAST_MARKET = (15, 58)  # a market order sent later could miss the 16:00 close (TradeZero rejects it after)
 SPARES = 2  # located names beyond the free slots, used only if an order is rejected
 WORKING = {"PendingNew", "New", "Accepted", "PartiallyFilled", "PendingCancel"}
+MIN_FRESH = 1000  # ~12,000 names have the last session's bar; far fewer means the data did not arrive
 
 
 # ---------------------------------------------------------------- state
@@ -134,6 +135,11 @@ class Alpaca:
 
 
 # ---------------------------------------------------------------- signals (run_v19/v20 picks for 2026)
+
+def fresh(bars: dict[str, list[dict]], day: str) -> int:
+    """Names whose last bar is the session ``day``: tells a quiet day from data that did not arrive."""
+    return sum(1 for b in bars.values() if b and b[-1]["t"][:10] == day)
+
 
 def dv20(bars: list[dict]) -> float:
     last = bars[-20:]
@@ -397,7 +403,12 @@ def run_open(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str],
             o = br.order(p["sym"], "Buy", "Close", p["qty"], "Limit", "Day", p["entry"] * TARGET_NS)
             st["pending"].append({"cid": o["cid"], "sym": p["sym"], "member": "NS", "what": "target",
                                   "qty": p["qty"], "day": today})
-    return f"open: {len(cands)} DS1/RU signals, {n} sell limits placed, {len(st['open'])} open positions"
+    seen = fresh(bars, prev)
+    msg = (f"open: {seen} names with {prev} bars, {len(cands)} DS1/RU signals, {n} sell limits placed, "
+           f"{len(st['open'])} open positions")
+    if seen < MIN_FRESH:  # after the cover limits, so open positions keep their exits; the run ends as failed
+        raise RuntimeError(f"data missing, {msg}")
+    return msg
 
 
 def wait_until(hh: int, mm: int) -> None:
@@ -453,7 +464,14 @@ def run_close(st: dict, al: Alpaca, br: Broker, live, lacct, sessions: list[str]
             break
     wait_until(16, 1)  # sell limits from the open can still fill in the last minutes
     reconcile(st, br, sessions, today)
-    return f"close: {len(due)} time covers, {len(cands)} NS signals, {n} NS shorts sent, {len(st['open'])} open"
+    seen = fresh(bars, prev)
+    priced = sum(1 for s in pre if ((snap.get(s) or {}).get("dailyBar") or {}).get("t", "")[:10] == today
+                 and last.get(s, 0.0) > 0)  # the signals use the trade price, so a bar without one does not count
+    msg = (f"close: {seen} names with {prev} bars, {priced} of {len(pre)} with a {today} price, {len(due)} time "
+           f"covers, {len(cands)} NS signals, {n} NS shorts sent, {len(st['open'])} open")
+    if seen < MIN_FRESH or (pre and not priced):  # after the covers; the run ends as failed
+        raise RuntimeError(f"data missing, {msg}")
+    return msg
 
 
 def report(st: dict, money: bool = False) -> str:

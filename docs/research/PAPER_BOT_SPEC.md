@@ -60,3 +60,12 @@ GitHub started the scheduled runs of 2026-11-16 and 2026-11-17 nine to ten hours
 day. The workflow now runs `auto`: each run stays up about 5.5 hours, runs every New York window inside it and
 starts the next run as its last step. The concurrency group keeps one run working and at most one waiting. A cron
 every 3 hours only restarts the chain if it breaks.
+
+## 7. A quiet day versus missing data, added 2026-11-21
+
+The first week had no trade. A replay of the bot's own data path and rules over 2025-10-27..2026-11-20 (270
+sessions, run in Actions, counts only) gives 0.31 trades a session: 26 of 77 DS1/RU signals reach the 1.20 x limit
+the next day, plus 57 NS signals. 29% of 5-session stretches have no trade and the longest dry spell is 35 sessions.
+The week of 2026-11-16 had none, and the one signal lost to the 11-18 downtime would not have filled its limit.
+Each window now logs how many names had the last session's bars, and at the close how many had a price that day.
+Fewer than 1,000 names with bars, or no price at all at the close, ends the run as failed once the exits are sent.
