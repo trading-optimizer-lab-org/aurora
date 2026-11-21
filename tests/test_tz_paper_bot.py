@@ -226,3 +226,52 @@ def test_auto_hands_over_before_a_far_window_and_never_spins(monkeypatch):
         t0 = cur[0]
         B.auto(5.5 * 3600)
         assert cur[0] - t0 >= timedelta(minutes=15), start
+
+
+class FakeData:
+    """The Alpaca data the open and close runs read: ``n`` flat names whose last bar is ``last``."""
+
+    def __init__(self, n, last, snaps=None):
+        self.n, self.last, self.snaps = n, last, snaps or {}
+
+    def universe(self):
+        return [f"N{i}" for i in range(self.n)]
+
+    def daily(self, syms, start, end):
+        k = SESS.index(self.last)
+        return {s: bars([3.0] * (k + 1)) for s in syms}
+
+    def snapshots(self, syms):
+        return self.snaps
+
+
+LONG = [f"2026-10-{d:02d}" for d in range(1, 31)] + SESS  # the runs read 30 sessions back
+
+
+def held_ns():
+    st, br = empty(), FakeBroker()
+    st["open"].append({"sym": "AAA", "member": "NS", "qty": 100, "entry": 4.0, "day": SESS[9], "due": SESS[12]})
+    br.have = {"AAA": {"qty": 100, "px": 4.0, "day": SESS[9]}}
+    return st, br
+
+
+def test_open_fails_loudly_without_fresh_bars_but_keeps_the_covers(monkeypatch):
+    import pytest
+    monkeypatch.setattr(B, "wait_until", lambda hh, mm: None)
+    st, br = held_ns()
+    assert "1500 names with" in B.run_open(st, FakeData(1500, SESS[10]), br, None, None, LONG, SESS[11])
+    st, br = held_ns()
+    with pytest.raises(RuntimeError, match="data missing"):
+        B.run_open(st, FakeData(1500, SESS[9]), br, None, None, LONG, SESS[11])  # bars end a session early
+    assert br.sent == [("AAA", "Buy", "Close", 100, "Limit", "Day", 4.0 * B.TARGET_NS)]
+
+
+def test_close_fails_loudly_without_prices_but_covers_what_is_due(monkeypatch):
+    import pytest
+    monkeypatch.setattr(B, "wait_until", lambda hh, mm: None)
+    monkeypatch.setattr(B.time, "sleep", lambda s: None)
+    monkeypatch.setattr(B, "late", lambda deadline: False)
+    st, br = held_ns()
+    with pytest.raises(RuntimeError, match="0 of 1500 with a"):
+        B.run_close(st, FakeData(1500, SESS[11]), br, None, None, LONG, SESS[12])
+    assert br.sent == [("AAA", "Buy", "Close", 100, "Market", "Day", None)]
